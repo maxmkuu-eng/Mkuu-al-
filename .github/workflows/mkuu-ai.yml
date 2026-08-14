@@ -1,0 +1,52 @@
+name: MKUU AI CI/CD Build & Verification
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 3. Verify package.json
+        run: |
+          if [ ! -f package.json ]; then
+            echo "Error: package.json not found!"
+            exit 1
+          fi
+          echo "package.json successfully verified."
+
+      - name: 4. Verify package-lock.json
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "Error: package-lock.json not found!"
+            exit 1
+          fi
+          echo "package-lock.json successfully verified."
+
+      - name: 5. Run npm ci
+        run: npm ci
+
+      - name: 6. Run npm run build
+        run: npm run build
+
+      - name: 7. Upload production build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mkuu-ai-production-build
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
