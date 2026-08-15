@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ActiveTab,
   ChatMessage,
+  Conversation,
   Memory,
   Person,
   GeneratedFileSummary,
@@ -12,6 +13,7 @@ import {
 } from './types';
 import { Navigation } from './components/Navigation';
 import { ChatView } from './components/ChatView';
+import { ChatHistoryView } from './components/ChatHistoryView';
 import { VoiceModal } from './components/VoiceModal';
 import { MemoryCenter } from './components/MemoryCenter';
 import { PeopleCenter } from './components/PeopleCenter';
@@ -21,12 +23,15 @@ import { SecurityCenter } from './components/SecurityCenter';
 import { RightSidebar } from './components/RightSidebar';
 import { FileGeneratorModal } from './components/FileGeneratorModal';
 import { DocumentPreviewModal } from './components/DocumentPreviewModal';
+import { localChatStorage } from './services/localChatStorage';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('chat');
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState<string>('conv_main_max');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [files, setFiles] = useState<GeneratedFileSummary[]>([]);
@@ -57,6 +62,20 @@ export const App: React.FC = () => {
   const [previewingFile, setPreviewingFile] = useState<GeneratedFileSummary | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Monitor network online / offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   // Safe JSON fetch helper
   const fetchJson = async <T,>(url: string): Promise<T | null> => {
     try {
@@ -71,7 +90,39 @@ export const App: React.FC = () => {
     }
   };
 
-  // Initial Data Fetching from Server
+  // 1. Initial Local Database Hydration (Immediate & Offline-Ready)
+  useEffect(() => {
+    const initLocalData = async () => {
+      await localChatStorage.init();
+      const localConvs = await localChatStorage.getAllConversations();
+      
+      if (localConvs && localConvs.length > 0) {
+        setConversations(localConvs);
+        const activeId = localChatStorage.getActiveConversationId();
+        const activeConv = localConvs.find((c) => c.id === activeId) || localConvs[0];
+        setConversationId(activeConv.id);
+        setMessages(activeConv.messages || []);
+      } else {
+        // Create initial default conversation
+        const initialConv: Conversation = {
+          id: 'conv_main_max',
+          userId: 'user_max_owner',
+          title: 'Mazungumzo ya Awali',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: [],
+        };
+        await localChatStorage.saveConversation(initialConv);
+        setConversations([initialConv]);
+        setConversationId(initialConv.id);
+        setMessages([]);
+      }
+    };
+
+    initLocalData();
+  }, []);
+
+  // 2. Initial Remote Data Fetching & Synchronization
   const fetchAllData = async () => {
     try {
       // User Profile
@@ -110,13 +161,17 @@ export const App: React.FC = () => {
         setAutoReplyLogs(logsData);
       }
 
-      // Existing Conversation Messages
-      const convData = await fetchJson<any>('/api/conversations/conv_main_max');
-      if (convData && convData.messages && convData.messages.length > 0) {
-        setMessages(convData.messages);
+      // Fetch conversations from server and merge into local DB
+      const remoteConvs = await fetchJson<Conversation[]>('/api/conversations');
+      if (remoteConvs && Array.isArray(remoteConvs)) {
+        for (const rConv of remoteConvs) {
+          await localChatStorage.saveConversation(rConv);
+        }
+        const updatedLocal = await localChatStorage.getAllConversations();
+        setConversations(updatedLocal);
       }
     } catch (e) {
-      console.error('Failed to fetch initial data:', e);
+      console.warn('Network sync notice (running with local cache):', e);
     }
   };
 
@@ -124,7 +179,7 @@ export const App: React.FC = () => {
     fetchAllData();
   }, []);
 
-  // Send Message to MKUU AI with multimodal attachment support
+  // Send Message with Offline-First Local Persistence
   const handleSendMessage = async (text: string, isVoice = false, attachments: AttachmentItem[] = []) => {
     if (!text.trim() && attachments.length === 0) return;
 
@@ -135,11 +190,41 @@ export const App: React.FC = () => {
       timestamp: new Date().toISOString(),
       isVoice,
       attachments,
+      savedOffline: true,
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    // 1. Immediately persist user message to local IndexedDB & LocalStorage
+    const updatedConv = await localChatStorage.addMessage(conversationId, userMsg);
+    setMessages(updatedConv.messages);
+    
+    // Refresh conversation list in state
+    const allConvs = await localChatStorage.getAllConversations();
+    setConversations(allConvs);
+
     setIsLoading(true);
 
+    // 2. If browser reports offline immediately, inform user and keep message stored safely
+    if (!navigator.onLine) {
+      setIsLoading(false);
+      const offlineAiNotice: ChatMessage = {
+        id: `msg_offline_${Date.now()}`,
+        role: 'assistant',
+        content: `Samahani Max, kwa sasa kifaa chako kipo **Offline** (hakuna intaneti). Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa hiki. Pindi utakapounganishwa na intaneti, MKUU AI ataweza kuchakata na kutoa majibu mapya.`,
+        timestamp: new Date().toISOString(),
+        savedOffline: true,
+      };
+
+      const finalConv = await localChatStorage.addMessage(conversationId, offlineAiNotice);
+      setMessages(finalConv.messages);
+      const refreshedConvs = await localChatStorage.getAllConversations();
+      setConversations(refreshedConvs);
+      return {
+        reply: offlineAiNotice.content,
+        cleanSpeechText: offlineAiNotice.content,
+      };
+    }
+
+    // 3. Attempt online API call
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -153,7 +238,7 @@ export const App: React.FC = () => {
       });
 
       if (!res.ok) {
-        throw new Error('Hitilafu ya seva');
+        throw new Error(`Hitilafu ya mawasiliano na seva (${res.status})`);
       }
 
       const data = await res.json();
@@ -167,9 +252,15 @@ export const App: React.FC = () => {
         generatedFiles: data.generatedFiles,
         memoryExtracted: data.memoriesExtracted?.map((m: any) => m.content || m),
         personRecognized: data.peopleRecognized?.map((p: any) => p.name || p),
+        savedOffline: true,
       };
 
-      setMessages((prev) => [...prev, aiMsg]);
+      // Persist AI response to local DB
+      const finalConv = await localChatStorage.addMessage(conversationId, aiMsg);
+      setMessages(finalConv.messages);
+
+      const refreshedConvs = await localChatStorage.getAllConversations();
+      setConversations(refreshedConvs);
 
       // If new files or memories were created during chat, refresh their state
       if (data.generatedFiles && data.generatedFiles.length > 0) {
@@ -187,14 +278,20 @@ export const App: React.FC = () => {
         cleanSpeechText: data.cleanSpeechText || data.reply,
       };
     } catch (e: any) {
-      console.error('Chat error:', e);
+      console.warn('Chat request failed; preserving local history:', e);
       const errorMsg: ChatMessage = {
         id: `msg_err_${Date.now()}`,
         role: 'assistant',
-        content: `Samahani Max, kumetokea hitilafu ya mawasiliano: ${e.message}. Tafadhali jaribu tena.`,
+        content: `Samahani Max, mawasiliano na seva ya AI yamekatika au hakuna mtandao: ${e.message}. Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa chako.`,
         timestamp: new Date().toISOString(),
+        savedOffline: true,
       };
-      setMessages((prev) => [...prev, errorMsg]);
+
+      const finalConv = await localChatStorage.addMessage(conversationId, errorMsg);
+      setMessages(finalConv.messages);
+      const refreshedConvs = await localChatStorage.getAllConversations();
+      setConversations(refreshedConvs);
+
       return {
         reply: errorMsg.content,
         cleanSpeechText: errorMsg.content,
@@ -203,6 +300,101 @@ export const App: React.FC = () => {
       setIsLoading(false);
     }
   };
+
+  // Start New Conversation
+  const handleNewChat = async () => {
+    const newId = `conv_${Date.now()}`;
+    const newConv: Conversation = {
+      id: newId,
+      userId: 'user_max_owner',
+      title: 'Mazungumzo Mapya',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    };
+
+    await localChatStorage.saveConversation(newConv);
+    localChatStorage.setActiveConversationId(newId);
+    setConversationId(newId);
+    setMessages([]);
+    const all = await localChatStorage.getAllConversations();
+    setConversations(all);
+    setActiveTab('chat');
+  };
+
+  // Select Conversation from Chat History
+  const handleSelectConversation = async (id: string) => {
+    const conv = await localChatStorage.getConversation(id);
+    if (conv) {
+      setConversationId(conv.id);
+      setMessages(conv.messages || []);
+      localChatStorage.setActiveConversationId(conv.id);
+      setActiveTab('chat');
+    }
+  };
+
+  // Rename Conversation
+  const handleRenameConversation = async (id: string, newTitle: string) => {
+    const conv = await localChatStorage.getConversation(id);
+    if (conv) {
+      conv.title = newTitle;
+      await localChatStorage.saveConversation(conv);
+      const all = await localChatStorage.getAllConversations();
+      setConversations(all);
+    }
+  };
+
+  // Delete Conversation
+  const handleDeleteConversation = async (id: string) => {
+    await localChatStorage.deleteConversation(id);
+    const all = await localChatStorage.getAllConversations();
+    setConversations(all);
+
+    // If active conversation was deleted, switch to next available or create new
+    if (conversationId === id) {
+      if (all.length > 0) {
+        setConversationId(all[0].id);
+        setMessages(all[0].messages || []);
+        localChatStorage.setActiveConversationId(all[0].id);
+      } else {
+        await handleNewChat();
+      }
+    }
+
+    // Also attempt delete on server
+    try {
+      await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    } catch {
+      // Ignore offline delete error
+    }
+  };
+
+  // Delete Single Message
+  const handleDeleteMessage = async (msgId: string) => {
+    const updated = await localChatStorage.deleteMessage(conversationId, msgId);
+    if (updated) {
+      setMessages(updated.messages);
+      const all = await localChatStorage.getAllConversations();
+      setConversations(all);
+    }
+  };
+
+  // Export History
+  const handleExportHistory = async () => {
+    const jsonStr = await localChatStorage.exportDataJson();
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `MKUU_AI_CHAT_HISTORY_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Active conversation title resolver
+  const activeConversationTitle = conversations.find((c) => c.id === conversationId)?.title || 'Mkuu Chat';
 
   // Emergency Stop Toggle
   const handleEmergencyStopToggle = async () => {
@@ -221,12 +413,6 @@ export const App: React.FC = () => {
     } catch (e) {
       console.error('Emergency stop toggle failed:', e);
     }
-  };
-
-  // Start New Conversation
-  const handleNewChat = () => {
-    setConversationId(`conv_${Date.now()}`);
-    setMessages([]);
   };
 
   // Memory Handlers
@@ -450,7 +636,8 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleExportAllData = () => {
+  const handleExportAllData = async () => {
+    const allConvs = await localChatStorage.getAllConversations();
     const fullBackup = {
       exportDate: new Date().toISOString(),
       owner: user,
@@ -459,7 +646,7 @@ export const App: React.FC = () => {
       files,
       autoReplySettings,
       autoReplyLogs,
-      conversations: messages,
+      conversations: allConvs,
     };
 
     const blob = new Blob([JSON.stringify(fullBackup, null, 2)], {
@@ -468,7 +655,7 @@ export const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `MKUU_AI_MAX_BACKUP_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `MKUU_AI_MAX_FULL_BACKUP_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -476,10 +663,12 @@ export const App: React.FC = () => {
   };
 
   const handleClearAllData = async () => {
+    await localChatStorage.clearAllConversations();
     const res = await fetch('/api/system/reset', { method: 'POST' });
     if (res.ok) {
       await fetchAllData();
       setMessages([]);
+      setConversations([]);
     }
   };
 
@@ -493,6 +682,7 @@ export const App: React.FC = () => {
         emergencyStop={autoReplySettings.emergencyStop}
         onEmergencyStopToggle={handleEmergencyStopToggle}
         onOpenVoice={() => setIsVoiceModalOpen(true)}
+        conversationCount={conversations.length}
         memoryCount={memories.length}
         peopleCount={people.length}
         filesCount={files.length}
@@ -505,15 +695,32 @@ export const App: React.FC = () => {
         {activeTab === 'chat' && (
           <ChatView
             messages={messages}
+            conversationTitle={activeConversationTitle}
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
             onOpenVoice={() => setIsVoiceModalOpen(true)}
             onNewChat={handleNewChat}
+            onOpenHistory={() => setActiveTab('history')}
+            onDeleteMessage={handleDeleteMessage}
             onOpenMemoryModal={() => setActiveTab('memory')}
             onOpenFileGenerator={() => setIsFileGeneratorModalOpen(true)}
             onPreviewDocument={(file) => setPreviewingFile(file)}
             memories={memories}
             people={people}
+            isOnline={isOnline}
+          />
+        )}
+
+        {activeTab === 'history' && (
+          <ChatHistoryView
+            conversations={conversations}
+            activeConversationId={conversationId}
+            onSelectConversation={handleSelectConversation}
+            onNewConversation={handleNewChat}
+            onDeleteConversation={handleDeleteConversation}
+            onRenameConversation={handleRenameConversation}
+            onExportHistory={handleExportHistory}
+            isOnline={isOnline}
           />
         )}
 
@@ -620,3 +827,4 @@ export const App: React.FC = () => {
   );
 };
 export default App;
+

@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   MessageSquare,
+  History,
   Brain,
   Users,
   Zap,
@@ -22,6 +23,7 @@ interface NavigationProps {
   emergencyStop: boolean;
   onEmergencyStopToggle: () => void;
   onOpenVoice: () => void;
+  conversationCount?: number;
   memoryCount: number;
   peopleCount: number;
   filesCount: number;
@@ -36,6 +38,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   emergencyStop,
   onEmergencyStopToggle,
   onOpenVoice,
+  conversationCount = 0,
   memoryCount,
   peopleCount,
   filesCount,
@@ -49,6 +52,13 @@ export const Navigation: React.FC<NavigationProps> = ({
       sub: 'Mazungumzo & Sauti',
       icon: MessageSquare,
       badge: 'Live AI',
+    },
+    {
+      id: 'history' as ActiveTab,
+      label: 'Kumbukumbu za Chat',
+      sub: 'Historia ya Ndani (Offline)',
+      icon: History,
+      count: conversationCount,
     },
     {
       id: 'memory' as ActiveTab,

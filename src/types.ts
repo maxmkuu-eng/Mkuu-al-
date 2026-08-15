@@ -56,6 +56,8 @@ export interface ChatMessage {
   generatedFiles?: GeneratedFileSummary[];
   memoryExtracted?: string[];
   personRecognized?: string[];
+  savedOffline?: boolean;
+  status?: 'sent' | 'pending' | 'failed_offline';
 }
 
 export interface Conversation {
@@ -65,6 +67,7 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
+  pinned?: boolean;
 }
 
 export interface AutoReplySettings {
@@ -118,6 +121,6 @@ export interface UserProfile {
   createdAt: string;
 }
 
-export type ActiveTab = 'chat' | 'memory' | 'people' | 'autoreply' | 'files' | 'security';
+export type ActiveTab = 'chat' | 'history' | 'memory' | 'people' | 'autoreply' | 'files' | 'security';
 
 export type VoiceState = 'ready' | 'listening' | 'thinking' | 'speaking' | 'error';

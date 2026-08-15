@@ -25,33 +25,45 @@ import {
   Eye,
   CheckCircle2,
   AlertCircle,
+  History,
+  Trash2,
+  WifiOff,
+  HardDrive,
 } from 'lucide-react';
 import { ChatMessage, GeneratedFileSummary, Memory, Person, AttachmentItem } from '../types';
 
 interface ChatViewProps {
   messages: ChatMessage[];
+  conversationTitle?: string;
   onSendMessage: (text: string, isVoice?: boolean, attachments?: AttachmentItem[]) => Promise<any>;
   isLoading: boolean;
   onOpenVoice: () => void;
   onNewChat: () => void;
+  onOpenHistory?: () => void;
+  onDeleteMessage?: (messageId: string) => void;
   onOpenMemoryModal: () => void;
   onOpenFileGenerator: () => void;
   onPreviewDocument: (file: GeneratedFileSummary) => void;
   memories: Memory[];
   people: Person[];
+  isOnline?: boolean;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
   messages,
+  conversationTitle = 'Mkuu Chat',
   onSendMessage,
   isLoading,
   onOpenVoice,
   onNewChat,
+  onOpenHistory,
+  onDeleteMessage,
   onOpenMemoryModal,
   onOpenFileGenerator,
   onPreviewDocument,
   memories,
   people,
+  isOnline = true,
 }) => {
   const [inputText, setInputText] = useState('');
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
@@ -231,38 +243,73 @@ export const ChatView: React.FC<ChatViewProps> = ({
       />
 
       {/* Top Chat Header */}
-      <header className="h-14 sm:h-16 flex-shrink-0 border-b border-[#222222] px-4 sm:px-6 flex items-center justify-between bg-[#050505] z-10">
-        <div className="flex items-center space-x-3 sm:space-x-4 overflow-hidden">
+      <header className="h-14 sm:h-16 flex-shrink-0 border-b border-[#222222] px-3 sm:px-6 flex items-center justify-between bg-[#050505] z-10">
+        <div className="flex items-center space-x-2.5 sm:space-x-4 overflow-hidden">
           <div className="flex items-center text-xs uppercase tracking-widest text-[#888888] flex-shrink-0">
-            <span className="status-dot text-emerald-500 bg-emerald-500 mr-2" />
-            <span className="text-[#F5F2ED] font-semibold">Ready</span>
+            <span className={`status-dot mr-1.5 ${isOnline ? 'text-emerald-500 bg-emerald-500' : 'text-amber-500 bg-amber-500'}`} />
+            <span className="text-[#F5F2ED] font-semibold hidden xs:inline">{isOnline ? 'Online' : 'Offline'}</span>
           </div>
+
           <div className="h-4 w-[1px] bg-[#222222] flex-shrink-0" />
-          <div className="text-xs text-[#888888] serif italic truncate">
-            Listening for: "Mkuu..." • Max Memory Active
+
+          <div className="flex items-center space-x-1.5 truncate">
+            <span className="text-xs font-bold text-[#D4AF37] truncate max-w-[140px] sm:max-w-[220px]">
+              {conversationTitle}
+            </span>
+            <span className="text-[10px] text-[#666666] hidden md:inline">
+              • Max Memory & Identify Active
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 flex-shrink-0">
+        <div className="flex items-center space-x-1.5 sm:space-x-2 flex-shrink-0">
+          {onOpenHistory && (
+            <button
+              id="chat-open-history-btn"
+              onClick={onOpenHistory}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl glass hover:bg-white/5 text-xs font-semibold text-[#888888] hover:text-[#D4AF37] flex items-center space-x-1.5 transition border border-[#222222] cursor-pointer"
+              title="Fungua Kumbukumbu za Chat"
+            >
+              <History className="w-3.5 h-3.5 text-[#D4AF37]" />
+              <span className="hidden sm:inline">Kumbukumbu</span>
+            </button>
+          )}
+
           <button
             id="chat-new-conversation-btn"
             onClick={onNewChat}
-            className="px-3 py-1.5 rounded-xl glass hover:bg-white/5 text-xs font-semibold text-[#888888] hover:text-[#F5F2ED] flex items-center space-x-1.5 transition border border-[#222222] cursor-pointer"
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl glass hover:bg-white/5 text-xs font-semibold text-[#888888] hover:text-[#F5F2ED] flex items-center space-x-1.5 transition border border-[#222222] cursor-pointer"
             title="Anzisha Mazungumzo Mapya"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Mazungumzo Mapya</span>
+            <span className="hidden sm:inline">Mpya</span>
           </button>
+
           <button
             id="chat-voice-hud-btn"
             onClick={onOpenVoice}
-            className="px-3 py-1.5 rounded-xl bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 text-[#D4AF37] border border-[#D4AF37]/40 text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer"
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 text-[#D4AF37] border border-[#D4AF37]/40 text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer"
           >
             <Volume2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Ongea kwa Sauti</span>
+            <span className="hidden sm:inline">Sauti</span>
           </button>
         </div>
       </header>
+
+      {/* Offline Notice Banner */}
+      {!isOnline && (
+        <div className="bg-amber-950/40 border-b border-amber-500/30 px-4 py-2 flex items-center justify-between text-xs text-amber-300">
+          <div className="flex items-center space-x-2">
+            <WifiOff className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+            <span>
+              <strong>Upo Offline:</strong> Mazungumzo yote na majibu yaliyopita yamehifadhiwa salama kwenye kifaa chako cha Android. Majibu mapya ya AI yatahitaji intaneti.
+            </span>
+          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold uppercase tracking-wider flex-shrink-0">
+            Local Storage
+          </span>
+        </div>
+      )}
 
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 min-h-0 w-full">
@@ -277,7 +324,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               </h3>
               <p className="text-xs sm:text-sm text-[#888888] mb-6 leading-relaxed">
                 Msaidizi wako mkuu wa kibinafsi mwenye <strong className="text-[#F5F2ED]">Max Memory</strong>,{' '}
-                <strong className="text-[#F5F2ED]">Max Identify</strong> ya watu wako wa karibu, na uwezo wa kusoma picha & nyaraka na kuandaa faili halisi (PDF, Excel, Word).
+                <strong className="text-[#F5F2ED]">Max Identify</strong> ya watu wako wa karibu, na <strong className="text-[#F5F2ED]">Uhifadhi wa Kudumu wa Ndani</strong> unaofanya kazi hata bila mtandao.
               </p>
 
               {/* Quick Prompts */}
@@ -310,7 +357,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
               return (
                 <div
                   key={msg.id}
-                  className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1.5 w-full`}
+                  id={`chat-msg-${msg.id}`}
+                  className={`group relative flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1.5 w-full`}
                 >
                   {/* User Message Bubble */}
                   {isUser ? (
@@ -350,17 +398,46 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           {msg.content}
                         </div>
                       )}
-                      <span className="text-[10px] text-[#888888] px-2">
-                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+
+                      <div className="flex items-center space-x-2 px-2 text-[10px] text-[#888888]">
+                        {msg.savedOffline && (
+                          <span className="text-emerald-400 flex items-center gap-1">
+                            <HardDrive className="w-2.5 h-2.5" />
+                            <span>Saved Local</span>
+                          </span>
+                        )}
+                        <span>
+                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {onDeleteMessage && (
+                          <button
+                            onClick={() => onDeleteMessage(msg.id)}
+                            className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition p-0.5 cursor-pointer"
+                            title="Futa Ujumbe Huu"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     /* Assistant Message Bubble */
                     <div className="flex flex-col items-start space-y-1.5 max-w-[95%] sm:max-w-[85%]">
                       <div className="glass p-4 sm:p-5 rounded-2xl rounded-tl-none border-l-2 border-[#D4AF37] text-xs sm:text-[14px] leading-relaxed text-[#F5F2ED] serif italic border-t border-r border-b border-[#222222] shadow-2xl w-full">
-                        <div className="not-italic font-sans text-xs text-[#D4AF37] font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                          <Crown className="w-3.5 h-3.5" />
-                          <span>MKUU AI</span>
+                        <div className="not-italic font-sans text-xs text-[#D4AF37] font-bold uppercase tracking-widest mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <Crown className="w-3.5 h-3.5" />
+                            <span>MKUU AI</span>
+                          </div>
+                          {onDeleteMessage && (
+                            <button
+                              onClick={() => onDeleteMessage(msg.id)}
+                              className="opacity-0 group-hover:opacity-100 text-[#888888] hover:text-red-400 transition p-1 cursor-pointer"
+                              title="Futa Ujumbe Huu"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
 
                         <div className="prose prose-invert prose-xs sm:prose-sm max-w-none text-[#F5F2ED] break-words">
@@ -694,3 +771,4 @@ export const ChatView: React.FC<ChatViewProps> = ({
   );
 };
 export default ChatView;
+

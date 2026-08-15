@@ -63,6 +63,8 @@ var DEFAULT_AUTO_REPLY_SETTINGS = {
     end: "18:00"
   },
   myPhoneNumber: "+255 700 123 456",
+  phoneVerified: true,
+  phoneVerifiedAt: (/* @__PURE__ */ new Date()).toISOString(),
   smsEnabled: true,
   gmailEnabled: true,
   safetyRules: [
@@ -865,14 +867,14 @@ function getGenAI() {
 var MODEL_FALLBACK_CANDIDATES = [
   "gemini-3.7-flash",
   "gemini-flash-latest",
-  "gemini-3.1-flash-lite",
-  "gemini-3.1-pro-preview"
+  "gemini-3.1-flash-lite"
 ];
 async function generateContentWithFallback(params) {
   const ai = getGenAI();
+  const preferred = params.preferredModel || "gemini-3.7-flash";
   const modelsToTry = [
-    params.preferredModel || "gemini-3.7-flash",
-    ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== (params.preferredModel || "gemini-3.7-flash"))
+    preferred,
+    ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== preferred)
   ];
   let lastError = null;
   for (const model of modelsToTry) {
@@ -891,9 +893,12 @@ async function generateContentWithFallback(params) {
         lastError = err;
         const errMsg = String(err?.message || err);
         const isTransient = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("high demand") || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("Overloaded") || errMsg.includes("fetch failed") || errMsg.includes("network");
-        console.warn(`[MKUU AI] Model ${model} attempt ${attempt} warning:`, errMsg);
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`[MKUU AI] Notice: Model ${model} (attempt ${attempt}) transient check: ${errMsg.slice(0, 120)}... trying fallback.`);
+        }
         if (isTransient && attempt === 1) {
-          await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+          const backoff = 300 + Math.floor(Math.random() * 200);
+          await new Promise((resolve) => setTimeout(resolve, backoff));
           continue;
         }
         break;
@@ -1520,6 +1525,35 @@ async function startServer() {
   };
   app.put("/api/autoreply/settings", handleUpdateAutoReplySettings);
   app.post("/api/autoreply/settings", handleUpdateAutoReplySettings);
+  app.post("/api/autoreply/verify-phone", (req, res) => {
+    const { phoneNumber } = req.body;
+    if (!phoneNumber || !phoneNumber.trim()) {
+      return res.status(400).json({ error: "Nambari ya simu inahitajika ili kuthibitishwa." });
+    }
+    const cleanPhone = phoneNumber.trim();
+    const updated = db.updateAutoReplySettings(DEFAULT_USER_ID, {
+      myPhoneNumber: cleanPhone,
+      phoneVerified: true,
+      phoneVerifiedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    res.json({
+      success: true,
+      message: `Nambari ${cleanPhone} imethibitishwa na kuunganishwa rasmi na mfumo wa Max Auto Reply.`,
+      settings: updated
+    });
+  });
+  app.post("/api/autoreply/remove-phone", (req, res) => {
+    const updated = db.updateAutoReplySettings(DEFAULT_USER_ID, {
+      myPhoneNumber: "",
+      phoneVerified: false,
+      phoneVerifiedAt: void 0
+    });
+    res.json({
+      success: true,
+      message: "Nambari ya simu imeondolewa kikamilifu kwenye Auto Reply.",
+      settings: updated
+    });
+  });
   app.get("/api/autoreply/logs", (req, res) => {
     const logs = db.getAutoReplyLogs(DEFAULT_USER_ID);
     res.json(logs);
