@@ -18,12 +18,11 @@ export function getGenAI(): GoogleGenAI {
   return genAIClient;
 }
 
-// Resilient multi-model fallback list in order of preference
+// Resilient multi-model fallback list in order of preference for high availability
 const MODEL_FALLBACK_CANDIDATES = [
   'gemini-3.7-flash',
   'gemini-flash-latest',
   'gemini-3.1-flash-lite',
-  'gemini-3.1-pro-preview',
 ];
 
 export async function generateContentWithFallback(params: {
@@ -32,15 +31,15 @@ export async function generateContentWithFallback(params: {
   preferredModel?: string;
 }): Promise<string> {
   const ai = getGenAI();
+  const preferred = params.preferredModel || 'gemini-3.7-flash';
   const modelsToTry = [
-    params.preferredModel || 'gemini-3.7-flash',
-    ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== (params.preferredModel || 'gemini-3.7-flash')),
+    preferred,
+    ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== preferred),
   ];
 
   let lastError: any = null;
 
   for (const model of modelsToTry) {
-    // Attempt with retry (up to 2 attempts per model for transient errors)
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const response = await ai.models.generateContent({
@@ -66,15 +65,19 @@ export async function generateContentWithFallback(params: {
           errMsg.includes('fetch failed') ||
           errMsg.includes('network');
 
-        console.warn(`[MKUU AI] Model ${model} attempt ${attempt} warning:`, errMsg);
+        // Log clean debug notice rather than full raw error trace
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[MKUU AI] Notice: Model ${model} (attempt ${attempt}) transient check: ${errMsg.slice(0, 120)}... trying fallback.`);
+        }
 
         if (isTransient && attempt === 1) {
-          // Quick backoff before retrying same model
-          await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+          // Short jittered delay before retry
+          const backoff = 300 + Math.floor(Math.random() * 200);
+          await new Promise((resolve) => setTimeout(resolve, backoff));
           continue;
         }
 
-        // If not transient or second attempt failed, break to next fallback model
+        // On failure, switch to next model immediately
         break;
       }
     }

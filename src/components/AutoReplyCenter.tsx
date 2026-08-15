@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Zap,
   Phone,
@@ -14,6 +14,14 @@ import {
   Sparkles,
   Search,
   Trash2,
+  ShieldCheck,
+  Check,
+  X,
+  RefreshCw,
+  AlertCircle,
+  Smartphone,
+  KeyRound,
+  Save,
 } from 'lucide-react';
 import { AutoReplySettings, AutoReplyLog, Person } from '../types';
 
@@ -53,6 +61,42 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
   const [newRule, setNewRule] = useState('');
   const [rulesList, setRulesList] = useState<string[]>(settings.safetyRules || []);
   const [searchLog, setSearchLog] = useState('');
+
+  // Save states
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+
+  // Phone Verification & Removal Modal States
+  const [showVerifyModal, setShowVerifyModal] = useState<boolean>(false);
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
+  const [generatedOtp, setGeneratedOtp] = useState<string>('');
+  const [enteredOtp, setEnteredOtp] = useState<string>('');
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  const [showRemoveModal, setShowRemoveModal] = useState<boolean>(false);
+  const [isRemoving, setIsRemoving] = useState<boolean>(false);
+
+  const [actionNotification, setActionNotification] = useState<{
+    type: 'success' | 'error' | 'info';
+    text: string;
+  } | null>(null);
+
+  // Sync settings when changed externally
+  useEffect(() => {
+    if (settings.myPhoneNumber !== undefined) {
+      setPhoneNumber(settings.myPhoneNumber);
+    }
+    if (settings.language) setLanguage(settings.language);
+    if (settings.tone) setTone(settings.tone);
+    if (settings.safetyRules) setRulesList(settings.safetyRules);
+  }, [settings.myPhoneNumber, settings.language, settings.tone, settings.safetyRules]);
+
+  const notify = (type: 'success' | 'error' | 'info', text: string) => {
+    setActionNotification({ type, text });
+    setTimeout(() => {
+      setActionNotification((prev) => (prev?.text === text ? null : prev));
+    }, 4500);
+  };
 
   const handlePersonSelect = (personId: string) => {
     setSelectedPersonId(personId);
@@ -97,12 +141,118 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
   };
 
   const handleSaveSettings = async () => {
-    await onUpdateSettings({
-      myPhoneNumber: phoneNumber,
-      language,
-      tone,
-      safetyRules: rulesList,
-    });
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const cleanPhone = phoneNumber.trim();
+      const phoneChanged = cleanPhone !== (settings.myPhoneNumber || '').trim();
+
+      const payload: Partial<AutoReplySettings> = {
+        myPhoneNumber: cleanPhone,
+        language,
+        tone,
+        safetyRules: rulesList,
+        ...(phoneChanged ? { phoneVerified: false, phoneVerifiedAt: undefined } : {}),
+      };
+
+      await onUpdateSettings(payload);
+      setSaveSuccess(true);
+      notify('success', 'Mipangilio ya Auto Reply na nambari ya simu vimehifadhiwa kikamilifu!');
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (e: any) {
+      console.error('Save error', e);
+      notify('error', 'Haikuweza kuhifadhi mipangilio. Tafadhali jaribu tena.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // VERIFY PHONE NUMBER WORKFLOW
+  const handleInitiateVerify = () => {
+    if (!phoneNumber || !phoneNumber.trim()) {
+      notify('error', 'Tafadhali ingiza nambari ya simu kwanza kabla ya kuthibitisha.');
+      return;
+    }
+    const cleanNumber = phoneNumber.trim();
+    const mockOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedOtp(mockOtp);
+    setEnteredOtp(mockOtp); // pre-populate with OTP for seamless one-tap verification
+    setVerifyError(null);
+    setShowVerifyModal(true);
+  };
+
+  const handleExecuteVerification = async (useDirect = false) => {
+    if (!useDirect && enteredOtp.trim() !== generatedOtp.trim()) {
+      setVerifyError('Nambari ya OTP uliyoingiza si sahihi. Tafadhali ingiza namba 6 zilizoonyeshwa.');
+      return;
+    }
+
+    setIsVerifying(true);
+    setVerifyError(null);
+
+    try {
+      const res = await fetch('/api/autoreply/verify-phone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: phoneNumber.trim() }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Hitilafu ya seva ya uthibitishaji.');
+      }
+
+      await onUpdateSettings({
+        myPhoneNumber: phoneNumber.trim(),
+        phoneVerified: true,
+        phoneVerifiedAt: new Date().toISOString(),
+      });
+
+      setIsVerifying(false);
+      setShowVerifyModal(false);
+      notify('success', `Nambari ${phoneNumber.trim()} imethibitishwa kikamilifu na kuunganishwa na mfumo wa Max Auto Reply!`);
+    } catch (err: any) {
+      console.error('Verify error', err);
+      setIsVerifying(false);
+      setVerifyError(err.message || 'Uthibitishaji haukufanikiwa. Tafadhali jaribu tena.');
+    }
+  };
+
+  // REMOVE PHONE NUMBER WORKFLOW
+  const handleInitiateRemove = () => {
+    if (!phoneNumber.trim() && !settings.myPhoneNumber) {
+      notify('info', 'Hakuna nambari ya simu iliyopo ya kuondoa.');
+      return;
+    }
+    setShowRemoveModal(true);
+  };
+
+  const handleExecuteRemove = async () => {
+    setIsRemoving(true);
+    try {
+      const res = await fetch('/api/autoreply/remove-phone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!res.ok) {
+        throw new Error('Haikuweza kuondoa nambari ya simu.');
+      }
+
+      setPhoneNumber('');
+      await onUpdateSettings({
+        myPhoneNumber: '',
+        phoneVerified: false,
+        phoneVerifiedAt: undefined,
+      });
+
+      setIsRemoving(false);
+      setShowRemoveModal(false);
+      notify('success', 'Nambari ya simu imeondolewa kikamilifu kwenye Auto Reply.');
+    } catch (err: any) {
+      console.error('Remove error', err);
+      setIsRemoving(false);
+      notify('error', 'Haikuweza kuondoa nambari ya simu.');
+    }
   };
 
   const handleAddRule = () => {
@@ -119,6 +269,11 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
     setRulesList(updated);
     onUpdateSettings({ safetyRules: updated });
   };
+
+  const isCurrentNumberVerified =
+    Boolean(settings.phoneVerified) &&
+    phoneNumber.trim() === (settings.myPhoneNumber || '').trim() &&
+    phoneNumber.trim().length > 0;
 
   const filteredLogs = logs.filter(
     (l) =>
@@ -498,6 +653,37 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
         </div>
       )}
 
+      {/* Action Notification Banner */}
+      {actionNotification && (
+        <div
+          id="autoreply-action-notification"
+          className={`p-4 rounded-2xl flex items-center justify-between transition-all duration-300 border ${
+            actionNotification.type === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+              : actionNotification.type === 'error'
+              ? 'bg-red-500/10 border-red-500/30 text-red-300'
+              : 'bg-[#D4AF37]/10 border-[#D4AF37]/30 text-[#D4AF37]'
+          }`}
+        >
+          <div className="flex items-center space-x-3 text-xs font-semibold">
+            {actionNotification.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : actionNotification.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            ) : (
+              <Zap className="w-4 h-4 text-[#D4AF37] shrink-0" />
+            )}
+            <span>{actionNotification.text}</span>
+          </div>
+          <button
+            onClick={() => setActionNotification(null)}
+            className="p-1 hover:bg-white/10 rounded-lg text-xs opacity-75 hover:opacity-100 transition cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* TAB 3: SETTINGS & SAFETY RULES (SMS SETTINGS & MY PHONE NUMBER) */}
       {activeSubTab === 'settings' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -509,9 +695,23 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
                   <Phone className="w-4 h-4 text-[#D4AF37]" />
                   <span>MY PHONE NUMBER — SMS IDENTITY</span>
                 </h3>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold uppercase">
-                  PERSISTED
-                </span>
+                {isCurrentNumberVerified ? (
+                  <span
+                    id="phone-verified-badge"
+                    className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 font-bold uppercase flex items-center gap-1.5 shadow-sm"
+                  >
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    <span>VERIFIED</span>
+                  </span>
+                ) : (
+                  <span
+                    id="phone-unverified-badge"
+                    className="text-[10px] px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/40 font-bold uppercase flex items-center gap-1.5 shadow-sm"
+                  >
+                    <AlertTriangle className="w-3 h-3 text-amber-400" />
+                    <span>NOT VERIFIED</span>
+                  </span>
+                )}
               </div>
 
               <p className="text-xs text-[#888888] leading-relaxed">
@@ -558,35 +758,61 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
                   />
                 </div>
 
+                {isCurrentNumberVerified && settings.phoneVerifiedAt && (
+                  <div className="p-2.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-emerald-400 text-[11px] flex items-center space-x-2">
+                    <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      Nambari hii imehakikiwa na kuunganishwa rasmi ({new Date(settings.phoneVerifiedAt).toLocaleDateString()} {new Date(settings.phoneVerifiedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}).
+                    </span>
+                  </div>
+                )}
+
                 {/* Verification & Action Buttons */}
                 <div className="pt-2 flex flex-wrap items-center gap-2">
                   <button
                     id="verify-phone-number-btn"
-                    onClick={() => {
-                      alert(`Nambari ${phoneNumber} imethibitishwa na kukaguliwa kikamilifu kwa akaunti ya Max.`);
-                    }}
+                    onClick={handleInitiateVerify}
                     className="px-4 py-2 rounded-xl glass hover:bg-white/5 text-[#D4AF37] border border-[#D4AF37]/30 text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer"
                   >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>VERIFY</span>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#D4AF37]" />
+                    <span>{isCurrentNumberVerified ? 'RE-VERIFY' : 'VERIFY'}</span>
                   </button>
 
                   <button
                     id="save-phone-number-btn"
                     onClick={handleSaveSettings}
-                    className="px-4 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-md"
+                    disabled={isSaving}
+                    className="px-4 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center space-x-1.5 disabled:opacity-50"
                   >
-                    <span>SAVE</span>
+                    {isSaving ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>INAHIFADHI...</span>
+                      </>
+                    ) : saveSuccess ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>IMEHIFADHIWA!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-3.5 h-3.5" />
+                        <span>SAVE</span>
+                      </>
+                    )}
                   </button>
 
                   <button
                     id="remove-phone-number-btn"
-                    onClick={() => {
-                      setPhoneNumber('');
-                      onUpdateSettings({ myPhoneNumber: '' });
-                    }}
-                    className="px-4 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+                    onClick={handleInitiateRemove}
+                    disabled={!phoneNumber.trim() && !settings.myPhoneNumber}
+                    className={`px-4 py-2 rounded-xl border text-xs font-bold uppercase tracking-wider transition cursor-pointer flex items-center space-x-1.5 ${
+                      !phoneNumber.trim() && !settings.myPhoneNumber
+                        ? 'opacity-40 bg-red-500/5 border-red-500/10 text-red-400/50 cursor-not-allowed'
+                        : 'bg-red-500/10 hover:bg-red-500/20 text-red-400 border-red-500/30'
+                    }`}
                   >
+                    <Trash2 className="w-3.5 h-3.5" />
                     <span>REMOVE</span>
                   </button>
                 </div>
@@ -633,9 +859,25 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
                 <button
                   id="save-autoreply-general-settings-btn"
                   onClick={handleSaveSettings}
-                  className="w-full py-2.5 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-md"
+                  disabled={isSaving}
+                  className="w-full py-2.5 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-md flex items-center justify-center space-x-2 disabled:opacity-50"
                 >
-                  HIFADHI MIPANGILIO YA MAJIBU
+                  {isSaving ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>INAHIFADHI MIPANGILIO...</span>
+                    </>
+                  ) : saveSuccess ? (
+                    <>
+                      <Check className="w-4 h-4 stroke-[2.5]" />
+                      <span>MIPANGILIO IMEHIFADHIWA!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>HIFADHI MIPANGILIO YA MAJIBU</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -682,6 +924,179 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
                   Weka
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VERIFICATION MODAL */}
+      {showVerifyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="glass p-6 sm:p-8 rounded-3xl border border-[#D4AF37]/30 max-w-md w-full shadow-2xl space-y-5 relative bg-[#090909]">
+            <button
+              onClick={() => setShowVerifyModal(false)}
+              className="absolute top-4 right-4 p-2 text-[#888888] hover:text-white rounded-full hover:bg-white/5 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-2xl bg-[#D4AF37]/15 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37]">
+                <Smartphone className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="serif font-bold text-base text-[#F5F2ED]">Thibitisha Nambari ya Simu</h3>
+                <p className="text-xs text-[#888888]">SMS Gateway Identity Verification</p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#111111] border border-[#222222] space-y-3">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-[#888888]">Nambari ya Simu:</span>
+                <span className="font-mono font-bold text-[#F5F2ED] text-sm">{phoneNumber}</span>
+              </div>
+
+              {/* Mock SMS notification box */}
+              <div className="p-3 rounded-xl bg-[#080808] border border-[#D4AF37]/30 space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] text-[#D4AF37] font-bold">
+                  <span className="flex items-center gap-1">
+                    <KeyRound className="w-3.5 h-3.5" /> Kodi ya Uthibitisho (SMS OTP)
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#D4AF37]/20 text-[#D4AF37]">
+                    Simulated SMS
+                  </span>
+                </div>
+                <div className="text-center py-2">
+                  <span className="font-mono text-2xl tracking-[0.3em] font-bold text-[#F5F2ED] select-all">
+                    {generatedOtp}
+                  </span>
+                </div>
+                <p className="text-[10px] text-[#888888] text-center">
+                  Ingiza nambari hii hapa chini au bonyeza kitufe cha kuthibitisha papo hapo.
+                </p>
+              </div>
+
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-[11px] font-bold text-[#888888] uppercase tracking-wider">
+                  Ingiza Kodi ya OTP (Namba 6)
+                </label>
+                <input
+                  id="phone-otp-input"
+                  type="text"
+                  maxLength={6}
+                  value={enteredOtp}
+                  onChange={(e) => {
+                    setEnteredOtp(e.target.value);
+                    setVerifyError(null);
+                  }}
+                  placeholder="Mfano: 849201"
+                  className="w-full px-4 py-2.5 rounded-xl bg-[#080808] border border-[#222222] text-[#F5F2ED] text-center font-mono text-lg tracking-widest focus:outline-none focus:border-[#D4AF37]"
+                />
+              </div>
+
+              {verifyError && (
+                <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <span>{verifyError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <button
+                id="submit-phone-verification-btn"
+                onClick={() => handleExecuteVerification(false)}
+                disabled={isVerifying || !enteredOtp.trim()}
+                className="w-full py-3 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider transition cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
+              >
+                {isVerifying ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>INATHIBITISHA...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>THIBITISHA KODI (CONFIRM OTP)</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                id="instant-phone-verification-btn"
+                onClick={() => handleExecuteVerification(true)}
+                disabled={isVerifying}
+                className="w-full py-2.5 rounded-xl glass hover:bg-white/5 text-[#D4AF37] border border-[#D4AF37]/30 text-xs font-bold uppercase tracking-wider transition cursor-pointer flex items-center justify-center space-x-1.5"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>THIBITISHA MOJA KWA MOJA (ONE-TAP)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REMOVE PHONE NUMBER CONFIRMATION MODAL */}
+      {showRemoveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="glass p-6 sm:p-8 rounded-3xl border border-red-500/30 max-w-md w-full shadow-2xl space-y-5 relative bg-[#090909]">
+            <button
+              onClick={() => setShowRemoveModal(false)}
+              className="absolute top-4 right-4 p-2 text-[#888888] hover:text-white rounded-full hover:bg-white/5 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="serif font-bold text-base text-[#F5F2ED]">Ondoa Nambari ya Simu?</h3>
+                <p className="text-xs text-[#888888]">Auto Reply Phone Number Removal</p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#111111] border border-[#222222] space-y-2 text-xs">
+              <p className="text-[#888888] leading-relaxed">
+                Je, una uhakika unataka kuondoa nambari{' '}
+                <strong className="text-[#F5F2ED] font-mono">
+                  {phoneNumber || settings.myPhoneNumber || 'iliyopo'}
+                </strong>{' '}
+                kutoka kwenye mfumo wa Auto Reply?
+              </p>
+              <p className="text-amber-400/90 text-[11px] pt-1">
+                ⚠️ Ujumbe wa SMS hautatumwa wala kupokelewa kiotomatiki hadi utakapoweka na kuthibitisha nambari mpya ya simu.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                id="cancel-remove-phone-btn"
+                onClick={() => setShowRemoveModal(false)}
+                className="py-2.5 rounded-xl glass hover:bg-white/5 text-[#888888] hover:text-white text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+              >
+                GHAIRI
+              </button>
+
+              <button
+                id="confirm-remove-phone-btn"
+                onClick={handleExecuteRemove}
+                disabled={isRemoving}
+                className="py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-xs uppercase tracking-wider transition cursor-pointer shadow-lg flex items-center justify-center space-x-1.5"
+              >
+                {isRemoving ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>INAONDOA...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ONDOA SASA</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

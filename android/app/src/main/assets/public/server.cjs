@@ -503,6 +503,10 @@ ${content}`;
 function sanitizeFilename(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
+function sanitizeForPdf(text) {
+  if (!text) return "";
+  return text.replace(/[—–]/g, "-").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/…/g, "...").replace(/•/g, "*").replace(/[^\x00-\xFF]/g, " ").trim();
+}
 async function generatePdfBuffer(title, content, data) {
   const pdfDoc = await import_pdf_lib.PDFDocument.create();
   let page = pdfDoc.addPage([595.28, 841.89]);
@@ -518,7 +522,7 @@ async function generatePdfBuffer(title, content, data) {
     color: (0, import_pdf_lib.rgb)(0.06, 0.09, 0.16)
     // Dark slate
   });
-  page.drawText("MKUU AI \u2014 MAX PERSONAL ASSISTANT", {
+  page.drawText("MKUU AI - MAX PERSONAL ASSISTANT", {
     x: 55,
     y: height - 60,
     size: 14,
@@ -526,7 +530,7 @@ async function generatePdfBuffer(title, content, data) {
     color: (0, import_pdf_lib.rgb)(0.9, 0.75, 0.3)
     // Gold accent
   });
-  page.drawText(`Tarehe: ${(/* @__PURE__ */ new Date()).toLocaleDateString("sw-TZ")} | Mmiliki: MAX`, {
+  page.drawText(sanitizeForPdf(`Tarehe: ${(/* @__PURE__ */ new Date()).toLocaleDateString("sw-TZ")} | Mmiliki: MAX`), {
     x: 55,
     y: height - 76,
     size: 9,
@@ -534,7 +538,8 @@ async function generatePdfBuffer(title, content, data) {
     color: (0, import_pdf_lib.rgb)(0.8, 0.85, 0.9)
   });
   let currentY = height - 120;
-  page.drawText(title, {
+  const cleanTitle = sanitizeForPdf(title) || "MKUU AI DOCUMENT";
+  page.drawText(cleanTitle, {
     x: 40,
     y: currentY,
     size: 18,
@@ -549,19 +554,20 @@ async function generatePdfBuffer(title, content, data) {
     color: (0, import_pdf_lib.rgb)(0.85, 0.88, 0.92)
   });
   currentY -= 15;
-  const rawLines = content.split("\n");
+  const rawLines = (content || "").split("\n");
   const maxCharsPerLine = 75;
   for (const rawLine of rawLines) {
+    const cleanLine = sanitizeForPdf(rawLine);
     if (currentY < 80) {
       page = pdfDoc.addPage([595.28, 841.89]);
       currentY = height - 60;
     }
-    if (rawLine.trim() === "") {
+    if (cleanLine.trim() === "") {
       currentY -= 12;
       continue;
     }
-    if (rawLine.startsWith("# ") || rawLine.startsWith("## ") || rawLine.startsWith("### ")) {
-      const headingText = rawLine.replace(/^#+\s*/, "");
+    if (cleanLine.startsWith("# ") || cleanLine.startsWith("## ") || cleanLine.startsWith("### ")) {
+      const headingText = cleanLine.replace(/^#+\s*/, "");
       currentY -= 8;
       page.drawText(headingText, {
         x: 40,
@@ -573,8 +579,8 @@ async function generatePdfBuffer(title, content, data) {
       currentY -= 18;
       continue;
     }
-    if (rawLine.trim().startsWith("- ") || rawLine.trim().startsWith("* ")) {
-      const bulletText = rawLine.trim().replace(/^[-*]\s*/, "");
+    if (cleanLine.trim().startsWith("- ") || cleanLine.trim().startsWith("* ")) {
+      const bulletText = cleanLine.trim().replace(/^[-*]\s*/, "");
       page.drawCircle({
         x: 46,
         y: currentY + 3.5,
@@ -598,7 +604,7 @@ async function generatePdfBuffer(title, content, data) {
       }
       continue;
     }
-    const wrapped = wrapText(rawLine, maxCharsPerLine);
+    const wrapped = wrapText(cleanLine, maxCharsPerLine);
     for (const line of wrapped) {
       if (currentY < 80) {
         page = pdfDoc.addPage([595.28, 841.89]);
@@ -623,7 +629,7 @@ async function generatePdfBuffer(title, content, data) {
       thickness: 0.5,
       color: (0, import_pdf_lib.rgb)(0.8, 0.8, 0.8)
     });
-    p.drawText(`Imeandaliwa na MKUU AI kwa ajili ya Max \u2022 Ukurasa ${i + 1} kati ya ${pageCount}`, {
+    p.drawText(`Imeandaliwa na MKUU AI kwa ajili ya Max - Ukurasa ${i + 1} kati ya ${pageCount}`, {
       x: 40,
       y: 30,
       size: 8,
@@ -1590,6 +1596,24 @@ async function startServer() {
       res.status(500).json({ error: e.message || "Hitilafu wakati wa kuandaa faili" });
     }
   });
+  app.get("/api/files/view/:id", (req, res) => {
+    const { id } = req.params;
+    const files = db.getFiles(DEFAULT_USER_ID);
+    const file = files.find((f) => f.id === id);
+    if (!file) {
+      return res.status(404).send("Faili halikupatikana");
+    }
+    const diskPath = import_path3.default.join(FILES_DIR, `${file.id}_${file.filename}`);
+    if (!import_fs3.default.existsSync(diskPath)) {
+      return res.status(404).send("Faili halipo kwenye hifadhi ya diski");
+    }
+    res.setHeader("Content-Type", file.mimeType || "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(file.filename)}"`);
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    const stream = import_fs3.default.createReadStream(diskPath);
+    stream.pipe(res);
+  });
   app.get("/api/files/download/:id", (req, res) => {
     const { id } = req.params;
     const files = db.getFiles(DEFAULT_USER_ID);
@@ -1603,12 +1627,44 @@ async function startServer() {
     }
     res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
     res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(file.filename)}"`);
+    res.setHeader("Access-Control-Allow-Origin", "*");
     const stream = import_fs3.default.createReadStream(diskPath);
     stream.pipe(res);
   });
+  app.get("/api/files/raw/:id", (req, res) => {
+    const { id } = req.params;
+    const files = db.getFiles(DEFAULT_USER_ID);
+    const file = files.find((f) => f.id === id);
+    if (!file) {
+      return res.status(404).json({ error: "Faili halikupatikana" });
+    }
+    const diskPath = import_path3.default.join(FILES_DIR, `${file.id}_${file.filename}`);
+    if (!import_fs3.default.existsSync(diskPath)) {
+      return res.status(404).json({ error: "Faili halipo kwenye hifadhi" });
+    }
+    try {
+      const buffer = import_fs3.default.readFileSync(diskPath);
+      res.json({
+        id: file.id,
+        filename: file.filename,
+        fileType: file.fileType,
+        mimeType: file.mimeType,
+        size: buffer.length,
+        base64: buffer.toString("base64"),
+        dataUrl: `data:${file.mimeType || "application/octet-stream"};base64,${buffer.toString("base64")}`
+      });
+    } catch (e) {
+      res.status(500).json({ error: "Haikuweza kusoma faili" });
+    }
+  });
   app.delete("/api/files/:id", (req, res) => {
-    const deleted = db.deleteFile(req.params.id, DEFAULT_USER_ID);
-    res.json({ success: deleted });
+    const { id } = req.params;
+    const deleted = db.deleteFile(id, DEFAULT_USER_ID);
+    if (deleted) {
+      res.json({ success: true, message: "Faili limefutwa kikamilifu." });
+    } else {
+      res.status(404).json({ success: false, error: "Faili halikupatikana au halikuweza kufutwa." });
+    }
   });
   app.post("/api/files/upload", (req, res) => {
     try {

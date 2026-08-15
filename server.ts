@@ -271,6 +271,42 @@ async function startServer() {
   app.put('/api/autoreply/settings', handleUpdateAutoReplySettings);
   app.post('/api/autoreply/settings', handleUpdateAutoReplySettings);
 
+  // Verify Phone Number
+  app.post('/api/autoreply/verify-phone', (req, res) => {
+    const { phoneNumber } = req.body;
+    if (!phoneNumber || !phoneNumber.trim()) {
+      return res.status(400).json({ error: 'Nambari ya simu inahitajika ili kuthibitishwa.' });
+    }
+
+    const cleanPhone = phoneNumber.trim();
+    const updated = db.updateAutoReplySettings(DEFAULT_USER_ID, {
+      myPhoneNumber: cleanPhone,
+      phoneVerified: true,
+      phoneVerifiedAt: new Date().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: `Nambari ${cleanPhone} imethibitishwa na kuunganishwa rasmi na mfumo wa Max Auto Reply.`,
+      settings: updated,
+    });
+  });
+
+  // Remove Phone Number
+  app.post('/api/autoreply/remove-phone', (req, res) => {
+    const updated = db.updateAutoReplySettings(DEFAULT_USER_ID, {
+      myPhoneNumber: '',
+      phoneVerified: false,
+      phoneVerifiedAt: undefined,
+    });
+
+    res.json({
+      success: true,
+      message: 'Nambari ya simu imeondolewa kikamilifu kwenye Auto Reply.',
+      settings: updated,
+    });
+  });
+
   app.get('/api/autoreply/logs', (req, res) => {
     const logs = db.getAutoReplyLogs(DEFAULT_USER_ID);
     res.json(logs);
@@ -363,6 +399,30 @@ async function startServer() {
     }
   });
 
+  // View file inline (e.g. for PDF preview or image view)
+  app.get('/api/files/view/:id', (req, res) => {
+    const { id } = req.params;
+    const files = db.getFiles(DEFAULT_USER_ID);
+    const file = files.find((f) => f.id === id);
+
+    if (!file) {
+      return res.status(404).send('Faili halikupatikana');
+    }
+
+    const diskPath = path.join(FILES_DIR, `${file.id}_${file.filename}`);
+    if (!fs.existsSync(diskPath)) {
+      return res.status(404).send('Faili halipo kwenye hifadhi ya diski');
+    }
+
+    res.setHeader('Content-Type', file.mimeType || 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.filename)}"`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    const stream = fs.createReadStream(diskPath);
+    stream.pipe(res);
+  });
+
+  // Download file as attachment
   app.get('/api/files/download/:id', (req, res) => {
     const { id } = req.params;
     const files = db.getFiles(DEFAULT_USER_ID);
@@ -379,13 +439,50 @@ async function startServer() {
 
     res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.filename)}"`);
+    res.setHeader('Access-Control-Allow-Origin', '*');
     const stream = fs.createReadStream(diskPath);
     stream.pipe(res);
   });
 
+  // Get raw file base64 / text content for in-app viewers
+  app.get('/api/files/raw/:id', (req, res) => {
+    const { id } = req.params;
+    const files = db.getFiles(DEFAULT_USER_ID);
+    const file = files.find((f) => f.id === id);
+
+    if (!file) {
+      return res.status(404).json({ error: 'Faili halikupatikana' });
+    }
+
+    const diskPath = path.join(FILES_DIR, `${file.id}_${file.filename}`);
+    if (!fs.existsSync(diskPath)) {
+      return res.status(404).json({ error: 'Faili halipo kwenye hifadhi' });
+    }
+
+    try {
+      const buffer = fs.readFileSync(diskPath);
+      res.json({
+        id: file.id,
+        filename: file.filename,
+        fileType: file.fileType,
+        mimeType: file.mimeType,
+        size: buffer.length,
+        base64: buffer.toString('base64'),
+        dataUrl: `data:${file.mimeType || 'application/octet-stream'};base64,${buffer.toString('base64')}`,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: 'Haikuweza kusoma faili' });
+    }
+  });
+
   app.delete('/api/files/:id', (req, res) => {
-    const deleted = db.deleteFile(req.params.id, DEFAULT_USER_ID);
-    res.json({ success: deleted });
+    const { id } = req.params;
+    const deleted = db.deleteFile(id, DEFAULT_USER_ID);
+    if (deleted) {
+      res.json({ success: true, message: 'Faili limefutwa kikamilifu.' });
+    } else {
+      res.status(404).json({ success: false, error: 'Faili halikupatikana au halikuweza kufutwa.' });
+    }
   });
 
   // Upload/Process Document or Image

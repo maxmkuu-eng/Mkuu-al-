@@ -321,14 +321,23 @@ export const App: React.FC = () => {
 
   // Auto Reply Handlers
   const handleUpdateAutoReplySettings = async (newSettings: Partial<AutoReplySettings>) => {
-    const res = await fetch('/api/autoreply/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newSettings),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setAutoReplySettings(updated);
+    try {
+      const res = await fetch('/api/autoreply/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSettings),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setAutoReplySettings(updated);
+        return updated;
+      } else {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Haikuweza kusasisha mipangilio.');
+      }
+    } catch (err) {
+      console.error('Error updating auto reply settings:', err);
+      throw err;
     }
   };
 
@@ -396,6 +405,11 @@ export const App: React.FC = () => {
     const res = await fetch(`/api/files/${id}`, { method: 'DELETE' });
     if (res.ok) {
       setFiles((prev) => prev.filter((f) => f.id !== id));
+      if (previewingFile?.id === id) {
+        setPreviewingFile(null);
+      }
+    } else {
+      throw new Error('Faili haikuweza kufutwa.');
     }
   };
 

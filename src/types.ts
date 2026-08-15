@@ -80,6 +80,8 @@ export interface AutoReplySettings {
     end: string;
   };
   myPhoneNumber: string;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: string;
   smsEnabled: boolean;
   gmailEnabled: boolean;
   safetyRules: string[];

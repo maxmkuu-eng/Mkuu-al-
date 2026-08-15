@@ -71,6 +71,8 @@ export interface AutoReplySettings {
     end: string;
   };
   myPhoneNumber: string;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: string;
   smsEnabled: boolean;
   gmailEnabled: boolean;
   safetyRules: string[];
@@ -154,6 +156,8 @@ const DEFAULT_AUTO_REPLY_SETTINGS: AutoReplySettings = {
     end: '18:00',
   },
   myPhoneNumber: '+255 700 123 456',
+  phoneVerified: true,
+  phoneVerifiedAt: new Date().toISOString(),
   smsEnabled: true,
   gmailEnabled: true,
   safetyRules: [

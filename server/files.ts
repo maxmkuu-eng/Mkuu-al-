@@ -78,6 +78,18 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+function sanitizeForPdf(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/[—–]/g, '-')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/…/g, '...')
+    .replace(/•/g, '*')
+    .replace(/[^\x00-\xFF]/g, ' ')
+    .trim();
+}
+
 async function generatePdfBuffer(title: string, content: string, data?: any[]): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   let page = pdfDoc.addPage([595.28, 841.89]); // A4
@@ -96,7 +108,7 @@ async function generatePdfBuffer(title: string, content: string, data?: any[]): 
     color: rgb(0.06, 0.09, 0.16), // Dark slate
   });
 
-  page.drawText('MKUU AI — MAX PERSONAL ASSISTANT', {
+  page.drawText('MKUU AI - MAX PERSONAL ASSISTANT', {
     x: 55,
     y: height - 60,
     size: 14,
@@ -104,7 +116,7 @@ async function generatePdfBuffer(title: string, content: string, data?: any[]): 
     color: rgb(0.9, 0.75, 0.3), // Gold accent
   });
 
-  page.drawText(`Tarehe: ${new Date().toLocaleDateString('sw-TZ')} | Mmiliki: MAX`, {
+  page.drawText(sanitizeForPdf(`Tarehe: ${new Date().toLocaleDateString('sw-TZ')} | Mmiliki: MAX`), {
     x: 55,
     y: height - 76,
     size: 9,
@@ -115,7 +127,8 @@ async function generatePdfBuffer(title: string, content: string, data?: any[]): 
   let currentY = height - 120;
 
   // Title
-  page.drawText(title, {
+  const cleanTitle = sanitizeForPdf(title) || 'MKUU AI DOCUMENT';
+  page.drawText(cleanTitle, {
     x: 40,
     y: currentY,
     size: 18,
@@ -134,23 +147,24 @@ async function generatePdfBuffer(title: string, content: string, data?: any[]): 
   currentY -= 15;
 
   // Format content lines
-  const rawLines = content.split('\n');
+  const rawLines = (content || '').split('\n');
   const maxCharsPerLine = 75;
 
   for (const rawLine of rawLines) {
+    const cleanLine = sanitizeForPdf(rawLine);
     if (currentY < 80) {
       page = pdfDoc.addPage([595.28, 841.89]);
       currentY = height - 60;
     }
 
-    if (rawLine.trim() === '') {
+    if (cleanLine.trim() === '') {
       currentY -= 12;
       continue;
     }
 
     // Check heading
-    if (rawLine.startsWith('# ') || rawLine.startsWith('## ') || rawLine.startsWith('### ')) {
-      const headingText = rawLine.replace(/^#+\s*/, '');
+    if (cleanLine.startsWith('# ') || cleanLine.startsWith('## ') || cleanLine.startsWith('### ')) {
+      const headingText = cleanLine.replace(/^#+\s*/, '');
       currentY -= 8;
       page.drawText(headingText, {
         x: 40,
@@ -164,8 +178,8 @@ async function generatePdfBuffer(title: string, content: string, data?: any[]): 
     }
 
     // Bullet point
-    if (rawLine.trim().startsWith('- ') || rawLine.trim().startsWith('* ')) {
-      const bulletText = rawLine.trim().replace(/^[-*]\s*/, '');
+    if (cleanLine.trim().startsWith('- ') || cleanLine.trim().startsWith('* ')) {
+      const bulletText = cleanLine.trim().replace(/^[-*]\s*/, '');
       page.drawCircle({
         x: 46,
         y: currentY + 3.5,
@@ -192,7 +206,7 @@ async function generatePdfBuffer(title: string, content: string, data?: any[]): 
     }
 
     // Standard paragraph
-    const wrapped = wrapText(rawLine, maxCharsPerLine);
+    const wrapped = wrapText(cleanLine, maxCharsPerLine);
     for (const line of wrapped) {
       if (currentY < 80) {
         page = pdfDoc.addPage([595.28, 841.89]);
@@ -219,7 +233,7 @@ async function generatePdfBuffer(title: string, content: string, data?: any[]): 
       thickness: 0.5,
       color: rgb(0.8, 0.8, 0.8),
     });
-    p.drawText(`Imeandaliwa na MKUU AI kwa ajili ya Max • Ukurasa ${i + 1} kati ya ${pageCount}`, {
+    p.drawText(`Imeandaliwa na MKUU AI kwa ajili ya Max - Ukurasa ${i + 1} kati ya ${pageCount}`, {
       x: 40,
       y: 30,
       size: 8,

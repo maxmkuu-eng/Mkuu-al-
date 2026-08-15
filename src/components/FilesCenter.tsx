@@ -13,7 +13,9 @@ import {
   CheckCircle2,
   Eye,
   AlertCircle,
+  AlertTriangle,
   MessageSquare,
+  RefreshCw,
   Image as ImageIcon,
 } from 'lucide-react';
 import { GeneratedFileSummary } from '../types';
@@ -40,6 +42,8 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
   const [uploadedNotification, setUploadedNotification] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [fileToDelete, setFileToDelete] = useState<GeneratedFileSummary | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fileTypes = ['All', 'pdf', 'xlsx', 'docx', 'csv', 'json', 'txt', 'png'];
@@ -133,22 +137,86 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
     reader.readAsDataURL(file);
   };
 
+  const handleExecuteDelete = async () => {
+    if (!fileToDelete) return;
+    setIsDeleting(true);
+    setErrorMessage(null);
+    try {
+      await onDeleteFile(fileToDelete.id);
+      setIsDeleting(false);
+      setFileToDelete(null);
+      setUploadedNotification(`Faili limefutwa kikamilifu.`);
+      setTimeout(() => setUploadedNotification(null), 4000);
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      setIsDeleting(false);
+      setErrorMessage('Faili haikuweza kufutwa.');
+    }
+  };
+
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#080808] space-y-6 text-[#F5F2ED]">
+    <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#080808] space-y-6 text-[#F5F2ED] relative">
+      {/* Dedicated In-App Delete Confirmation Modal */}
+      {fileToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-md bg-[#0e0e0e] border border-[#262626] rounded-3xl p-6 shadow-2xl space-y-4 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-red-950/60 border border-red-500/40 text-red-400 flex items-center justify-center mx-auto shadow-lg">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="serif font-bold text-lg text-white">Una uhakika unataka kufuta faili hili?</h3>
+              <p className="text-xs text-[#888888]">
+                Faili <span className="text-[#F5F2ED] font-mono font-bold">"{fileToDelete.filename}"</span> ({(fileToDelete.size / 1024).toFixed(1)} KB) litafutwa kabisa kutoka kwenye hifadhi ya diski na orodha ya mafaili.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-center space-x-3 pt-3">
+              <button
+                id="modal-cancel-delete-btn"
+                onClick={() => setFileToDelete(null)}
+                disabled={isDeleting}
+                className="px-5 py-2.5 rounded-xl glass border border-[#333333] text-[#888888] hover:text-[#F5F2ED] text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+              >
+                CANCEL
+              </button>
+
+              <button
+                id="modal-confirm-delete-btn"
+                onClick={handleExecuteDelete}
+                disabled={isDeleting}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg transition cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Inafuta...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>DELETE</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Banner */}
       <div className="glass p-6 sm:p-8 rounded-3xl border border-[#222222] relative overflow-hidden shadow-2xl">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="space-y-2">
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] text-[10px] uppercase font-bold tracking-[0.2em]">
               <FolderDown className="w-3.5 h-3.5" />
-              <span>FAILI ZANGU • REAL BINARY FILE VAULT</span>
+              <span>MY FILES • REAL STORED FILES</span>
             </div>
             <h2 className="serif text-xl sm:text-3xl font-bold text-[#F5F2ED] tracking-wide">
               Hifadhi ya Mafaili Halisi ya Max
             </h2>
             <p className="text-xs sm:text-sm text-[#888888] max-w-2xl leading-relaxed">
-              Mafaili yote (PDF, Excel, Word, CSV, Picha) yanayotengenezwa au kupakiwa na Max yanahifadhiwa kiotomatiki,
-              yakiwa na uwezo wa kusomwa moja kwa moja (In-App Preview) na kupakuliwa mara moja.
+              Kila faili lililopo hapa ni faili halisi lenye muundo wa binary (PDF, Excel, Word, CSV, TXT, JSON). Unaweza kufungua kusoma moja kwa moja (Open/Read), kupakua (Download), au kulifuta kabisa (Delete).
             </p>
           </div>
 
@@ -180,8 +248,8 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
           <div className="serif text-2xl font-bold text-emerald-400 mt-1">100% Halisi</div>
         </div>
         <div className="glass p-4 rounded-2xl border border-[#222222]">
-          <div className="text-[10px] uppercase tracking-wider text-[#888888]">Upatikanaji</div>
-          <div className="serif text-2xl font-bold text-[#D4AF37] mt-1">Moja kwa Moja</div>
+          <div className="text-[10px] uppercase tracking-wider text-[#888888]">Hali ya Mfumo</div>
+          <div className="serif text-2xl font-bold text-[#D4AF37] mt-1">Tayari</div>
         </div>
       </div>
 
@@ -288,8 +356,8 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
                       <h4 className="font-bold text-[#F5F2ED] text-xs sm:text-sm truncate" title={file.filename}>
                         {file.filename}
                       </h4>
-                      <div className="text-[10px] text-[#888888] font-mono">
-                        {(file.size / 1024).toFixed(1)} KB • {file.fileType.toUpperCase()}
+                      <div className="text-[10px] text-[#888888] font-mono mt-0.5">
+                        {(file.size / 1024).toFixed(1)} KB • {file.fileType.toUpperCase()} • {new Date(file.createdAt).toLocaleDateString('sw-TZ')}
                       </div>
                     </div>
                   </div>
@@ -321,21 +389,18 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
                   <button
                     id={`vault-preview-btn-${file.id}`}
                     onClick={() => onPreviewDocument(file)}
-                    className="p-1.5 rounded-lg text-[#CCCCCC] hover:text-[#D4AF37] hover:bg-white/5 border border-[#333333] transition cursor-pointer"
-                    title="Tazama / Soma Faili"
+                    className="px-2.5 py-1.5 rounded-lg text-[#CCCCCC] hover:text-[#D4AF37] hover:bg-white/5 border border-[#333333] transition cursor-pointer flex items-center space-x-1 text-xs font-semibold"
+                    title="OPEN / READ"
                   >
                     <Eye className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">OPEN</span>
                   </button>
 
                   <button
                     id={`vault-delete-btn-${file.id}`}
-                    onClick={async () => {
-                      if (confirm(`Je, unataka kufuta faili "${file.filename}"?`)) {
-                        await onDeleteFile(file.id);
-                      }
-                    }}
+                    onClick={() => setFileToDelete(file)}
                     className="p-1.5 rounded-lg text-[#888888] hover:text-red-400 hover:bg-red-500/10 transition cursor-pointer"
-                    title="Futa Faili"
+                    title="DELETE"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -347,7 +412,7 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
                     className="px-3 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-1.5 shadow-md transition cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-                    <span>PAKUA</span>
+                    <span>DOWNLOAD</span>
                   </a>
                 </div>
               </div>

@@ -13,8 +13,9 @@ import {
   Check,
   ZoomIn,
   ZoomOut,
-  RotateCw,
-  Share2,
+  AlertTriangle,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { GeneratedFileSummary } from '../types';
 
@@ -36,15 +37,29 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen || !file) {
       setTextContent('');
       setError(null);
+      setShowDeleteConfirm(false);
+      setIsDeleting(false);
+      setDeleteError(null);
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+        setPdfBlobUrl(null);
+      }
       return;
     }
 
     setZoomLevel(100);
+    setShowDeleteConfirm(false);
+    setDeleteError(null);
+
     const isTextual = ['txt', 'json', 'csv', 'md'].includes(file.fileType);
 
     if (isTextual) {
@@ -52,7 +67,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       setError(null);
       fetch(file.downloadUrl)
         .then((res) => {
-          if (!res.ok) throw new Error('Haikuweza kupakia maudhui ya faili');
+          if (!res.ok) throw new Error('Faili haikuweza kufunguliwa.');
           return res.text();
         })
         .then((text) => {
@@ -60,11 +75,37 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           setLoading(false);
         })
         .catch((err) => {
-          setError(err.message || 'Hitilafu ya kusoma faili');
+          console.error('File open error:', err);
+          setError('Faili haikuweza kufunguliwa.');
+          setLoading(false);
+        });
+    } else if (file.fileType === 'pdf') {
+      setLoading(true);
+      setError(null);
+      // Fetch PDF as blob for direct reliable embedding
+      fetch(`/api/files/view/${file.id}`)
+        .then((res) => {
+          if (!res.ok) throw new Error('Faili haikuweza kufunguliwa.');
+          return res.blob();
+        })
+        .then((blob) => {
+          const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+          setPdfBlobUrl(url);
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error('PDF fetch error:', err);
+          setError('Faili haikuweza kufunguliwa.');
           setLoading(false);
         });
     }
-  }, [isOpen, file]);
+
+    return () => {
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+      }
+    };
+  }, [isOpen, file?.id]);
 
   if (!isOpen || !file) return null;
 
@@ -73,6 +114,22 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
     navigator.clipboard.writeText(textContent);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!onDelete || !file) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(file.id);
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+      onClose();
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      setIsDeleting(false);
+      setDeleteError('Faili haikuweza kufutwa.');
+    }
   };
 
   const getFileIcon = (type: string) => {
@@ -96,41 +153,77 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       return (
         <div className="flex flex-col items-center justify-center py-20 text-[#888888] space-y-3">
           <div className="w-8 h-8 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs font-semibold">Inasoma maudhui ya {file.filename}...</p>
+          <p className="text-xs font-semibold">Inafungua maudhui ya {file.filename}...</p>
         </div>
       );
     }
 
     if (error) {
       return (
-        <div className="p-6 text-center text-red-400 space-y-2">
-          <p className="text-sm font-bold">Hitilafu ya Kusoma Faili</p>
-          <p className="text-xs text-[#888888]">{error}</p>
+        <div className="p-8 text-center bg-[#150a0a] rounded-2xl border border-red-500/30 text-red-400 space-y-3">
+          <AlertCircle className="w-8 h-8 mx-auto text-red-400" />
+          <p className="text-sm font-bold">{error}</p>
+          <p className="text-xs text-[#888888]">Tafadhali jaribu kupakua faili moja kwa moja au fungua kwenye programu nyingine.</p>
+          <a
+            href={file.downloadUrl}
+            download={file.filename}
+            className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-[#D4AF37] text-black font-bold text-xs"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Pakua Faili ({ (file.size / 1024).toFixed(1) } KB)</span>
+          </a>
         </div>
       );
     }
 
     // PDF Preview
     if (file.fileType === 'pdf') {
+      const inlineUrl = pdfBlobUrl || `/api/files/view/${file.id}`;
       return (
-        <div className="w-full h-[65vh] flex flex-col bg-[#111111] rounded-2xl overflow-hidden border border-[#222222]">
-          <div className="p-2 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center justify-between px-4 text-xs text-[#888888]">
-            <span>PDF In-App Reader (Muundo Halisi wa PDF)</span>
-            <a
-              href={file.downloadUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[#D4AF37] hover:underline flex items-center gap-1 font-semibold"
-            >
-              <span>Fungua Kwenye Tab Mpya</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+        <div className="w-full flex flex-col bg-[#111111] rounded-2xl overflow-hidden border border-[#222222]">
+          <div className="p-2.5 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center justify-between px-4 text-xs text-[#888888]">
+            <span className="font-semibold text-[#F5F2ED] flex items-center gap-1.5">
+              <FileText className="w-4 h-4 text-red-400" />
+              <span>PDF In-App Viewer (Muundo Halisi wa PDF)</span>
+            </span>
+            <div className="flex items-center space-x-3">
+              <a
+                href={`/api/files/view/${file.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#D4AF37] hover:underline flex items-center gap-1 font-semibold"
+              >
+                <span>Fungua Tab Mpya</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
           </div>
-          <iframe
-            src={`${file.downloadUrl}#toolbar=1&navpanes=0`}
-            title={file.filename}
-            className="w-full h-full border-0 bg-[#222222]"
-          />
+
+          <div className="w-full h-[62vh] relative bg-[#1e1e1e] flex flex-col items-center justify-center">
+            <object
+              data={inlineUrl}
+              type="application/pdf"
+              className="w-full h-full border-0"
+            >
+              <iframe
+                src={`${inlineUrl}#toolbar=1&navpanes=0`}
+                title={file.filename}
+                className="w-full h-full border-0"
+              >
+                <div className="p-6 text-center text-[#888888]">
+                  <p className="text-sm text-[#F5F2ED] font-bold mb-2">PDF haikuweza kuonekana moja kwa moja kwenye fremu hii.</p>
+                  <a
+                    href={file.downloadUrl}
+                    download={file.filename}
+                    className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#D4AF37] text-black font-bold text-xs uppercase"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Pakua PDF ({ (file.size / 1024).toFixed(1) } KB)</span>
+                  </a>
+                </div>
+              </iframe>
+            </object>
+          </div>
         </div>
       );
     }
@@ -140,10 +233,14 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       return (
         <div className="flex flex-col items-center justify-center p-4 bg-[#0a0a0a] rounded-2xl border border-[#222222] min-h-[300px] overflow-auto">
           <img
-            src={file.downloadUrl}
+            src={`/api/files/view/${file.id}`}
             alt={file.filename}
             style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'center center' }}
             className="max-h-[60vh] max-w-full object-contain rounded-lg transition-transform duration-150"
+            onError={(e) => {
+              // fallback to downloadUrl if view fails
+              (e.target as HTMLImageElement).src = file.downloadUrl;
+            }}
           />
         </div>
       );
@@ -153,13 +250,23 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
     if (['txt', 'json', 'csv', 'md'].includes(file.fileType)) {
       return (
         <div className="relative bg-[#050505] p-4 sm:p-6 rounded-2xl border border-[#222222] max-h-[60vh] overflow-y-auto font-mono text-xs sm:text-sm text-[#F5F2ED] leading-relaxed">
-          <div className="absolute top-3 right-3 flex items-center space-x-2">
+          <div className="sticky top-0 right-0 flex justify-end pb-2">
             <button
               onClick={handleCopyContent}
-              className="p-2 rounded-lg bg-[#1a1a1a] hover:bg-[#2a2a2a] text-[#888888] hover:text-[#F5F2ED] border border-[#333333] transition cursor-pointer"
+              className="p-2 rounded-lg bg-[#1a1a1a] hover:bg-[#2a2a2a] text-[#888888] hover:text-[#F5F2ED] border border-[#333333] transition cursor-pointer flex items-center space-x-1"
               title="Nakili Maudhui"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[10px] text-emerald-400 font-sans">Imenakiliwa</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-sans">Nakili</span>
+                </>
+              )}
             </button>
           </div>
           <pre className="whitespace-pre-wrap break-words font-mono select-text">
@@ -203,6 +310,60 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-fade-in text-[#F5F2ED]">
       <div className="relative w-full max-w-3xl bg-[#0d0d0d] border border-[#262626] rounded-3xl p-5 sm:p-7 shadow-2xl overflow-hidden flex flex-col space-y-4 max-h-[92vh]">
+        {/* Delete Confirmation Overlay */}
+        {showDeleteConfirm && (
+          <div className="absolute inset-0 z-20 bg-black/90 backdrop-blur-md p-6 flex flex-col items-center justify-center text-center space-y-4 animate-fade-in">
+            <div className="p-3.5 rounded-2xl bg-red-950/60 border border-red-500/40 text-red-400">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+            <div className="space-y-1 max-w-md">
+              <h3 className="serif font-bold text-lg text-white">Una uhakika unataka kufuta faili hili?</h3>
+              <p className="text-xs text-[#888888]">
+                Faili <span className="text-[#F5F2ED] font-mono font-bold">"{file.filename}"</span> litafutwa kabisa kutoka kwenye diski na database.
+              </p>
+            </div>
+
+            {deleteError && (
+              <div className="p-2.5 rounded-xl bg-red-950/80 border border-red-500/50 text-red-300 text-xs font-semibold">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex items-center space-x-3 pt-2">
+              <button
+                id="cancel-delete-confirm-btn"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeleteError(null);
+                }}
+                disabled={isDeleting}
+                className="px-5 py-2.5 rounded-xl glass border border-[#333333] text-[#888888] hover:text-[#F5F2ED] text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+              >
+                CANCEL
+              </button>
+
+              <button
+                id="do-delete-confirm-btn"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg transition cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Inafuta...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>DELETE</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Top Header */}
         <div className="flex items-center justify-between border-b border-[#202020] pb-3.5">
           <div className="flex items-center space-x-3 overflow-hidden">
@@ -267,16 +428,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             {onDelete && (
               <button
                 id="doc-preview-delete-btn"
-                onClick={async () => {
-                  if (confirm(`Je, una uhakika unataka kufuta faili "${file.filename}" kabisa?`)) {
-                    await onDelete(file.id);
-                    onClose();
-                  }
-                }}
-                className="px-3 py-2 rounded-xl text-red-400 hover:bg-red-500/10 border border-red-500/20 text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="px-3.5 py-2 rounded-xl text-red-400 hover:bg-red-500/10 border border-red-500/20 text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Futa Faili</span>
+                <span>DELETE</span>
               </button>
             )}
           </div>
@@ -289,7 +445,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               className="px-5 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg transition cursor-pointer"
             >
               <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>PAKUA FAILI ({ (file.size / 1024).toFixed(1) } KB)</span>
+              <span>DOWNLOAD ({ (file.size / 1024).toFixed(1) } KB)</span>
             </a>
           </div>
         </div>
