@@ -1,14 +1,10 @@
-name: MKUU AI - Android Release APK
+name: MKUU AI — Android Release APK Build
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -16,422 +12,246 @@ permissions:
 
 env:
   NODE_VERSION: "24"
-  JAVA_VERSION: "17"
+  JAVA_VERSION: "21"
   GRADLE_VERSION: "8.13"
+  ANDROID_API: "36"
 
 jobs:
   build-android:
-    name: Build MKUU AI Android APK
+    name: Build & Sign Android Release APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: 1. Checkout Repository
+      - name: 1. Checkout repository
         uses: actions/checkout@v4
 
-      - name: 2. Setup Node.js
+      - name: 2. Setup Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: 3. Setup JDK 17
+      - name: 3. Setup Java JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: gradle
 
-      - name: 4. Install Gradle 8.13
+      - name: 4. Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 5. Install Android SDK 36 and Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;36.0.0"
+
+      - name: 6. Install Gradle 8.13 directly
         shell: bash
         run: |
           set -euo pipefail
 
-          GRADLE_VERSION="${GRADLE_VERSION}"
-          GRADLE_HOME="$HOME/gradle-${GRADLE_VERSION}"
-          GRADLE_ZIP="$HOME/gradle-${GRADLE_VERSION}-bin.zip"
+          GRADLE_HOME="$RUNNER_TEMP/gradle-${GRADLE_VERSION}"
+          GRADLE_ZIP="$RUNNER_TEMP/gradle-${GRADLE_VERSION}-bin.zip"
 
-          if [ ! -x "$GRADLE_HOME/bin/gradle" ]; then
-            echo "Downloading Gradle ${GRADLE_VERSION}..."
+          curl -fL \
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+            -o "$GRADLE_ZIP"
 
-            curl -L --fail \
-              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
-              -o "$GRADLE_ZIP"
-
-            rm -rf "$GRADLE_HOME"
-
-            unzip -q "$GRADLE_ZIP" -d "$HOME"
-
-            mv "$HOME/gradle-${GRADLE_VERSION}" "$GRADLE_HOME" 2>/dev/null || true
-
-            rm -f "$GRADLE_ZIP"
-          fi
-
+          rm -rf "$GRADLE_HOME"
+          unzip -q "$GRADLE_ZIP" -d "$RUNNER_TEMP"
           echo "$GRADLE_HOME/bin" >> "$GITHUB_PATH"
 
           "$GRADLE_HOME/bin/gradle" --version
 
-      - name: 5. Verify Node, NPM, Java and Gradle
+      - name: 7. Verify build environment
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "=============================="
-          echo "NODE VERSION"
-          echo "=============================="
+          echo "===== Node ====="
           node --version
-
-          echo "=============================="
-          echo "NPM VERSION"
-          echo "=============================="
+          echo "===== NPM ====="
           npm --version
-
-          echo "=============================="
-          echo "JAVA VERSION"
-          echo "=============================="
+          echo "===== Java ====="
           java -version
-
-          echo "=============================="
-          echo "GRADLE VERSION"
-          echo "=============================="
+          echo "===== Gradle ====="
           gradle --version
 
-      - name: 6. Install Node Dependencies
+      - name: 8. Install Node dependencies
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "Installing npm dependencies..."
-
           npm install --no-audit --no-fund
 
-      - name: 7. Verify Capacitor Installation
+      - name: 9. Verify Capacitor Android package
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "Checking Capacitor..."
-
           npx cap --version
+          test -d node_modules/@capacitor/android
+          test -d android
+          echo "Capacitor Android package and Android project are present."
 
-          if [ ! -d "android" ]; then
-            echo "ERROR: android directory does not exist."
-            exit 1
-          fi
-
-      - name: 8. Build Web Application
+      - name: 10. Build web application
         shell: bash
         run: |
           set -euo pipefail
+          npm run build
 
-          echo "=============================="
-          echo "BUILDING WEB APPLICATION"
-          echo "=============================="
-
-          if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
-            npm run build
-          else
-            echo "ERROR: package.json does not contain a build script."
-            exit 1
-          fi
-
-      - name: 9. Verify Web Assets
+      - name: 11. Verify web assets
         shell: bash
         run: |
           set -euo pipefail
+          test -f dist/index.html
+          echo "dist/index.html exists."
 
-          echo "Checking web assets..."
-
-          if [ ! -d "dist" ]; then
-            echo "ERROR: dist directory was not created."
-            exit 1
-          fi
-
-          if [ ! -f "dist/index.html" ]; then
-            echo "ERROR: dist/index.html was not created."
-            echo "Contents of dist:"
-            find dist -maxdepth 2 -type f | head -100 || true
-            exit 1
-          fi
-
-          echo "Web assets found successfully."
-
-      - name: 10. Sync Capacitor Android
+      - name: 12. Sync Capacitor Android
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "=============================="
-          echo "SYNCING CAPACITOR ANDROID"
-          echo "=============================="
-
           npx cap sync android
 
-      - name: 11. Verify Android Project
+      - name: 13. Verify Android project configuration
         shell: bash
         run: |
           set -euo pipefail
+          test -f android/settings.gradle
+          test -f android/capacitor.settings.gradle
+          test -f android/app/build.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+          grep -q "include ':capacitor-android'" android/capacitor.settings.gradle
+          echo "Android project configuration verified."
 
-          if [ ! -d "android" ]; then
-            echo "ERROR: android directory is missing."
-            exit 1
-          fi
-
-          if [ ! -f "android/settings.gradle" ] && \
-             [ ! -f "android/settings.gradle.kts" ]; then
-            echo "ERROR: Android Gradle project is incomplete."
-            exit 1
-          fi
-
-          echo "Android project verified."
-
-      - name: 12. Clean Android Build
+      - name: 14. Clean Android project with system Gradle
         working-directory: android
         shell: bash
         run: |
           set -euo pipefail
-
           gradle clean --no-daemon --stacktrace
 
-      - name: 13. Build Release APK
+      - name: 15. Build release APK with system Gradle
         working-directory: android
         shell: bash
         run: |
           set -euo pipefail
+          gradle :app:assembleRelease --no-daemon --stacktrace --warning-mode all
 
-          echo "=============================="
-          echo "BUILDING RELEASE APK"
-          echo "=============================="
-
-          gradle assembleRelease \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
-
-      - name: 14. Locate Release APK
+      - name: 16. Locate release APK
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Searching for release APK..."
-
-          find android -type f -name "*.apk" -print
-
-          APK="$(find android/app/build/outputs/apk/release -type f -name "*.apk" | head -1)"
+          APK="$(find android/app/build/outputs/apk/release -type f -name '*.apk' -print -quit 2>/dev/null || true)"
 
           if [ -z "$APK" ]; then
             echo "ERROR: Release APK was not generated."
+            find android/app/build/outputs -type f -print 2>/dev/null || true
             exit 1
           fi
 
-          echo "APK found:"
-          echo "$APK"
+          echo "Release APK: $APK"
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
+      - name: 17. Sign APK with apksigner
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          BUILD_TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -1)"
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+          ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
+
+          test -x "$APKSIGNER"
+          test -x "$ZIPALIGN"
 
           mkdir -p release-output
+          ALIGNED_APK="$RUNNER_TEMP/MkuuAI-aligned.apk"
+          KEYSTORE="$RUNNER_TEMP/mkuu-ai-release.keystore"
 
-          cp "$APK" \
+          "$ZIPALIGN" -f 4 "$APK_PATH" "$ALIGNED_APK"
+
+          if [ -n "${KEYSTORE_B64:-}" ] && \
+             [ -n "${KEYSTORE_PASSWORD:-}" ] && \
+             [ -n "${KEY_PASSWORD:-}" ] && \
+             [ -n "${KEY_ALIAS:-}" ]; then
+
+            echo "Using GitHub Actions release signing secrets."
+
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+
+            SIGN_STOREPASS="$KEYSTORE_PASSWORD"
+            SIGN_KEYPASS="$KEY_PASSWORD"
+            SIGN_ALIAS="$KEY_ALIAS"
+
+          else
+
+            echo "No release keystore secrets configured."
+            echo "Generating temporary CI signing key."
+
+            SIGN_STOREPASS="$(openssl rand -hex 24)"
+            SIGN_KEYPASS="$SIGN_STOREPASS"
+            SIGN_ALIAS="mkuu_ai_key"
+
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE" \
+              -storepass "$SIGN_STOREPASS" \
+              -keypass "$SIGN_KEYPASS" \
+              -alias "$SIGN_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Mkuu AI, OU=MkuuAI, O=Mkuu, L=Dar es Salaam, ST=Tanzania, C=TZ"
+          fi
+
+          "$APKSIGNER" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$SIGN_ALIAS" \
+            --ks-pass "pass:$SIGN_STOREPASS" \
+            --key-pass "pass:$SIGN_KEYPASS" \
+            --out "release-output/MkuuAI_Master_v1.0.0_Signed.apk" \
+            "$ALIGNED_APK"
+
+          "$APKSIGNER" verify \
+            --verbose \
             "release-output/MkuuAI_Master_v1.0.0_Signed.apk"
 
-      - name: 15. Verify Final APK
+      - name: 18. Validate final APK
         shell: bash
         run: |
           set -euo pipefail
 
           APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
 
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: Final APK does not exist."
+          test -s "$APK"
+
+          SIZE="$(wc -c < "$APK")"
+
+          if [ "$SIZE" -le 10000 ]; then
+            echo "ERROR: APK is unexpectedly small: $SIZE bytes"
             exit 1
           fi
 
-          echo "=============================="
-          echo "FINAL APK"
-          echo "=============================="
+          unzip -l "$APK" | grep -q 'AndroidManifest.xml'
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
 
-          ls -lh "$APK"
+          echo "=============================================="
+          echo "SUCCESS: MkuuAI_Master_v1.0.0_Signed.apk"
+          echo "Package: com.mkuu.ai"
+          echo "Size: $SIZE bytes"
+          echo "=============================================="
 
-          file "$APK"
-
-      - name: 16. Upload APK
+      - name: 19. Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: MkuuAI_Master_v1.0.0_Signed
           path: release-output/MkuuAI_Master_v1.0.0_Signed.apk
-          retention-days: 30
-          if-no-files-found: errortrace
-
-      - name: 14. Build Release APK
-        working-directory: android
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gradle :app:assembleRelease \
-            --no-daemon \
-            --stacktrace \
-            --info
-
-      - name: 15. Find Generated APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p release-output
-
-          echo "Searching for generated APK..."
-
-          find android/app/build/outputs \
-            -type f \
-            -name "*.apk" \
-            -print || true
-
-          APK="$(find android/app/build/outputs/apk/release \
-            -type f \
-            -name "*.apk" \
-            -print \
-            -quit 2>/dev/null || true)"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: No release APK was generated."
-            echo "===== Build output ====="
-            find android/app/build/outputs \
-              -type f \
-              -print 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "APK found:"
-          echo "$APK"
-
-          cp "$APK" \
-            "release-output/MkuuAI_Master_v1.0.0.apk"
-
-          echo "===== Final APK ====="
-          ls -lh release-output/MkuuAI_Master_v1.0.0.apk
-
-      - name: 16. Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MkuuAI_Master_v1.0.0
-          path: release-output/MkuuAI_Master_v1.0.0.apk
-          retention-days: 30
-          if-no-files-found: error
-      - name: 4. Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 5. Install Node Dependencies
-        run: |
-          set -e
-          npm install
-
-      - name: 6. Verify Capacitor
-        run: |
-          set -e
-          npx cap --version
-          test -d node_modules/@capacitor/android
-          echo "Capacitor Android package found."
-
-      - name: 7. Sync Capacitor Android
-        run: |
-          set -e
-          npx cap sync android
-
-      - name: 8. Install Gradle 8.13 Directly
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          VERSION="8.13"
-          ZIP="$RUNNER_TEMP/gradle-${VERSION}-bin.zip"
-          INSTALL="$RUNNER_TEMP/gradle"
-
-          curl -fL \
-            "https://services.gradle.org/distributions/gradle-${VERSION}-bin.zip" \
-            -o "$ZIP"
-
-          mkdir -p "$INSTALL"
-
-          unzip -q "$ZIP" -d "$INSTALL"
-
-          echo "$INSTALL/gradle-${VERSION}/bin" >> "$GITHUB_PATH"
-
-          echo "Gradle $VERSION installed."
-
-      - name: 9. Verify Build Environment
-        run: |
-          set -e
-
-          echo "===== Node ====="
-          node --version
-
-          echo "===== NPM ====="
-          npm --version
-
-          echo "===== Java ====="
-          java -version
-
-          echo "===== Gradle ====="
-          gradle --version
-
-      - name: 10. Verify Capacitor Android Project
-        run: |
-          set -e
-
-          test -d android
-          test -f android/settings.gradle
-          test -d node_modules/@capacitor/android
-
-          echo "Android project:"
-          ls -la android
-
-          echo "Capacitor Android:"
-          ls -la node_modules/@capacitor/android
-
-      - name: 11. Verify Gradle Projects
-        working-directory: android
-        run: |
-          set -e
-          gradle projects --no-daemon --stacktrace
-
-      - name: 12. Build Release APK
-        working-directory: android
-        run: |
-          set -e
-
-          gradle :app:assembleRelease \
-            --no-daemon \
-            --stacktrace
-
-      - name: 13. Find Release APK
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p release-output
-
-          APK="$(find android/app/build/outputs/apk/release \
-            -type f \
-            -name "*.apk" \
-            -print \
-            -quit)"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: No release APK was generated."
-            find android/app/build/outputs -type f 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "Found APK:"
-          echo "$APK"
-
-          cp "$APK" \
-            "release-output/MkuuAI_Master_v1.0.0.apk"
-
-          ls -lh release-output/
-
-      - name: 14. Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MkuuAI_Master_v1.0.0
-          path: release-output/MkuuAI_Master_v1.0.0.apk
           retention-days: 30
           if-no-files-found: error
