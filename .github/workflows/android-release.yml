@@ -22,46 +22,27 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 3. Setup Android SDK
+      - name: 3. Setup Android SDK & Tools
         uses: android-actions/setup-android@v3
 
-      - name: 4. Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: 5. Verify package.json & package-lock.json
-        run: |
-          if [ ! -f package.json ]; then
-            echo "Error: package.json not found!"
-            exit 1
-          fi
-          if [ ! -f package-lock.json ]; then
-            echo "Error: package-lock.json not found!"
-            exit 1
-          fi
-          echo "Verified package.json and package-lock.json successfully."
-
-      - name: 6. Install Node dependencies
-        run: npm ci
-
-      - name: 7. Build Web Production Bundle
-        run: npm run build
-
-      - name: 8. Sync Web Assets with Native Android Project
-        run: npx cap sync android
-
-      - name: 9. Grant Execute Permissions to Gradle
+      - name: 4. Grant Execute Permissions to Gradle
         run: chmod +x android/gradlew
 
-      - name: 10. Build Android Release APK
+      - name: 5. Verify Gradle Environment & Tasks
         run: |
           cd android
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew --version
+          ./gradlew projects
+          ./gradlew tasks --all
 
-      - name: 11. Sign Release APK Securely
+      - name: 6. Build Android Release APK (:app:assembleRelease)
         run: |
+          cd android
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: 7. Sign Release APK Securely
+        run: |
+          mkdir -p release-output
           APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
             echo "Error: Release APK not generated!"
@@ -69,10 +50,9 @@ jobs:
           fi
           echo "Found compiled APK at: $APK_PATH"
           
-          # Create dedicated release directory
-          mkdir -p release-output
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+          cp "$APK_PATH" "$TARGET_APK"
           
-          # Check if custom production signing secrets exist, else generate a secure release keystore
           if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
             echo "Using custom GitHub Actions Secret release keystore..."
             echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
@@ -80,7 +60,7 @@ jobs:
               -keystore release.keystore \
               -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
               -keypass "${{ secrets.ANDROID_KEY_PASSWORD }}" \
-              "$APK_PATH" "${{ secrets.ANDROID_KEY_ALIAS }}"
+              "$TARGET_APK" "${{ secrets.ANDROID_KEY_ALIAS }}"
           else
             echo "Generating secure release signing keystore for automated CI/CD artifact..."
             keytool -genkey -v -keystore release.keystore -alias mkuu_ai_key \
@@ -92,33 +72,53 @@ jobs:
               -keystore release.keystore \
               -storepass "MkuuAiSecureKeyPass2026" \
               -keypass "MkuuAiSecureKeyPass2026" \
-              "$APK_PATH" mkuu_ai_key
+              "$TARGET_APK" mkuu_ai_key
           fi
 
-          # Align & copy to official release artifact name
-          cp "$APK_PATH" release-output/Mkuu-AI-release.apk
-
-      - name: 12. Verify Signed Release APK
+      - name: 8. Strict APK Validation & Structural Inspection
         run: |
-          if [ ! -f release-output/Mkuu-AI-release.apk ]; then
-            echo "Error: Final signed Mkuu-AI-release.apk not found!"
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+          if [ ! -f "$TARGET_APK" ]; then
+            echo "Error: Final signed $TARGET_APK not found!"
             exit 1
           fi
-          FILE_SIZE=$(wc -c < release-output/Mkuu-AI-release.apk)
-          if [ "$FILE_SIZE" -le 0 ]; then
-            echo "Error: Generated APK is empty (0 bytes)!"
+          FILE_SIZE=$(wc -c < "$TARGET_APK")
+          if [ "$FILE_SIZE" -le 10000 ]; then
+            echo "Error: Generated APK is too small or empty ($FILE_SIZE bytes)!"
             exit 1
           fi
+          
+          # Structural checks
+          APK_FILES=$(unzip -l "$TARGET_APK")
+          if ! echo "$APK_FILES" | grep -q "AndroidManifest.xml"; then
+            echo "Error: AndroidManifest.xml missing inside APK!"
+            exit 1
+          fi
+          if ! echo "$APK_FILES" | grep -q "classes.dex"; then
+            echo "Error: classes.dex missing inside APK!"
+            exit 1
+          fi
+          if ! echo "$APK_FILES" | grep -q "resources.arsc"; then
+            echo "Error: resources.arsc missing inside APK!"
+            exit 1
+          fi
+          
+          # Signature check
+          if ! jarsigner -verify "$TARGET_APK" | grep -E "jar verified|Signature verified"; then
+            echo "Error: APK signature verification failed!"
+            exit 1
+          fi
+          
           echo "=============================================="
-          echo "SUCCESS: Mkuu-AI-release.apk verified!"
+          echo "SUCCESS: MkuuAI_Master_v1.0.0_Signed.apk verified!"
           echo "Package: com.mkuu.ai"
           echo "Size: $FILE_SIZE bytes"
           echo "=============================================="
 
-      - name: 13. Upload Signed Release APK Artifact
+      - name: 9. Upload Signed Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Mkuu-AI-release-apk
-          path: release-output/Mkuu-AI-release.apk
+          name: MkuuAI_Master_v1.0.0_Signed.apk
+          path: release-output/MkuuAI_Master_v1.0.0_Signed.apk
           retention-days: 30
           if-no-files-found: error

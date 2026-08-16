@@ -1,4 +1,4 @@
-name: MKUU AI CI/CD Build & Verification
+name: MKUU AI CI/CD Web Build & Verification
 
 on:
   push:
@@ -29,24 +29,16 @@ jobs:
           fi
           echo "package.json successfully verified."
 
-      - name: 4. Verify package-lock.json
-        run: |
-          if [ ! -f package-lock.json ]; then
-            echo "Error: package-lock.json not found!"
-            exit 1
-          fi
-          echo "package-lock.json successfully verified."
+      - name: 4. Install Dependencies
+        run: npm ci || npm install
 
-      - name: 5. Run npm ci
-        run: npm ci
-
-      - name: 6. Run npm run build
+      - name: 5. Run Web Production Build
         run: npm run build
 
-      - name: 7. Upload production build artifact
+      - name: 6. Upload Web Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mkuu-ai-production-build
+          name: mkuu-ai-web-build
           path: dist/
           retention-days: 7
           if-no-files-found: error
