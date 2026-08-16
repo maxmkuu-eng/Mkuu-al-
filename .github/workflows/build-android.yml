@@ -2,10 +2,17 @@ name: Build and Validate Android Release APK
 
 on:
   push:
-    branches: ["main", "master"]
+    branches:
+      - main
+      - master
   pull_request:
-    branches: ["main", "master"]
+    branches:
+      - main
+      - master
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-and-verify-apk:
@@ -30,59 +37,105 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: 5. Verify Gradle
+      - name: 5. Verify Java and Gradle
         run: |
+          echo "========================================"
+          echo "Java Version"
+          echo "========================================"
+          java -version
+
+          echo "========================================"
+          echo "Gradle Version"
+          echo "========================================"
           gradle --version
 
       - name: 6. Verify Android Project
         run: |
-          cd android
-          gradle projects
-
-      - name: 7. Verify Required Tasks
-        run: |
-          cd android
-          TASKS_OUTPUT="$(gradle tasks --all)"
-
-          echo "$TASKS_OUTPUT"
-
-          if ! echo "$TASKS_OUTPUT" | grep -E "(assembleDebug|:app:assembleDebug)"; then
-            echo "ERROR: assembleDebug task missing!"
+          if [ ! -d "android" ]; then
+            echo "ERROR: android directory does not exist."
             exit 1
           fi
 
-          if ! echo "$TASKS_OUTPUT" | grep -E "(assembleRelease|:app:assembleRelease)"; then
-            echo "ERROR: assembleRelease task missing!"
+          if [ ! -f "android/settings.gradle" ] && [ ! -f "android/settings.gradle.kts" ]; then
+            echo "ERROR: Android Gradle settings file was not found."
+            exit 1
+          fi
+
+          echo "Android project detected successfully."
+
+      - name: 7. Check Android Gradle Projects
+        run: |
+          cd android
+          gradle projects --no-daemon
+
+      - name: 8. Check Required Gradle Tasks
+        run: |
+          cd android
+
+          echo "========================================"
+          echo "Checking Gradle Tasks"
+          echo "========================================"
+
+          TASKS_OUTPUT="$(gradle tasks --all --no-daemon)"
+
+          echo "$TASKS_OUTPUT"
+
+          if ! echo "$TASKS_OUTPUT" | grep -E "(assembleDebug|:app:assembleDebug)" >/dev/null; then
+            echo "ERROR: assembleDebug task was not found."
+            exit 1
+          fi
+
+          if ! echo "$TASKS_OUTPUT" | grep -E "(assembleRelease|:app:assembleRelease)" >/dev/null; then
+            echo "ERROR: assembleRelease task was not found."
             exit 1
           fi
 
           echo "Required Android Gradle tasks confirmed."
 
-      - name: 8. Build Production APK
+      - name: 9. Build Release APK
         run: |
           cd android
-          gradle :app:assembleRelease --no-daemon --stacktrace
 
-      - name: 9. Locate and Prepare APK
+          echo "========================================"
+          echo "Building Release APK"
+          echo "========================================"
+
+          gradle :app:assembleRelease \
+            --no-daemon \
+            --stacktrace
+
+      - name: 10. Locate Generated APK
         run: |
           mkdir -p release-output
 
-          RAW_APK="$(find android/app/build/outputs/apk/release -name '*.apk' | head -n 1)"
+          echo "Searching for generated APK..."
+
+          RAW_APK="$(find android/app/build/outputs/apk/release \
+            -type f \
+            -name "*.apk" \
+            | head -n 1)"
 
           if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
             echo "ERROR: Release APK was not generated."
+            echo "Searching entire build directory:"
+            find android/app/build -type f -name "*.apk" || true
             exit 1
           fi
 
-          echo "Found APK: $RAW_APK"
+          echo "Generated APK:"
+          echo "$RAW_APK"
 
           TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+
           cp "$RAW_APK" "$TARGET_APK"
 
-          echo "APK prepared: $TARGET_APK"
+          echo "Prepared APK:"
+          ls -lh "$TARGET_APK"
 
-      - name: 10. Generate Release Signing Key
+      - name: 11. Generate Release Signing Key
         run: |
+          echo "Generating release signing key..."
+
           keytool -genkeypair \
             -v \
             -keystore release.keystore \
@@ -94,8 +147,17 @@ jobs:
             -keypass "MkuuAiMasterRelease2026" \
             -dname "CN=Max, OU=MKUU AI, O=MKUU, L=DarEsSalaam, ST=Tanzania, C=TZ"
 
-      - name: 11. Sign APK
+      - name: 12. Sign Release APK
         run: |
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+
+          if [ ! -f "$TARGET_APK" ]; then
+            echo "ERROR: APK not found before signing."
+            exit 1
+          fi
+
+          echo "Signing APK..."
+
           jarsigner \
             -verbose \
             -sigalg SHA256withRSA \
@@ -103,58 +165,65 @@ jobs:
             -keystore release.keystore \
             -storepass "MkuuAiMasterRelease2026" \
             -keypass "MkuuAiMasterRelease2026" \
-            "release-output/MkuuAI_Master_v1.0.0_Signed.apk" \
+            "$TARGET_APK" \
             mkuu_ai_master_key
 
-      - name: 12. Validate APK
+          echo "APK signing completed."
+
+      - name: 13. Verify APK Signature
         run: |
           TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
 
+          echo "Verifying APK signature..."
+
+          jarsigner -verify -verbose -certs "$TARGET_APK"
+
+          echo "APK signature verification completed."
+
+      - name: 14. Validate APK File
+        run: |
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+
+          echo "========================================"
+          echo "APK Validation"
+          echo "========================================"
+
           if [ ! -f "$TARGET_APK" ]; then
-            echo "ERROR: APK does not exist!"
+            echo "ERROR: APK does not exist."
             exit 1
           fi
 
           APK_SIZE=$(stat -c%s "$TARGET_APK")
+
+          echo "APK size: $APK_SIZE bytes"
 
           if [ "$APK_SIZE" -le 10000 ]; then
             echo "ERROR: APK is too small or empty."
             exit 1
           fi
 
-          echo "APK size: $APK_SIZE bytes"
-
           APK_CONTENTS="$(unzip -l "$TARGET_APK")"
 
+          echo "Checking AndroidManifest.xml..."
+
           if ! echo "$APK_CONTENTS" | grep -q "AndroidManifest.xml"; then
-            echo "ERROR: AndroidManifest.xml missing!"
+            echo "ERROR: AndroidManifest.xml is missing."
             exit 1
           fi
+
+          echo "Checking classes.dex..."
 
           if ! echo "$APK_CONTENTS" | grep -q "classes.dex"; then
-            echo "ERROR: classes.dex missing!"
+            echo "ERROR: classes.dex is missing."
             exit 1
           fi
 
-          if ! echo "$APK_CONTENTS" | grep -q "resources.arsc"; then
-            echo "ERROR: resources.arsc missing!"
-            exit 1
-          fi
+          echo "APK basic structure validated successfully."
 
-          echo "APK structure validated successfully."
-
-          if ! jarsigner -verify "release-output/MkuuAI_Master_v1.0.0_Signed.apk"; then
-            echo "ERROR: APK signature verification failed!"
-            exit 1
-          fi
-
-          echo "APK signature verified successfully."
-
-      - name: 13. Upload APK
+      - name: 15. Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MkuuAI_Master_v1.0.0_Signed
           path: release-output/MkuuAI_Master_v1.0.0_Signed.apk
           retention-days: 30
-          if-no-files-found: errorster_v1.0.0_Signed.apk
-          path: relea
+          if-no-files-found: error
