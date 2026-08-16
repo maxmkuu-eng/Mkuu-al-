@@ -25,7 +25,7 @@ jobs:
       - name: 1. Checkout repository
         uses: actions/checkout@v4
 
-      - name: 2. Setup Node.js
+      - name: 2. Setup Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -41,51 +41,32 @@ jobs:
       - name: 4. Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 5. Install Android SDK
+      - name: 5. Install Android SDK 36 and Build Tools
         shell: bash
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;36.0.0"
+          sdkmanager "platform-tools" "platforms;android-${ANDROID_API}" "build-tools;36.0.0"
 
-      - name: 6. Install Gradle 8.13
+      - name: 6. Install Gradle 8.13 directly
         shell: bash
         run: |
           set -euo pipefail
-
           GRADLE_HOME="$RUNNER_TEMP/gradle-${GRADLE_VERSION}"
           GRADLE_ZIP="$RUNNER_TEMP/gradle-${GRADLE_VERSION}-bin.zip"
-
-          curl -fL \
-            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
-            -o "$GRADLE_ZIP"
-
+          curl -fL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "$GRADLE_ZIP"
           rm -rf "$GRADLE_HOME"
-
           unzip -q "$GRADLE_ZIP" -d "$RUNNER_TEMP"
-
           echo "$GRADLE_HOME/bin" >> "$GITHUB_PATH"
-
           "$GRADLE_HOME/bin/gradle" --version
 
-      - name: 7. Verify Java Node Gradle
+      - name: 7. Verify build environment
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "===== NODE ====="
           node --version
-
-          echo "===== NPM ====="
           npm --version
-
-          echo "===== JAVA ====="
           java -version
-
-          echo "===== GRADLE ====="
           gradle --version
 
       - name: 8. Install Node dependencies
@@ -94,152 +75,164 @@ jobs:
           set -euo pipefail
           npm install --no-audit --no-fund
 
-      - name: 9. Verify Capacitor
+      - name: 9. Verify Capacitor Android package
         shell: bash
         run: |
           set -euo pipefail
-
           npx cap --version
-
           test -d node_modules/@capacitor/android
           test -d android
 
-          echo "Capacitor Android project detected."
-
-      - name: 10. Build Web Application
+      - name: 10. Build web application
         shell: bash
         run: |
           set -euo pipefail
-
           npm run build
 
-      - name: 11. Verify Web Assets
+      - name: 11. Verify web assets
         shell: bash
         run: |
           set -euo pipefail
-
           test -f dist/index.html
-
-          echo "Web build OK:"
-          ls -lah dist/
 
       - name: 12. Sync Capacitor Android
         shell: bash
         run: |
           set -euo pipefail
-
           npx cap sync android
 
-      - name: 13. Repair Invalid Launcher PNG Files
+      - name: 13. Repair invalid launcher PNG files
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "Repairing Android launcher PNG resources..."
 
           python3 <<'PY'
-          import base64
           import pathlib
-
-          png_b64 = """
-          iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAACHElEQVR42u3TQREAIAzEQEQgDLH4AxV8yGYmBtrLGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD+ZK59Xum6yIxdFDB4QcDoxQCjFwMMXwgwfCHA8IUAwxcCDF8IMHwhwPhFAMMXAoxfBMZPERg+hWD8FIHxUwTGTxEYP0Vg/BSB8VMExk8RGD9FYPwUgfFTBMZPEQiAAjB+isD4KQLjpwgEQAEYP0Vg/BSBACgA46cIBEABGD9FIAAKwPgpAgFQAMZPEQiAAjB+ikAAFIBnMx2BR1MAZDEAT2Y6Ag+mAMhiAJ7LdAQeSwGQAiBjAXgq0xF4KAVACoAUANkJwDOZjsAjKQBSAKQASAGQAiAFQAqAFAApAFIApABIAVAAAqAABEABCIACEAAFIAAKQAAUgAAUgoAFQAAKgAERA4xcABSAACkAAFIAAKAAR0PgFQAEIgAIQAAUgAhq/ACgAAVAAIqDxC4ACEAAFIAIavwAoABHQ+AVAAYiAxi8ACkAENH4BUAAioPELgAIQAY1fABSACGj8IqDxC4ACEAGNXwTGDxEYPwQgAIjA+CEC44cIjB8iMH6IwPghAuOHCIwfIjB+iMD4IQLjhwiMH0IwfIjA+CEC44cQDB8iMH4IwfAhBMOHEAwfQjB8CMHwIQTDRzUG30MuBl9CKghfQCYK1wUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAL9yAZgHlIiA+EIxAAAAAElFTkSuQmCC
-          """
-
-          data = base64.b64decode("".join(png_b64.split()))
+          import struct
+          import zlib
 
           root = pathlib.Path("android/app/src/main/res")
+          files = sorted(
+              set(root.glob("mipmap-*/ic_launcher.png"))
+              | set(root.glob("mipmap-*/ic_launcher_foreground.png"))
+          )
 
-          files = list(root.glob("mipmap-*/ic_launcher.png"))
-          files += list(root.glob("mipmap-*/ic_launcher_foreground.png"))
+          if not files:
+              raise SystemExit("ERROR: No launcher PNG files found.")
 
-          for file in files:
-              file.write_bytes(data)
-              print(f"Repaired: {file}")
+          PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
-          print(f"Repaired {len(files)} launcher PNG files.")
+          def png_chunk(kind, data):
+              return (
+                  struct.pack(">I", len(data))
+                  + kind
+                  + data
+                  + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+              )
+
+          def make_png(foreground=False, width=192, height=192):
+              rows = []
+              for y in range(height):
+                  row = bytearray(b"\x00")
+                  for x in range(width):
+                      if foreground:
+                          cx = width // 2
+                          cy = height // 2
+                          r = 62
+                          inside = (x-cx)*(x-cx) + (y-cy)*(y-cy) <= r*r
+                          if inside:
+                              pixel = (255, 255, 255, 255)
+                          else:
+                              pixel = (0, 0, 0, 0)
+                      else:
+                          pixel = (20, 45, 90, 255)
+                      row.extend(pixel)
+                  rows.append(bytes(row))
+
+              raw = b"".join(rows)
+
+              return (
+                  PNG_SIGNATURE
+                  + png_chunk(
+                      b"IHDR",
+                      struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0),
+                  )
+                  + png_chunk(b"IDAT", zlib.compress(raw, 9))
+                  + png_chunk(b"IEND", b"")
+              )
+
+          repaired = 0
+
+          for path in files:
+              data = path.read_bytes()
+
+              # A valid PNG must have the PNG signature. The previous workflow
+              # contained corrupted base64 data, so those files are replaced.
+              if data.startswith(PNG_SIGNATURE) and len(data) > 100:
+                  print(f"OK: {path}")
+                  continue
+
+              path.write_bytes(
+                  make_png(path.name == "ic_launcher_foreground.png")
+              )
+              repaired += 1
+              print(f"REPAIRED: {path}")
+
+          print(f"Launcher PNG check complete. Repaired {repaired} file(s).")
           PY
 
-          echo "Launcher PNG repair complete."
-
-      - name: 14. Verify Android Project
+      - name: 14. Verify Android project configuration
         shell: bash
         run: |
           set -euo pipefail
-
           test -f android/settings.gradle
           test -f android/app/build.gradle
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+          echo "Android project configuration verified."
 
-          echo "===== Capacitor settings ====="
-          if [ -f android/capacitor.settings.gradle ]; then
-            cat android/capacitor.settings.gradle
-          fi
-
-          echo "===== Android project ====="
-          find android -maxdepth 2 -type f \
-            \( -name "*.gradle" -o -name "*.gradle.kts" \) \
-            -print
-
-      - name: 15. Verify Launcher PNGs
+      - name: 15. Verify launcher PNG files
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "Checking launcher PNG files..."
 
           PNG_COUNT=0
 
           while IFS= read -r file; do
-            if [ ! -s "$file" ]; then
-              echo "ERROR: Empty PNG: $file"
-              exit 1
-            fi
+            test -s "$file"
 
-            FILE_TYPE="$(file -b "$file")"
-
-            echo "$file -> $FILE_TYPE"
-
-            echo "$FILE_TYPE" | grep -qi "PNG image data" || {
+            file -b "$file" | grep -qi "PNG image data" || {
               echo "ERROR: Invalid PNG: $file"
               exit 1
             }
 
             PNG_COUNT=$((PNG_COUNT + 1))
           done < <(
-            find android/app/src/main/res \
-              -type f \
+            find android/app/src/main/res -type f \
               \( -name "ic_launcher.png" -o -name "ic_launcher_foreground.png" \) \
               -print
           )
 
-          if [ "$PNG_COUNT" -eq 0 ]; then
-            echo "ERROR: No launcher PNG files found."
-            exit 1
-          fi
-
+          test "$PNG_COUNT" -gt 0
           echo "Verified $PNG_COUNT launcher PNG files."
 
-      - name: 16. Clean Android Project
+      - name: 16. Clean Android project
         working-directory: android
         shell: bash
         run: |
           set -euo pipefail
+          gradle clean --no-daemon --stacktrace
 
-          gradle clean \
-            --no-daemon \
-            --stacktrace
-
-      - name: 17. Build Release APK
+      - name: 17. Build release APK
         working-directory: android
         shell: bash
         run: |
           set -euo pipefail
-
           gradle :app:assembleRelease \
             --no-daemon \
             --stacktrace \
             --warning-mode all
 
-      - name: 18. Locate Release APK
+      - name: 18. Locate release APK
         shell: bash
         run: |
           set -euo pipefail
@@ -247,26 +240,20 @@ jobs:
           APK="$(
             find android/app/build/outputs/apk/release \
               -type f \
-              -name "*.apk" \
+              -name '*.apk' \
               -print -quit 2>/dev/null || true
           )"
 
           if [ -z "$APK" ]; then
             echo "ERROR: Release APK was not generated."
-
-            find android/app/build/outputs \
-              -type f \
-              -print 2>/dev/null || true
-
+            find android/app/build/outputs -type f -print 2>/dev/null || true
             exit 1
           fi
 
-          echo "APK found:"
-          echo "$APK"
-
+          echo "Release APK: $APK"
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
-      - name: 19. Sign APK
+      - name: 19. Sign APK with apksigner
         shell: bash
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -295,19 +282,16 @@ jobs:
           ALIGNED_APK="$RUNNER_TEMP/MkuuAI-aligned.apk"
           KEYSTORE="$RUNNER_TEMP/mkuu-ai-release.keystore"
 
-          "$ZIPALIGN" -f 4 \
-            "$APK_PATH" \
-            "$ALIGNED_APK"
+          "$ZIPALIGN" -f 4 "$APK_PATH" "$ALIGNED_APK"
 
-          if [ -n "${KEYSTORE_B64:-}" ] && \
-             [ -n "${KEYSTORE_PASSWORD:-}" ] && \
-             [ -n "${KEY_PASSWORD:-}" ] && \
+          if [ -n "${KEYSTORE_B64:-}" ] &&
+             [ -n "${KEYSTORE_PASSWORD:-}" ] &&
+             [ -n "${KEY_PASSWORD:-}" ] &&
              [ -n "${KEY_ALIAS:-}" ]; then
 
-            echo "Using configured release signing key."
+            echo "Using GitHub Actions release signing secrets."
 
-            printf '%s' "$KEYSTORE_B64" \
-              | base64 --decode > "$KEYSTORE"
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
 
             SIGN_STOREPASS="$KEYSTORE_PASSWORD"
             SIGN_KEYPASS="$KEY_PASSWORD"
@@ -315,8 +299,8 @@ jobs:
 
           else
 
-            echo "No signing secrets configured."
-            echo "Creating temporary CI signing key."
+            echo "No release keystore secrets configured."
+            echo "Generating temporary CI signing key."
 
             SIGN_STOREPASS="$(openssl rand -hex 24)"
             SIGN_KEYPASS="$SIGN_STOREPASS"
@@ -345,7 +329,7 @@ jobs:
             --verbose \
             "release-output/MkuuAI_Master_v1.0.0_Signed.apk"
 
-      - name: 20. Validate APK
+      - name: 20. Validate final APK
         shell: bash
         run: |
           set -euo pipefail
@@ -361,9 +345,9 @@ jobs:
             exit 1
           fi
 
-          unzip -l "$APK" | grep -q "AndroidManifest.xml"
-          unzip -l "$APK" | grep -q "classes.dex"
-          unzip -l "$APK" | grep -q "resources.arsc"
+          unzip -l "$APK" | grep -q 'AndroidManifest.xml'
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'resources.arsc'
 
           echo "=============================================="
           echo "BUILD SUCCESSFUL"
@@ -371,10 +355,11 @@ jobs:
           echo "SIZE: $SIZE bytes"
           echo "=============================================="
 
-      - name: 21. Upload Signed APK
+      - name: 21. Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: MkuuAI_Master_v1.0.0_Signed
           path: release-output/MkuuAI_Master_v1.0.0_Signed.apk
           retention-days: 30
           if-no-files-found: error
+          
