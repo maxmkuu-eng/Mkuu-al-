@@ -62,9 +62,9 @@ jobs:
         run: |
           cd android
           echo "=========================================="
-          echo "Building Production APK with: ./gradlew :app:assembleRelease"
+          echo "Building Production APK with: ./gradlew clean :app:assembleRelease"
           echo "=========================================="
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          ./gradlew clean :app:assembleRelease --no-daemon --stacktrace
 
       - name: 10. Sign Production Release APK Securely
         run: |
