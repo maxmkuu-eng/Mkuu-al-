@@ -3,6 +3,7 @@
   "appName": "Mkuu AI",
   "webDir": "dist",
   "server": {
+    "url": "https://ais-pre-226ybn2ptvxoimveetx6am-805534629417.europe-west2.run.app",
     "androidScheme": "https"
   },
   "android": {
