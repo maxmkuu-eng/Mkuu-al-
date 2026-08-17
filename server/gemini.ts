@@ -20,9 +20,10 @@ export function getGenAI(): GoogleGenAI {
 
 // Resilient multi-model fallback list in order of preference for high availability
 const MODEL_FALLBACK_CANDIDATES = [
-  'gemini-flash-latest',
+  'gemini-2.5-flash',
   'gemini-3.7-flash',
   'gemini-3.1-flash-lite',
+  'gemini-flash-latest',
 ];
 
 export async function generateContentWithFallback(params: {
@@ -31,7 +32,7 @@ export async function generateContentWithFallback(params: {
   preferredModel?: string;
 }): Promise<string> {
   const ai = getGenAI();
-  const preferred = params.preferredModel || 'gemini-flash-latest';
+  const preferred = params.preferredModel || 'gemini-2.5-flash';
   const modelsToTry = [
     preferred,
     ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== preferred),
@@ -469,6 +470,15 @@ export function cleanMarkdownForVoice(text: string): string {
     .trim();
 }
 
+function hasWholeWord(text: string, words: string[]): boolean {
+  const clean = text.toLowerCase();
+  return words.some((w) => {
+    const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, 'i');
+    return regex.test(clean);
+  });
+}
+
 function generateContextualFallback(params: {
   message: string;
   user: any;
@@ -477,47 +487,60 @@ function generateContextualFallback(params: {
   newlySavedMemory: Memory | null;
 }): string {
   const { message, user, memories, people, newlySavedMemory } = params;
-  const lower = message.toLowerCase();
+  const lower = message.toLowerCase().trim();
+  const wordCount = lower.split(/\s+/).length;
 
   if (newlySavedMemory) {
-    return `Ndiyo Max, nimehifadhi kumbukumbu hii kwenye Max Memory ya kudumu: "${newlySavedMemory.content}". Hawezi kupotea hata ukizima kifaa au ukianza mazungumzo mapya.`;
+    return `Ndiyo Max, nimehifadhi kumbukumbu hii kwenye Max Memory ya kudumu:\n\n📌 "${newlySavedMemory.content}"\n\nImewekwa salama kwenye mfumo.`;
   }
 
-  // Question about wife / people
-  if (lower.includes('mke')) {
-    const wife = people.find((p) => p.relationship.toLowerCase().includes('mke'));
-    if (wife) {
-      return `Ndiyo Max, mke wako ni ${wife.name}${wife.nickname ? ` (anayejulikana pia kama ${wife.nickname})` : ''}.${wife.notes ? ` ${wife.notes}` : ''}`;
-    }
+  // 1. Question about wife / people / contacts
+  const matchedPerson = people.find((p) => {
+    const name = p.name.toLowerCase();
+    const rel = (p.relationship || '').toLowerCase();
+    const nick = (p.nickname || '').toLowerCase();
+
+    if (name && hasWholeWord(lower, [name])) return true;
+    if (nick && hasWholeWord(lower, [nick])) return true;
+    if (rel.includes('mke') && hasWholeWord(lower, ['mke', 'mkeo', 'mke wangu', 'wife'])) return true;
+    if (rel.includes('mama') && hasWholeWord(lower, ['mama', 'mama yangu', 'mother'])) return true;
+    if (rel.includes('baba') && hasWholeWord(lower, ['baba', 'baba yangu', 'father'])) return true;
+    if ((rel.includes('boss') || rel.includes('bosi')) && hasWholeWord(lower, ['boss', 'bosi', 'mkurugenzi'])) return true;
+    return false;
+  });
+
+  if (matchedPerson) {
+    return `Mkuu Max, kulingana na orodha yako ya **Watu wa Karibu**:\n\n` +
+      `💍 **${matchedPerson.relationship}:** **${matchedPerson.name}** ${matchedPerson.nickname ? `(*${matchedPerson.nickname}*)` : ''}\n` +
+      `• **Simu:** ${matchedPerson.phone || 'Haijawekwa'}\n` +
+      `• **Barua Pepe:** ${matchedPerson.email || 'Haijawekwa'}\n` +
+      `• **Maelezo:** ${matchedPerson.notes || 'Mtu wa karibu aliyehifadhiwa'}`;
   }
 
-  if (lower.includes('mama')) {
-    const mama = people.find((p) => p.relationship.toLowerCase().includes('mama'));
-    if (mama) {
-      return `Ndiyo Max, mama yako ni ${mama.name}.${mama.notes ? ` ${mama.notes}` : ''}`;
-    }
+  // 2. Troubleshooting / Bug reports / Complaints
+  if (hasWholeWord(lower, ['tatizo', 'shida', 'bug', 'hitilafu', 'haifanyi', 'aifanyi', 'rekebisha', 'fix', 'rudia', 'haitoi', 'kosa'])) {
+    return `Mkuu Max, nimepokea maelekezo yako kuhusu suala hilo. Nipo tayari kurekebisha na kutekeleza mara moja bila kukwama.\n\nTafadhali nipe agizo mahususi unalotaka nifanye sasa—iwe ni kuhifadhi kumbukumbu, kutafuta taarifa ya mtu, kukuandalia ripoti/waraka (PDF/Word/Excel), au kujibu swali lolote la kiutendaji.`;
   }
 
-  if (lower.includes('boss') || lower.includes('bosi')) {
-    const boss = people.find((p) => p.relationship.toLowerCase().includes('boss') || p.relationship.toLowerCase().includes('bosi'));
-    if (boss) {
-      return `Ndiyo Max, boss wako ni ${boss.name} (${boss.nickname || 'Mkurugenzi'}). ${boss.notes || ''}`;
-    }
+  // 3. Pure Short Greetings ONLY (at most 5 words)
+  if (wordCount <= 5 && hasWholeWord(lower, ['habari', 'mambo', 'hujambo', 'shikamoo', 'hello', 'hey', 'hi', 'salama', 'niaje', 'jambo'])) {
+    return `Habari Mkuu Max! Mimi ni MKUU AI, msaidizi wako binafsi. Nipo tayari kukusaidia na kumbukumbu zako, watu wako wa karibu, na kuandaa mafaili au nyaraka. Tushughulikie nini sasa?`;
   }
 
-  // Greetings
-  if (lower.includes('habari') || lower.includes('mambo') || lower.includes('hello') || lower.includes('hi')) {
-    return `Habari Max! Mimi ni MKUU AI, msaidizi wako binafsi. Nipo tayari kukusaidia na kumbukumbu zako (Max Memory), watu wako wa karibu (Max Identify), majibu ya moja kwa moja (Max Auto Reply), na kuandaa mafaili halisi. Nikuongoze na nini leo?`;
-  }
-
-  // Memory query
-  if (lower.includes('unakumbuka') || lower.includes('kumbukumbu')) {
+  // 4. Memory query
+  if (hasWholeWord(lower, ['unakumbuka', 'kumbukumbu', 'nilikwambia', 'nilisema', 'tulikubaliana'])) {
     if (memories.length > 0) {
-      const memList = memories.slice(0, 3).map((m) => `• ${m.content}`).join('\n');
-      return `Ndiyo Max, ninakumbuka mambo yafuatayo yaliyohifadhiwa kwenye Max Memory:\n${memList}\n\nUngependa niongeze au nisasambue kumbukumbu yoyote?`;
+      const memList = memories.slice(0, 4).map((m, i) => `${i + 1}. **[${m.category.toUpperCase()}]** ${m.content}`).join('\n\n');
+      return `Mkuu Max, ninakumbuka yafuatayo kwenye Kumbukumbu zako za kudumu:\n\n${memList}\n\nUngependa niongeze au nisasambue kumbukumbu yoyote?`;
     }
-    return `Max, kwa sasa bado hatujaweka kumbukumbu maalum kuhusu hilo kwenye Max Memory. Niambie "Kumbuka [taarifa yako]" nami nitaweka kwenye kumbukumbu ya kudumu mara moja.`;
+    return `Mkuu Max, kwa sasa bado hatujaweka kumbukumbu maalum kuhusu hilo. Niambie *"Kumbuka [taarifa yako]"* nami nitaiweka mara moja.`;
   }
 
-  return `Nimekuelewa vyema Max. Ninaendelea kufanya kazi chini ya maelekezo yako kama MKUU AI. Unaweza kuniagiza nikumbuke jambo lolote, nikukumbushe kuhusu Watu wako wa Karibu, nikuandalie faili (PDF, Excel, Word), au kusimamia Auto Reply.`;
+  // 5. Identity queries
+  if (hasWholeWord(lower, ['wewe ni nani', 'jina lako', 'mimi ni nani', 'unanijua'])) {
+    return `Wewe ni Mkuu **Max**, mmiliki na msimamizi mkuu wa mfumo huu wa **MKUU AI**. Mimi ni msaidizi wako mkuu wa kidijitali niliyetayari kutekeleza majukumu yako yote.`;
+  }
+
+  // 6. Default thoughtful assistance
+  return `Mkuu Max, nimepokea ujumbe wako: *" ${message} "*.\n\nNimechambua maelezo haya kikamilifu. Nipo tayari kuendelea na utekelezaji—iwe ni kuandaa waraka, kupanga ratiba, kuweka kumbukumbu hii kwenye hifadhi, au kukupa ufafanuzi wa kina.`;
 }

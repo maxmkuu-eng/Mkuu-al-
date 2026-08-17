@@ -9,26 +9,28 @@ export const PRODUCTION_API_BASE_URL = 'https://ais-dev-226ybn2ptvxoimveetx6am-8
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
 
 /**
- * Detect if running inside native Capacitor environment (Android / iOS / Local WebView)
+ * Detect if running inside true native Capacitor environment (Android / iOS / Local WebView)
  */
 export function isCapacitorNative(): boolean {
   if (typeof window === 'undefined') return false;
-  const isCap = !!(window as any).Capacitor?.isNativePlatform?.() || 
-                window.location.protocol === 'capacitor:' || 
-                window.location.hostname === 'localhost' ||
-                window.location.hostname === '127.0.0.1' ||
-                window.location.protocol === 'file:';
-  return isCap;
+  const cap = (window as any).Capacitor;
+  if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
+    return true;
+  }
+  if (window.location.protocol === 'capacitor:' || window.location.protocol === 'file:') {
+    return true;
+  }
+  return false;
 }
 
 /**
  * Returns configured API Base URL
  * - If user configured a custom URL in settings, use that
  * - If running in native Android / Capacitor APK, use PRODUCTION_API_BASE_URL
- * - If running in browser web context, use origin or PRODUCTION_API_BASE_URL
+ * - If running in browser web context, use relative '' so it hits the live same-origin backend seamlessly
  */
 export function getApiBaseUrl(): string {
-  if (typeof window === 'undefined') return PRODUCTION_API_BASE_URL;
+  if (typeof window === 'undefined') return '';
 
   // 1. User custom override in settings
   const custom = localStorage.getItem(STORAGE_SERVER_URL_KEY);
@@ -36,20 +38,13 @@ export function getApiBaseUrl(): string {
     return custom.trim().replace(/\/+$/, '');
   }
 
-  // 2. Capacitor Android APK or local file origin -> ALWAYS use LIVE production backend
+  // 2. Capacitor Android APK standalone mode
   if (isCapacitorNative()) {
     return PRODUCTION_API_BASE_URL;
   }
 
-  // 3. Web browser context: if on cloud run, use origin or PRODUCTION_API_BASE_URL
-  if (window.location.origin && window.location.origin.startsWith('http')) {
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      return ''; // In local node dev server, relative /api/* hits localhost:3000
-    }
-    return window.location.origin.replace(/\/+$/, '');
-  }
-
-  return PRODUCTION_API_BASE_URL;
+  // 3. Web browser context: Use relative path '' to hit backend without CORS issues
+  return '';
 }
 
 export function getRemoteServerUrl(): string {
