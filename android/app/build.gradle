@@ -17,10 +17,25 @@ android {
             cruncherEnabled = false
         }
     }
+    signingConfigs {
+        release {
+            if (file("release.keystore").exists()) {
+                storeFile file("release.keystore")
+                storePassword "MkuuAiMasterRelease2026"
+                keyAlias "mkuu_ai_master_key"
+                keyPassword "MkuuAiMasterRelease2026"
+                v1SigningEnabled true
+                v2SigningEnabled true
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             crunchPngs false
+            if (file("release.keystore").exists()) {
+                signingConfig signingConfigs.release
+            }
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         debug {

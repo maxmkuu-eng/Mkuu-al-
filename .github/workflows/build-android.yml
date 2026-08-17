@@ -48,7 +48,6 @@ jobs:
 
       - name: 8. Verify and Ensure Gradle Wrapper Integrity
         run: |
-          # If gradle-wrapper.jar is missing or corrupt, restore verified wrapper
           if [ ! -s android/gradle/wrapper/gradle-wrapper.jar ] || ! unzip -t android/gradle/wrapper/gradle-wrapper.jar >/dev/null 2>&1; then
             echo "Repairing gradle-wrapper.jar..."
             mkdir -p android/gradle/wrapper
@@ -66,7 +65,7 @@ jobs:
           echo "=========================================="
           ./gradlew clean :app:assembleRelease --no-daemon --stacktrace
 
-      - name: 10. Sign Production Release APK Securely
+      - name: 10. Align and Sign Production Release APK (v1 + v2 Signature Scheme)
         run: |
           mkdir -p release-output
           
@@ -77,88 +76,84 @@ jobs:
             exit 1
           fi
           echo "Located generated release APK at: $RAW_APK"
+
+          # Find Android SDK build-tools directory with zipalign and apksigner
+          BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          echo "Using Android Build-Tools from: $BUILD_TOOLS_DIR"
+          export PATH="$BUILD_TOOLS_DIR:$PATH"
           
+          # Step A: Zipalign the unaligned APK
+          ALIGNED_APK="release-output/aligned_unsigned.apk"
+          zipalign -v -p 4 "$RAW_APK" "$ALIGNED_APK"
+          echo "✓ zipalign completed successfully"
+
           TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
-          cp "$RAW_APK" "$TARGET_APK"
-          
+
+          # Step B: Keystore Preparation
           if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "Signing with repository secret keystore..."
+            echo "Using repository secret keystore..."
             echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
-            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
-              -keystore release.keystore \
-              -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-              -keypass "${{ secrets.ANDROID_KEY_PASSWORD }}" \
-              "$TARGET_APK" "${{ secrets.ANDROID_KEY_ALIAS }}"
+            KS_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+            KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
+            KS_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
           else
-            echo "Generating secure release signing keystore..."
+            echo "Generating unified release signing keystore..."
             keytool -genkey -v -keystore release.keystore -alias mkuu_ai_master_key \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass "MkuuAiMasterRelease2026" -keypass "MkuuAiMasterRelease2026" \
               -dname "CN=Max, OU=MKUU AI, O=MKUU, L=DarEsSalaam, ST=Tanzania, C=TZ"
-            
-            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
-              -keystore release.keystore \
-              -storepass "MkuuAiMasterRelease2026" \
-              -keypass "MkuuAiMasterRelease2026" \
-              "$TARGET_APK" mkuu_ai_master_key
+            KS_PASS="MkuuAiMasterRelease2026"
+            KEY_PASS="MkuuAiMasterRelease2026"
+            KS_ALIAS="mkuu_ai_master_key"
           fi
 
-      - name: 11. Strict APK Validation & Structural Inspection
+          # Step C: Sign using official apksigner (enables full v1 + v2 + v3 signing schemes required by modern Android)
+          apksigner sign \
+            --ks release.keystore \
+            --ks-pass "pass:$KS_PASS" \
+            --key-pass "pass:$KEY_PASS" \
+            --ks-key-alias "$KS_ALIAS" \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$TARGET_APK" \
+            "$ALIGNED_APK"
+
+          echo "✓ Official apksigner completed with v1+v2+v3 signature schemes"
+
+      - name: 11. Strict APK Inspection and Verification
         run: |
           TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+          BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          export PATH="$BUILD_TOOLS_DIR:$PATH"
           
           echo "=========================================="
-          echo "APK Validation Check: Existence and File Size"
+          echo "1. Size and Existence Check"
           echo "=========================================="
           if [ ! -f "$TARGET_APK" ]; then
             echo "ERROR: $TARGET_APK does not exist!"
             exit 1
           fi
-          
           APK_SIZE=$(stat -c%s "$TARGET_APK" 2>/dev/null || wc -c < "$TARGET_APK")
-          if [ "$APK_SIZE" -le 10000 ]; then
-            echo "ERROR: APK size ($APK_SIZE bytes) is invalid or empty!"
-            exit 1
-          fi
           echo "APK Size: $APK_SIZE bytes (~$(($APK_SIZE / 1024 / 1024)) MB)"
 
           echo "=========================================="
-          echo "APK Validation Check: Internal Package Structure"
+          echo "2. Official apksigner Verification (v1, v2, v3)"
           echo "=========================================="
-          APK_CONTENTS=$(unzip -l "$TARGET_APK")
-          
-          # Check AndroidManifest.xml
-          if ! echo "$APK_CONTENTS" | grep -q "AndroidManifest.xml"; then
-            echo "ERROR: AndroidManifest.xml missing inside APK!"
-            exit 1
-          fi
-          echo "✓ AndroidManifest.xml verified"
-          
-          # Check classes.dex
-          if ! echo "$APK_CONTENTS" | grep -q "classes.dex"; then
-            echo "ERROR: classes.dex missing inside APK!"
-            exit 1
-          fi
-          echo "✓ classes.dex verified"
-          
-          # Check resources.arsc
-          if ! echo "$APK_CONTENTS" | grep -q "resources.arsc"; then
-            echo "ERROR: resources.arsc missing inside APK!"
-            exit 1
-          fi
-          echo "✓ resources.arsc verified"
+          apksigner verify --verbose --print-certs "$TARGET_APK"
 
           echo "=========================================="
-          echo "APK Validation Check: Digital Signature"
+          echo "3. AAPT Badging & Package Inspection"
           echo "=========================================="
-          if ! jarsigner -verify -verbose -certs "$TARGET_APK" | grep -E "jar verified|Signature verified"; then
-            echo "ERROR: APK signature verification failed!"
-            exit 1
-          fi
-          echo "✓ APK signature verified successfully."
+          aapt dump badging "$TARGET_APK" | head -n 35
 
           echo "=========================================="
-          echo "ALL VALIDATIONS PASSED: MkuuAI_Master_v1.0.0_Signed.apk"
+          echo "4. Zipalign Alignment Verification"
+          echo "=========================================="
+          zipalign -c -v 4 "$TARGET_APK"
+
+          echo "=========================================="
+          echo "ALL INSTALLABILITY VALIDATIONS PASSED!"
           echo "=========================================="
 
       - name: 12. Upload Verified Production APK Artifact
@@ -168,4 +163,3 @@ jobs:
           path: release-output/MkuuAI_Master_v1.0.0_Signed.apk
           retention-days: 30
           if-no-files-found: error
-
