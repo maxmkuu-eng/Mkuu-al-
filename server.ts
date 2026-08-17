@@ -7,9 +7,6 @@ import { processMkuuChat } from './server/gemini.js';
 import { generateRealFile, ensureInitialSeedFiles } from './server/files.js';
 import { processInboundAutoReply } from './server/autoreply.js';
 
-async function startServer() {
-  const app = express();
-
   async function startServer() {
   const app = express();
 
