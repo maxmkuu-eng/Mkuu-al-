@@ -448,4 +448,463 @@ async function startServer() {
 
     res.json({
       success: true,
-      message: `Nambari ${cleanPhone} imethibitishwa na kuunganish
+      message: `Nambari ${cleanPhone} imethibitishwa na kuunganishwa rasmi na mfumo wa Max Auto Reply.`,
+      settings: updated,
+    });
+  });
+
+  // Remove Phone Number
+  app.post('/api/autoreply/remove-phone', (req, res) => {
+    const updated = db.updateAutoReplySettings(
+      DEFAULT_USER_ID,
+      {
+        myPhoneNumber: '',
+        phoneVerified: false,
+        phoneVerifiedAt: undefined,
+      }
+    );
+
+    res.json({
+      success: true,
+      message:
+        'Nambari ya simu imeondolewa kikamilifu kwenye Auto Reply.',
+      settings: updated,
+    });
+  });
+
+  app.get('/api/autoreply/logs', (req, res) => {
+    const logs = db.getAutoReplyLogs(DEFAULT_USER_ID);
+
+    res.json(logs);
+  });
+
+  const handleClearLogs = (req: any, res: any) => {
+    db.clearAutoReplyLogs(DEFAULT_USER_ID);
+
+    res.json({
+      success: true,
+      message:
+        'Kumbukumbu zote za majibu ya kiotomatiki zimefutwa.',
+    });
+  };
+
+  app.delete(
+    '/api/autoreply/logs',
+    handleClearLogs
+  );
+
+  app.post(
+    '/api/autoreply/logs/clear',
+    handleClearLogs
+  );
+
+  // Inbound SMS Webhook & Simulation
+  app.post('/api/autoreply/simulate', async (req, res) => {
+    try {
+      const {
+        sender,
+        message,
+        channel = 'sms',
+      } = req.body;
+
+      if (!sender || !message) {
+        return res.status(400).json({
+          error:
+            'Nambari ya mtumaji na ujumbe vinahitajika',
+        });
+      }
+
+      const log = await processInboundAutoReply({
+        userId: DEFAULT_USER_ID,
+        channel,
+        sender,
+        message,
+        simulate: true,
+      });
+
+      res.json({
+        success: true,
+        log,
+        ...log,
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        error: e.message,
+      });
+    }
+  });
+
+  app.post('/api/sms/inbound', async (req, res) => {
+    try {
+      const {
+        from,
+        body,
+        to,
+      } = req.body;
+
+      const log = await processInboundAutoReply({
+        userId: DEFAULT_USER_ID,
+        channel: 'sms',
+        sender: from || 'Unknown',
+        message: body || '',
+        recipient: to,
+      });
+
+      res.json({
+        status: 'success',
+        logId: log.id,
+        reply: log.generatedReply,
+      });
+    } catch (e: any) {
+      res.status(500).json({
+        error: e.message,
+      });
+    }
+  });
+
+  // Emergency stop trigger
+  app.post(
+    '/api/autoreply/emergency-stop',
+    (req, res) => {
+      const current =
+        db.getAutoReplySettings(DEFAULT_USER_ID);
+
+      const stopVal =
+        req.body?.stop !== undefined
+          ? req.body.stop
+          : !current.emergencyStop;
+
+      const updated =
+        db.updateAutoReplySettings(
+          DEFAULT_USER_ID,
+          {
+            emergencyStop: stopVal,
+          }
+        );
+
+      res.json({
+        success: true,
+        emergencyStop: updated.emergencyStop,
+        settings: updated,
+      });
+    }
+  );
+
+  // ==========================================
+  // REAL FILES & DOWNLOAD ENGINE APIS
+  // ==========================================
+  app.get('/api/files', (req, res) => {
+    const files = db.getFiles(DEFAULT_USER_ID);
+
+    res.json(files);
+  });
+
+  app.post('/api/files/generate', async (req, res) => {
+    try {
+      const {
+        filename,
+        fileType,
+        title,
+        content,
+        contentPrompt,
+        data,
+        description,
+      } = req.body;
+
+      if (
+        !fileType ||
+        (!content && !contentPrompt && !title)
+      ) {
+        return res.status(400).json({
+          error:
+            'Aina ya faili na maelezo vinahitajika',
+        });
+      }
+
+      const file = await generateRealFile({
+        userId: DEFAULT_USER_ID,
+        filename,
+        fileType,
+        title:
+          title ||
+          filename ||
+          'Faili la Max',
+        content:
+          content ||
+          contentPrompt ||
+          title ||
+          'Taarifa za Max',
+        data,
+        description,
+      });
+
+      res.json({
+        success: true,
+        file,
+        ...file,
+      });
+    } catch (e: any) {
+      console.error(
+        'File generation error:',
+        e
+      );
+
+      res.status(500).json({
+        error:
+          e.message ||
+          'Hitilafu wakati wa kuandaa faili',
+      });
+    }
+  });
+
+  // View file inline
+  app.get('/api/files/view/:id', (req, res) => {
+    const { id } = req.params;
+
+    const files =
+      db.getFiles(DEFAULT_USER_ID);
+
+    const file = files.find(
+      (f) => f.id === id
+    );
+
+    if (!file) {
+      return res.status(404).send(
+        'Faili halikupatikana'
+      );
+    }
+
+    const diskPath = path.join(
+      FILES_DIR,
+      `${file.id}_${file.filename}`
+    );
+
+    if (!fs.existsSync(diskPath)) {
+      return res.status(404).send(
+        'Faili halipo kwenye hifadhi ya diski'
+      );
+    }
+
+    res.setHeader(
+      'Content-Type',
+      file.mimeType ||
+        'application/pdf'
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${encodeURIComponent(
+        file.filename
+      )}"`
+    );
+
+    res.setHeader(
+      'Access-Control-Allow-Origin',
+      '*'
+    );
+
+    res.setHeader(
+      'Cross-Origin-Resource-Policy',
+      'cross-origin'
+    );
+
+    const stream =
+      fs.createReadStream(diskPath);
+
+    stream.pipe(res);
+  });
+
+  // Download file as attachment
+  app.get(
+    '/api/files/download/:id',
+    (req, res) => {
+      const { id } = req.params;
+
+      const files =
+        db.getFiles(DEFAULT_USER_ID);
+
+      const file = files.find(
+        (f) => f.id === id
+      );
+
+      if (!file) {
+        return res.status(404).send(
+          'Faili halikupatikana'
+        );
+      }
+
+      const diskPath = path.join(
+        FILES_DIR,
+        `${file.id}_${file.filename}`
+      );
+
+      if (!fs.existsSync(diskPath)) {
+        return res.status(404).send(
+          'Faili halipo kwenye hifadhi ya diski'
+        );
+      }
+
+      res.setHeader(
+        'Content-Type',
+        file.mimeType ||
+          'application/octet-stream'
+      );
+
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${encodeURIComponent(
+          file.filename
+        )}"`
+      );
+
+      res.setHeader(
+        'Access-Control-Allow-Origin',
+        '*'
+      );
+
+      const stream =
+        fs.createReadStream(diskPath);
+
+      stream.pipe(res);
+    }
+  );
+
+  // Get raw file base64 / text content
+  app.get(
+    '/api/files/raw/:id',
+    (req, res) => {
+      const { id } = req.params;
+
+      const files =
+        db.getFiles(DEFAULT_USER_ID);
+
+      const file = files.find(
+        (f) => f.id === id
+      );
+
+      if (!file) {
+        return res.status(404).json({
+          error:
+            'Faili halikupatikana',
+        });
+      }
+
+      const diskPath = path.join(
+        FILES_DIR,
+        `${file.id}_${file.filename}`
+      );
+
+      if (!fs.existsSync(diskPath)) {
+        return res.status(404).json({
+          error:
+            'Faili halipo kwenye hifadhi',
+        });
+      }
+
+      try {
+        const buffer =
+          fs.readFileSync(diskPath);
+
+        res.json({
+          id: file.id,
+          filename: file.filename,
+          fileType: file.fileType,
+          mimeType: file.mimeType,
+          size: buffer.length,
+          base64:
+            buffer.toString('base64'),
+          dataUrl:
+            `data:${file.mimeType || 'application/octet-stream'};base64,${buffer.toString('base64')}`,
+        });
+      } catch (e: any) {
+        res.status(500).json({
+          error:
+            'Haikuweza kusoma faili',
+        });
+      }
+    }
+  );
+
+  app.delete('/api/files/:id', (req, res) => {
+    const { id } = req.params;
+
+    const deleted = db.deleteFile(
+      id,
+      DEFAULT_USER_ID
+    );
+
+    if (deleted) {
+      res.json({
+        success: true,
+        message:
+          'Faili limefutwa kikamilifu.',
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        error:
+          'Faili halikupatikana au halikuweza kufutwa.',
+      });
+    }
+  });
+
+  // Upload/Process Document or Image
+  app.post(
+    '/api/files/upload',
+    (req, res) => {
+      try {
+        const {
+          filename,
+          fileType,
+          mimeType,
+          base64Data,
+          description,
+        } = req.body;
+
+        if (!filename || !base64Data) {
+          return res.status(400).json({
+            error:
+              'Faili na data vinahitajika',
+          });
+        }
+
+        const buffer = Buffer.from(
+          base64Data.split(',')[1] ||
+            base64Data,
+          'base64'
+        );
+
+        const fileId =
+          `upload_${Date.now()}_${Math.random()
+            .toString(36)
+            .substr(2, 6)}`;
+
+        const diskFilename =
+          `${fileId}_${filename}`;
+
+        const diskPath = path.join(
+          FILES_DIR,
+          diskFilename
+        );
+
+        fs.writeFileSync(
+          diskPath,
+          buffer
+        );
+
+        // Determine proper mimeType
+        let resolvedMimeType =
+          mimeType ||
+          'application/octet-stream';
+
+        const ext =
+          filename
+            .split('.')
+            .pop()
+            ?.toLowerCase() || '';
+
+        if (ext === 'pdf') {
+          resolvedMimeType =
+            'application/pdf';
+        } else if (ext === 'png') {
+          resolvedMimeType
