@@ -255,19 +255,21 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
   // Request Microphone Permissions
   const requestMicPermission = async (): Promise<boolean> => {
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      if (navigator?.mediaDevices?.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((track) => track.stop());
         setHasPermission(true);
+        setErrorMessage('');
         return true;
       }
+      setHasPermission(true);
       return true;
     } catch (err: any) {
       console.warn('Microphone permission request failed:', err);
       setHasPermission(false);
       setVoiceState('error');
       setErrorMessage(
-        'Ruhusa ya microphone imekataliwa. Tafadhali gusa ruhusu kipaza sauti kwenye simu yako.'
+        'Ruhusa ya microphone imezuiwa. Gusa kitufe cha "Ruhusu Mic Sasa" au ruhusu kwenye Settings za simu / kivinjari.'
       );
       return false;
     }
@@ -493,6 +495,8 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                   ? 'bg-purple-600 animate-pulse shadow-purple-500/50'
                   : voiceState === 'speaking'
                   ? 'bg-[#D4AF37] scale-105 shadow-[#D4AF37]/50'
+                  : voiceState === 'error'
+                  ? 'bg-red-950/60 border-2 border-red-500/80 hover:bg-red-900/60'
                   : 'bg-[#1a1a1a] hover:bg-[#222222] border-2 border-[#D4AF37]/40 hover:border-[#D4AF37]'
               }`}
             >
@@ -508,11 +512,31 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
                 <RefreshCw className="w-10 h-10 text-white animate-spin" />
               ) : voiceState === 'speaking' ? (
                 <Volume2 className="w-10 h-10 text-black animate-pulse" />
+              ) : voiceState === 'error' ? (
+                <MicOff className="w-10 h-10 text-red-400 animate-pulse" />
               ) : (
                 <Mic className="w-10 h-10 text-[#D4AF37]" />
               )}
             </button>
           </div>
+
+          {hasPermission === false && (
+            <div className="w-full max-w-sm bg-red-950/40 border border-red-500/40 rounded-2xl p-3 text-center space-y-2">
+              <p className="text-xs text-red-200">
+                Kipaza sauti kimezuiwa kwenye kifaa hiki.
+              </p>
+              <button
+                id="voice-request-perm-direct-btn"
+                onClick={async () => {
+                  const ok = await requestMicPermission();
+                  if (ok) startListening();
+                }}
+                className="px-4 py-1.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold text-xs shadow cursor-pointer transition"
+              >
+                Ruhusu Microphone Sasa
+              </button>
+            </div>
+          )}
 
           <p className="text-xs text-[#888888] text-center max-w-xs">
             {voiceState === 'listening'

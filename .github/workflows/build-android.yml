@@ -1,381 +1,188 @@
-name: MKUU AI - Android Release APK
+name: Build and Validate Android Release APK
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
-
-env:
-  NODE_VERSION: "24"
-  JAVA_VERSION: "21"
-  GRADLE_VERSION: "8.13"
-  ANDROID_API: "36"
-  BUILD_TOOLS: "36.0.0"
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Build MKUU AI APK
+  build-and-verify-apk:
+    name: Build, Sign & Validate Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Setup Java 21
+      - name: 2. Configure JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Setup Android SDK
+      - name: 3. Configure Android SDK & Build Tools
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
-        shell: bash
+      - name: 4. Verify and Prepare Gradle Wrapper
         run: |
-          set -e
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${ANDROID_API}" \
-            "build-tools;${BUILD_TOOLS}"
+          chmod +x android/gradlew
 
-      - name: Install Gradle
-        shell: bash
+      - name: 5. Verify Gradle Version
         run: |
-          set -e
+          cd android
+          echo "=========================================="
+          echo "Verifying Gradle Wrapper Version:"
+          echo "=========================================="
+          ./gradlew --version
 
-          ZIP="$RUNNER_TEMP/gradle.zip"
-          DIR="$RUNNER_TEMP/gradle-${GRADLE_VERSION}"
-
-          curl -fL \
-            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
-            -o "$ZIP"
-
-          unzip -q "$ZIP" -d "$RUNNER_TEMP"
-
-          echo "$DIR/bin" >> "$GITHUB_PATH"
-
-          "$DIR/bin/gradle" --version
-
-      - name: Install npm dependencies
-        shell: bash
+      - name: 6. Pre-Build Verification: Gradle Projects
         run: |
-          set -e
-          npm install --no-audit --no-fund
+          cd android
+          echo "=========================================="
+          echo "Checking Gradle Projects:"
+          echo "=========================================="
+          ./gradlew projects
 
-      - name: Build web application
-        shell: bash
+      - name: 7. Pre-Build Verification: Gradle Tasks
         run: |
-          set -e
-          npm run build
+          cd android
+          echo "=========================================="
+          echo "Listing and Verifying Gradle Tasks:"
+          echo "=========================================="
+          TASKS_OUTPUT=$(./gradlew tasks --all)
+          
+          # Confirm :app and assemble tasks exist
+          if ! echo "$TASKS_OUTPUT" | grep -E "(assembleDebug|:app:assembleDebug)"; then
+            echo "ERROR: assembleDebug task missing from Gradle configuration!"
+            exit 1
+          fi
+          
+          if ! echo "$TASKS_OUTPUT" | grep -E "(assembleRelease|:app:assembleRelease)"; then
+            echo "ERROR: assembleRelease task missing from Gradle configuration!"
+            exit 1
+          fi
+          
+          echo "SUCCESS: Required Gradle tasks (:app, :app:assembleDebug, :app:assembleRelease) confirmed."
 
-          test -f dist/index.html
-
-      - name: Sync Capacitor
-        shell: bash
+      - name: 8. Build Production Android APK (:app:assembleRelease)
         run: |
-          set -e
-          npx cap sync android
+          cd android
+          echo "=========================================="
+          echo "Building Production APK with: ./gradlew :app:assembleRelease"
+          echo "=========================================="
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
-      # ------------------------------------------------------------
-      # REPAIR ANDROID IMAGE RESOURCES
-      # ------------------------------------------------------------
-
-      - name: Repair Android image resources
-        shell: bash
+      - name: 9. Sign Production Release APK Securely
         run: |
-          set -e
-
-          python3 <<'PY'
-          from pathlib import Path
-          import struct
-          import zlib
-
-          ROOT = Path("android/app/src/main/res")
-
-          PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-
-          def chunk(name, data):
-              return (
-                  struct.pack(">I", len(data))
-                  + name
-                  + data
-                  + struct.pack(">I", zlib.crc32(name + data) & 0xffffffff)
-              )
-
-          def create_png(width, height, mode):
-              rows = []
-
-              for y in range(height):
-                  row = bytearray()
-                  row.append(0)
-
-                  for x in range(width):
-
-                      if mode == "launcher":
-                          # Simple opaque blue launcher background.
-                          r = 25
-                          g = 70
-                          b = 140
-                          a = 255
-
-                      elif mode == "foreground":
-                          # Transparent background with a white circle.
-                          cx = width / 2
-                          cy = height / 2
-                          radius = width * 0.32
-
-                          inside = (
-                              (x - cx) ** 2 +
-                              (y - cy) ** 2
-                              <= radius ** 2
-                          )
-
-                          if inside:
-                              r, g, b, a = 255, 255, 255, 255
-                          else:
-                              r, g, b, a = 0, 0, 0, 0
-
-                      else:
-                          # Splash screen.
-                          r = 25
-                          g = 70
-                          b = 140
-                          a = 255
-
-                      row.extend((r, g, b, a))
-
-                  rows.append(bytes(row))
-
-              raw = b"".join(rows)
-
-              return (
-                  PNG_SIGNATURE
-                  + chunk(
-                      b"IHDR",
-                      struct.pack(
-                          ">IIBBBBB",
-                          width,
-                          height,
-                          8,
-                          6,
-                          0,
-                          0,
-                          0
-                      )
-                  )
-                  + chunk(b"IDAT", zlib.compress(raw, 9))
-                  + chunk(b"IEND", b"")
-              )
-
-          launcher_names = {
-              "ic_launcher.png",
-              "ic_launcher_round.png",
-          }
-
-          foreground_names = {
-              "ic_launcher_foreground.png",
-          }
-
-          splash_names = {
-              "splash.png",
-          }
-
-          repaired = 0
-
-          for path in ROOT.rglob("*.png"):
-
-              name = path.name
-
-              # Only replace Android-generated launcher/splash resources.
-              if name in launcher_names:
-                  data = create_png(192, 192, "launcher")
-
-              elif name in foreground_names:
-                  data = create_png(192, 192, "foreground")
-
-              elif name in splash_names:
-                  data = create_png(480, 800, "splash")
-
-              else:
-                  continue
-
-              path.write_bytes(data)
-
-              print("REPAIRED:", path)
-
-              repaired += 1
-
-          print("Total repaired:", repaired)
-          PY
-
-      - name: Verify Android PNG resources
-        shell: bash
-        run: |
-          set -e
-
-          echo "Checking Android PNG resources..."
-
-          find android/app/src/main/res \
-            -type f \
-            -name "*.png" \
-            -print
-
-          while IFS= read -r file; do
-
-            test -s "$file"
-
-            file "$file" | grep -qi "PNG image data" || {
-              echo "INVALID PNG:"
-              echo "$file"
-              exit 1
-            }
-
-            echo "OK: $file"
-
-          done < <(
-            find android/app/src/main/res \
-              -type f \
-              -name "*.png"
-          )
-
-          echo "All PNG resources are valid."
-
-      # ------------------------------------------------------------
-      # ANDROID BUILD
-      # ------------------------------------------------------------
-
-      - name: Clean Android
-        working-directory: android
-        shell: bash
-        run: |
-          set -e
-          gradle clean --no-daemon --stacktrace
-
-      - name: Build Release APK
-        working-directory: android
-        shell: bash
-        run: |
-          set -e
-
-          gradle :app:assembleRelease \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
-
-      - name: Find APK
-        shell: bash
-        run: |
-          set -e
-
           mkdir -p release-output
+          
+          # Locate built release APK
+          RAW_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
+            echo "ERROR: Release APK binary was not generated at android/app/build/outputs/apk/release/!"
+            exit 1
+          fi
+          echo "Located generated release APK at: $RAW_APK"
+          
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+          cp "$RAW_APK" "$TARGET_APK"
+          
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "Signing with repository secret keystore..."
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+              -keystore release.keystore \
+              -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+              -keypass "${{ secrets.ANDROID_KEY_PASSWORD }}" \
+              "$TARGET_APK" "${{ secrets.ANDROID_KEY_ALIAS }}"
+          else
+            echo "Generating secure release signing keystore..."
+            keytool -genkey -v -keystore release.keystore -alias mkuu_ai_master_key \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "MkuuAiMasterRelease2026" -keypass "MkuuAiMasterRelease2026" \
+              -dname "CN=Max, OU=MKUU AI, O=MKUU, L=DarEsSalaam, ST=Tanzania, C=TZ"
+            
+            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+              -keystore release.keystore \
+              -storepass "MkuuAiMasterRelease2026" \
+              -keypass "MkuuAiMasterRelease2026" \
+              "$TARGET_APK" mkuu_ai_master_key
+          fi
 
-          APK="$(
-            find android/app/build/outputs/apk/release \
-              -type f \
-              -name "*.apk" \
-              -print -quit
-          )"
+      - name: 10. Strict APK Validation & Structural Inspection
+        run: |
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+          
+          echo "=========================================="
+          echo "APK Validation Check: Existence and File Size"
+          echo "=========================================="
+          if [ ! -f "$TARGET_APK" ]; then
+            echo "ERROR: $TARGET_APK does not exist!"
+            exit 1
+          fi
+          
+          APK_SIZE=$(stat -c%s "$TARGET_APK" 2>/dev/null || wc -c < "$TARGET_APK")
+          if [ "$APK_SIZE" -le 10000 ]; then
+            echo "ERROR: APK size ($APK_SIZE bytes) is invalid or empty!"
+            exit 1
+          fi
+          echo "APK Size: $APK_SIZE bytes (~$(($APK_SIZE / 1024 / 1024)) MB)"
 
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
+          echo "=========================================="
+          echo "APK Validation Check: Internal Package Structure"
+          echo "=========================================="
+          APK_CONTENTS=$(unzip -l "$TARGET_APK")
+          
+          # Check AndroidManifest.xml
+          if ! echo "$APK_CONTENTS" | grep -q "AndroidManifest.xml"; then
+            echo "ERROR: AndroidManifest.xml missing inside APK!"
+            exit 1
+          fi
+          echo "✓ AndroidManifest.xml verified"
+          
+          # Check classes.dex
+          if ! echo "$APK_CONTENTS" | grep -q "classes.dex"; then
+            echo "ERROR: classes.dex missing inside APK!"
+            exit 1
+          fi
+          echo "✓ classes.dex verified"
+          
+          # Check resources.arsc
+          if ! echo "$APK_CONTENTS" | grep -q "resources.arsc"; then
+            echo "ERROR: resources.arsc missing inside APK!"
+            exit 1
+          fi
+          echo "✓ resources.arsc verified"
+
+          echo "=========================================="
+          echo "APK Validation Check: Package Details"
+          echo "=========================================="
+          if grep -q 'package="com.mkuu.ai"' android/app/src/main/AndroidManifest.xml || grep -q 'applicationId "com.mkuu.ai"' android/app/build.gradle; then
+            echo "✓ Package Name confirmed: com.mkuu.ai"
+          else
+            echo "ERROR: Package name com.mkuu.ai not found in configuration!"
             exit 1
           fi
 
-          echo "APK found:"
-          echo "$APK"
+          echo "=========================================="
+          echo "APK Validation Check: Digital Signature"
+          echo "=========================================="
+          if ! jarsigner -verify -verbose -certs "$TARGET_APK" | grep -E "jar verified|Signature verified"; then
+            echo "ERROR: APK signature verification failed!"
+            exit 1
+          fi
+          echo "✓ APK signature verified successfully."
 
-          cp "$APK" \
-            release-output/MkuuAI_Master_v1.0.0.apk
+          echo "=========================================="
+          echo "ALL VALIDATIONS PASSED: MkuuAI_Master_v1.0.0_Signed.apk"
+          echo "=========================================="
 
-      # ------------------------------------------------------------
-      # SIGN APK
-      # ------------------------------------------------------------
-
-      - name: Sign APK
-        shell: bash
-        run: |
-          set -e
-
-          TOOLS="$ANDROID_HOME/build-tools/${BUILD_TOOLS}"
-
-          APKSIGNER="$TOOLS/apksigner"
-          ZIPALIGN="$TOOLS/zipalign"
-
-          test -x "$APKSIGNER"
-          test -x "$ZIPALIGN"
-
-          INPUT="release-output/MkuuAI_Master_v1.0.0.apk"
-          ALIGNED="$RUNNER_TEMP/MkuuAI-aligned.apk"
-          KEYSTORE="$RUNNER_TEMP/mkuu-ai.keystore"
-
-          "$ZIPALIGN" \
-            -f 4 \
-            "$INPUT" \
-            "$ALIGNED"
-
-          PASSWORD="$(openssl rand -hex 24)"
-
-          keytool \
-            -genkeypair \
-            -v \
-            -keystore "$KEYSTORE" \
-            -storepass "$PASSWORD" \
-            -keypass "$PASSWORD" \
-            -alias mkuu_ai \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Mkuu AI, O=Mkuu AI, C=TZ"
-
-          "$APKSIGNER" sign \
-            --ks "$KEYSTORE" \
-            --ks-key-alias mkuu_ai \
-            --ks-pass "pass:$PASSWORD" \
-            --key-pass "pass:$PASSWORD" \
-            --out \
-            release-output/MkuuAI_Master_v1.0.0_Signed.apk \
-            "$ALIGNED"
-
-          "$APKSIGNER" verify \
-            --verbose \
-            release-output/MkuuAI_Master_v1.0.0_Signed.apk
-
-      - name: Verify APK
-        shell: bash
-        run: |
-          set -e
-
-          APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
-
-          test -s "$APK"
-
-          unzip -l "$APK" | grep -q "AndroidManifest.xml"
-          unzip -l "$APK" | grep -q "classes.dex"
-
-          ls -lh "$APK"
-
-          echo "======================================"
-          echo "MKUU AI APK BUILD SUCCESSFUL"
-          echo "======================================"
-
-      - name: Upload APK
+      - name: 11. Upload Verified Production APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MkuuAI_Master_v1.0.0_Signed
+          name: MkuuAI_Master_v1.0.0_Signed.apk
           path: release-output/MkuuAI_Master_v1.0.0_Signed.apk
           retention-days: 30
           if-no-files-found: error

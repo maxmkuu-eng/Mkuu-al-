@@ -20,8 +20,8 @@ export function getGenAI(): GoogleGenAI {
 
 // Resilient multi-model fallback list in order of preference for high availability
 const MODEL_FALLBACK_CANDIDATES = [
-  'gemini-3.7-flash',
   'gemini-flash-latest',
+  'gemini-3.7-flash',
   'gemini-3.1-flash-lite',
 ];
 
@@ -31,7 +31,7 @@ export async function generateContentWithFallback(params: {
   preferredModel?: string;
 }): Promise<string> {
   const ai = getGenAI();
-  const preferred = params.preferredModel || 'gemini-3.7-flash';
+  const preferred = params.preferredModel || 'gemini-flash-latest';
   const modelsToTry = [
     preferred,
     ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== preferred),
@@ -40,46 +40,42 @@ export async function generateContentWithFallback(params: {
   let lastError: any = null;
 
   for (const model of modelsToTry) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: params.contents,
-          config: params.config,
-        });
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: params.config,
+      });
 
-        const text = response.text;
-        if (text && text.trim().length > 0) {
-          return text;
-        }
-      } catch (err: any) {
-        lastError = err;
-        const errMsg = String(err?.message || err);
-        const isTransient =
-          errMsg.includes('503') ||
-          errMsg.includes('UNAVAILABLE') ||
-          errMsg.includes('high demand') ||
-          errMsg.includes('429') ||
-          errMsg.includes('RESOURCE_EXHAUSTED') ||
-          errMsg.includes('Overloaded') ||
-          errMsg.includes('fetch failed') ||
-          errMsg.includes('network');
-
-        // Log clean debug notice rather than full raw error trace
-        if (process.env.NODE_ENV !== 'production') {
-          console.log(`[MKUU AI] Notice: Model ${model} (attempt ${attempt}) transient check: ${errMsg.slice(0, 120)}... trying fallback.`);
-        }
-
-        if (isTransient && attempt === 1) {
-          // Short jittered delay before retry
-          const backoff = 300 + Math.floor(Math.random() * 200);
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          continue;
-        }
-
-        // On failure, switch to next model immediately
-        break;
+      const text = response.text;
+      if (text && text.trim().length > 0) {
+        return text;
       }
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = String(err?.message || err);
+
+      // If failure was tool-related (e.g. googleSearch), retry immediately without tools
+      if (params.config?.tools && (errMsg.includes('tool') || errMsg.includes('googleSearch') || errMsg.includes('INVALID_ARGUMENT'))) {
+        try {
+          const configWithoutTools = { ...params.config };
+          delete configWithoutTools.tools;
+          const responseNoTools = await ai.models.generateContent({
+            model,
+            contents: params.contents,
+            config: configWithoutTools,
+          });
+          const textNoTools = responseNoTools.text;
+          if (textNoTools && textNoTools.trim().length > 0) {
+            return textNoTools;
+          }
+        } catch {
+          // Proceed with next model
+        }
+      }
+
+      // If this model is experiencing high demand (503) or rate limit, smoothly switch to the next fallback candidate
+      continue;
     }
   }
 
@@ -233,13 +229,19 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
       parts: userParts.length > 0 ? userParts : [{ text: message || 'Chambua faili hili' }],
     });
 
+    const isSearchQuery = detectSearchIntent(message);
+    const generationConfig: any = {
+      systemInstruction: systemPrompt,
+      temperature: 0.7,
+    };
+    if (isSearchQuery) {
+      generationConfig.tools = [{ googleSearch: {} }];
+    }
+
     aiReplyText = await generateContentWithFallback({
-      preferredModel: 'gemini-3.7-flash',
+      preferredModel: 'gemini-flash-latest',
       contents: contents,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.7,
-      },
+      config: generationConfig,
     });
   } catch (error) {
     console.error('Error generating AI response with Gemini after fallbacks:', error);
@@ -289,6 +291,38 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
     peopleRecognized: matchedPeople.length > 0 ? matchedPeople : undefined,
     generatedFiles: generatedFilesList.length > 0 ? generatedFilesList : undefined,
   };
+}
+
+function detectSearchIntent(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const keywords = [
+    'liveweb',
+    'live web',
+    'mtandao',
+    'mtandaoni',
+    'search',
+    'tafuta',
+    'habari za leo',
+    'habari ya leo',
+    'habari mpya',
+    'latest',
+    'current',
+    'matokeo ya',
+    'bei ya',
+    'nani kashinda',
+    'hali ya hewa',
+    'weather',
+    'news',
+    'tovuti',
+    'website',
+    'google',
+    'mtandaoni sasa',
+    'tazama mtandaoni',
+    'kuchunguza mtandaoni',
+    'online',
+  ];
+  return keywords.some((k) => lower.includes(k));
 }
 
 function detectMemoryIntent(text: string): boolean {

@@ -865,44 +865,49 @@ function getGenAI() {
   return genAIClient;
 }
 var MODEL_FALLBACK_CANDIDATES = [
-  "gemini-3.7-flash",
   "gemini-flash-latest",
+  "gemini-3.7-flash",
   "gemini-3.1-flash-lite"
 ];
 async function generateContentWithFallback(params) {
   const ai = getGenAI();
-  const preferred = params.preferredModel || "gemini-3.7-flash";
+  const preferred = params.preferredModel || "gemini-flash-latest";
   const modelsToTry = [
     preferred,
     ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== preferred)
   ];
   let lastError = null;
   for (const model of modelsToTry) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: params.contents,
-          config: params.config
-        });
-        const text = response.text;
-        if (text && text.trim().length > 0) {
-          return text;
-        }
-      } catch (err) {
-        lastError = err;
-        const errMsg = String(err?.message || err);
-        const isTransient = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("high demand") || errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("Overloaded") || errMsg.includes("fetch failed") || errMsg.includes("network");
-        if (process.env.NODE_ENV !== "production") {
-          console.log(`[MKUU AI] Notice: Model ${model} (attempt ${attempt}) transient check: ${errMsg.slice(0, 120)}... trying fallback.`);
-        }
-        if (isTransient && attempt === 1) {
-          const backoff = 300 + Math.floor(Math.random() * 200);
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          continue;
-        }
-        break;
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: params.config
+      });
+      const text = response.text;
+      if (text && text.trim().length > 0) {
+        return text;
       }
+    } catch (err) {
+      lastError = err;
+      const errMsg = String(err?.message || err);
+      if (params.config?.tools && (errMsg.includes("tool") || errMsg.includes("googleSearch") || errMsg.includes("INVALID_ARGUMENT"))) {
+        try {
+          const configWithoutTools = { ...params.config };
+          delete configWithoutTools.tools;
+          const responseNoTools = await ai.models.generateContent({
+            model,
+            contents: params.contents,
+            config: configWithoutTools
+          });
+          const textNoTools = responseNoTools.text;
+          if (textNoTools && textNoTools.trim().length > 0) {
+            return textNoTools;
+          }
+        } catch {
+        }
+      }
+      continue;
     }
   }
   throw lastError || new Error("Wanamitandao wa AI hawajapatikana kwa sasa.");
@@ -1018,13 +1023,18 @@ ${decodedText.slice(0, 8e3)}
       role: "user",
       parts: userParts.length > 0 ? userParts : [{ text: message || "Chambua faili hili" }]
     });
+    const isSearchQuery = detectSearchIntent(message);
+    const generationConfig = {
+      systemInstruction: systemPrompt,
+      temperature: 0.7
+    };
+    if (isSearchQuery) {
+      generationConfig.tools = [{ googleSearch: {} }];
+    }
     aiReplyText = await generateContentWithFallback({
-      preferredModel: "gemini-3.7-flash",
+      preferredModel: "gemini-flash-latest",
       contents,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.7
-      }
+      config: generationConfig
     });
   } catch (error) {
     console.error("Error generating AI response with Gemini after fallbacks:", error);
@@ -1065,6 +1075,37 @@ ${decodedText.slice(0, 8e3)}
     peopleRecognized: matchedPeople.length > 0 ? matchedPeople : void 0,
     generatedFiles: generatedFilesList.length > 0 ? generatedFilesList : void 0
   };
+}
+function detectSearchIntent(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  const keywords = [
+    "liveweb",
+    "live web",
+    "mtandao",
+    "mtandaoni",
+    "search",
+    "tafuta",
+    "habari za leo",
+    "habari ya leo",
+    "habari mpya",
+    "latest",
+    "current",
+    "matokeo ya",
+    "bei ya",
+    "nani kashinda",
+    "hali ya hewa",
+    "weather",
+    "news",
+    "tovuti",
+    "website",
+    "google",
+    "mtandaoni sasa",
+    "tazama mtandaoni",
+    "kuchunguza mtandaoni",
+    "online"
+  ];
+  return keywords.some((k) => lower.includes(k));
 }
 function detectMemoryIntent(text) {
   const lower = text.toLowerCase();
@@ -1314,8 +1355,20 @@ async function startServer() {
   const app = (0, import_express.default)();
   const PORT = 3e3;
   await ensureInitialSeedFiles();
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+    next();
+  });
   app.use(import_express.default.json({ limit: "50mb" }));
   app.use(import_express.default.urlencoded({ extended: true, limit: "50mb" }));
+  app.get(["/health", "/api/health", "/api/ping"], (req, res) => {
+    res.json({ status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
+  });
   const DEFAULT_USER_ID = "user_max_owner";
   app.get(["/api/me", "/api/auth/me", "/api/user"], (req, res) => {
     const owner = db.getOwner();
@@ -1355,7 +1408,7 @@ async function startServer() {
       res.status(500).json({ error: e.message });
     }
   });
-  app.post("/api/chat", async (req, res) => {
+  app.post(["/api/chat", "/api/chat/"], async (req, res) => {
     try {
       const { message = "", conversationId, conversationHistory = [], isVoice = false, attachments = [] } = req.body;
       if (!message && (!attachments || attachments.length === 0)) {
