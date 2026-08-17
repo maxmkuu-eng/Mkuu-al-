@@ -22,6 +22,17 @@ allprojects {
         google()
         mavenCentral()
     }
+    configurations.all {
+        resolutionStrategy {
+            force "androidx.activity:activity:$androidxActivityVersion"
+            force "androidx.activity:activity-ktx:$androidxActivityVersion"
+            force "androidx.core:core:$androidxCoreVersion"
+            force "androidx.core:core-ktx:$androidxCoreVersion"
+            force "androidx.fragment:fragment:$androidxFragmentVersion"
+            force "androidx.fragment:fragment-ktx:$androidxFragmentVersion"
+            force "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+        }
+    }
 }
 
 task clean(type: Delete) {
