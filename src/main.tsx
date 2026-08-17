@@ -3,33 +3,33 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-// Live MKUU AI backend.
-// APK ya Capacitor haiwezi kutumia /api/... kwenye WebView yake,
-// hivyo tunaelekeza API requests kwenye server inayofanya kazi.
-const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ||
-  'https://ais-pre-226ybn2ptvxoimveetx6am-805534629417.europe-west2.run.app'
-).replace(/\/$/, '');
+const API_BASE_URL =
+  'https://ais-pre-226ybn2ptvxoimveetx6am-805534629417.europe-west2.run.app';
 
 const originalFetch = window.fetch.bind(window);
 
 window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-  if (typeof input === 'string' && input.startsWith('/api/')) {
-    return originalFetch(`${API_BASE_URL}${input}`, init);
+  let url: string;
+
+  if (typeof input === 'string') {
+    url = input;
+  } else if (input instanceof URL) {
+    url = input.toString();
+  } else {
+    url = input.url;
   }
 
-  if (input instanceof URL && input.pathname.startsWith('/api/')) {
-    return originalFetch(
-      `${API_BASE_URL}${input.pathname}${input.search}`,
-      init
-    );
+  if (url.startsWith('/api/')) {
+    url = `${API_BASE_URL}${url}`;
+  } else if (url.startsWith(window.location.origin + '/api/')) {
+    url = `${API_BASE_URL}${url.substring(window.location.origin.length)}`;
   }
 
-  return originalFetch(input, init);
+  return originalFetch(url, init);
 }) as typeof window.fetch;
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
-  </StrictMode>,
+  </StrictMode>
 );
