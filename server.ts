@@ -10,7 +10,33 @@ import { processInboundAutoReply } from './server/autoreply.js';
 async function startServer() {
   const app = express();
 
-  // Cloud Run provides PORT. Local development defaults to 8080.
+  async function startServer() {
+  const app = express();
+
+  // CORS
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Vary', 'Origin');
+    res.header(
+      'Access-Control-Allow-Methods',
+      'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+    );
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization'
+    );
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+
+    next();
+  });
+
+  // Cloud Run provides PORT
+  const PORT = Number(process.env.PORT || 8080);// Cloud Run provides PORT. Local development defaults to 8080.
   const PORT = Number(process.env.PORT || 8080);
 
   // Initialize initial seed files if vault is clean
