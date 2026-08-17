@@ -34,8 +34,80 @@ export const App: React.FC = () => {
   const [conversationId, setConversationId] = useState<string>('conv_main_max');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
-  const [memories, setMemories] = useState<Memory[]>([]);
-  const [people, setPeople] = useState<Person[]>([]);
+  const [memories, setMemories] = useState<Memory[]>([
+    {
+      id: 'mem_1',
+      userId: 'user_max_owner',
+      content: 'Max anapendelea lugha ya Kiswahili fasaha kwa mawasiliano yote na MKUU AI.',
+      category: 'Preferences',
+      importance: 'high',
+      tags: ['lugha', 'kiswahili', 'upendeleo'],
+      createdAt: '2026-08-13T09:12:26.903Z',
+      updatedAt: '2026-08-13T09:12:26.903Z',
+      source: 'explicit_command',
+    },
+    {
+      id: 'mem_2',
+      userId: 'user_max_owner',
+      content: 'Max ni mmiliki na msimamizi mkuu wa mifumo yote ya MKUU AI.',
+      category: 'General',
+      importance: 'high',
+      tags: ['mmiliki', 'max', 'utambulisho'],
+      createdAt: '2026-08-12T09:12:26.903Z',
+      updatedAt: '2026-08-12T09:12:26.903Z',
+      source: 'manual',
+    },
+    {
+      id: 'mem_3',
+      userId: 'user_max_owner',
+      content: 'Miradi mikuu ya Max kwa mwaka huu inahusu ujenzi wa teknolojia za kijasusi za AI na mifumo ya kiotomatiki.',
+      category: 'Work',
+      importance: 'medium',
+      tags: ['kazi', 'miradi', 'teknolojia'],
+      createdAt: '2026-08-14T09:12:26.903Z',
+      updatedAt: '2026-08-14T09:12:26.903Z',
+      source: 'auto_extracted',
+    }
+  ]);
+  const [people, setPeople] = useState<Person[]>([
+    {
+      id: 'person_1',
+      userId: 'user_max_owner',
+      name: 'Mary',
+      nickname: 'Mama Nani',
+      relationship: 'Mke wangu',
+      phone: '+255 754 889 001',
+      email: 'mary.mkuu@example.com',
+      notes: 'Mke mpendwa wa Max. Mtu wa kwanza wa karibu zaidi. Siku ya kumbukumbu ya ndoa ni 12 Desemba.',
+      avatarColor: 'rose',
+      createdAt: '2026-08-10T09:12:26.903Z',
+      updatedAt: '2026-08-10T09:12:26.903Z',
+    },
+    {
+      id: 'person_2',
+      userId: 'user_max_owner',
+      name: 'Mama Zawadi',
+      relationship: 'Mama yangu',
+      phone: '+255 713 554 221',
+      notes: 'Mama mzazi wa Max. Anapenda kupigiwa simu asubuhi na kujulishwa maendeleo.',
+      avatarColor: 'amber',
+      createdAt: '2026-08-11T09:12:26.903Z',
+      updatedAt: '2026-08-11T09:12:26.903Z',
+    },
+    {
+      id: 'person_3',
+      userId: 'user_max_owner',
+      name: 'Mhandisi Juma',
+      nickname: 'Boss Juma',
+      relationship: 'Boss',
+      phone: '+255 788 112 334',
+      email: 'juma.tech@example.com',
+      notes: 'Mkurugenzi wa Teknolojia. Mawasiliano naye yawe rasmi na ya kina kuhusu ripoti za kazi.',
+      avatarColor: 'blue',
+      createdAt: '2026-08-12T09:12:26.903Z',
+      updatedAt: '2026-08-12T09:12:26.903Z',
+    },
+  ]);
   const [files, setFiles] = useState<GeneratedFileSummary[]>([]);
   const [autoReplySettings, setAutoReplySettings] = useState<AutoReplySettings>({
     userId: 'user_max_owner',

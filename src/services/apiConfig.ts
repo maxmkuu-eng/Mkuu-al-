@@ -82,9 +82,9 @@ export function getApiUrl(endpoint: string): string {
 }
 
 /**
- * Safe fetch wrapper that handles network errors, CORS, and JSON parsing
+ * Safe fetch wrapper that handles network errors, CORS, timeouts, and JSON parsing
  */
-export async function apiFetch<T>(endpoint: string, options?: RequestInit): Promise<T> {
+export async function apiFetch<T>(endpoint: string, options?: RequestInit, timeoutMs = 12000): Promise<T> {
   const url = getApiUrl(endpoint);
   
   const headers: Record<string, string> = {
@@ -96,10 +96,19 @@ export async function apiFetch<T>(endpoint: string, options?: RequestInit): Prom
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+      signal: options?.signal || controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const contentType = response.headers.get('content-type') || '';
 

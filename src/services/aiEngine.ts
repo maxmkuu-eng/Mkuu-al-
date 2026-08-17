@@ -255,27 +255,51 @@ function processLocalBrain(params: ChatEngineParams): ChatEngineResult {
       reply = `Kwa sasa bado hujahifadhi kumbukumbu maalum, **${owner}**. Unaweza kuniambia kwa mfano: *"Kumbuka kuwa kesho nina kikao saa nne asubuhi"* nami nitaihifadhi mara moja.`;
     }
   }
-  // 3. People / Contacts Queries
+  // 3. People / Contacts Queries & Relationships
   else if (
     lower.includes('watu wa karibu') || 
     lower.includes('nieleze kuhusu') || 
     lower.includes('nani ni') ||
-    lower.includes('mawasiliano ya')
+    lower.includes('ni nani') ||
+    lower.includes('mke wangu') ||
+    lower.includes('mke') ||
+    lower.includes('mume') ||
+    lower.includes('mama') ||
+    lower.includes('baba') ||
+    lower.includes('rafiki') ||
+    lower.includes('boss') ||
+    lower.includes('mfanyakazi') ||
+    lower.includes('mawasiliano ya') ||
+    lower.includes('namba ya') ||
+    lower.includes('simu ya')
   ) {
-    const matchedPerson = people.find((p) => lower.includes(p.name.toLowerCase()));
+    // Check if matching by relationship or name or nickname
+    const matchedPerson = people.find((p) => {
+      const pName = p.name.toLowerCase();
+      const pRel = (p.relationship || '').toLowerCase();
+      const pNick = (p.nickname || '').toLowerCase();
+      const pNotes = (p.notes || '').toLowerCase();
+
+      return lower.includes(pName) ||
+             (pRel && lower.includes(pRel)) ||
+             (pNick && lower.includes(pNick)) ||
+             (lower.includes('mke') && (pRel.includes('mke') || pNotes.includes('mke'))) ||
+             (lower.includes('mama') && (pRel.includes('mama') || pName.includes('mama'))) ||
+             (lower.includes('boss') && (pRel.includes('boss') || pNick.includes('boss')));
+    });
 
     if (matchedPerson) {
       recognizedPeople.push(matchedPerson);
-      reply = `Taarifa za **${matchedPerson.name}** kutoka kwenye orodha yako ya Watu wa Karibu:\n\n` +
-        `• **Uhusiano:** ${matchedPerson.relationship}\n` +
+      reply = `Mkuu **${owner}**, kulingana na orodha yako ya **Watu wa Karibu**:\n\n` +
+        `💍 **${matchedPerson.relationship}:** **${matchedPerson.name}** ${matchedPerson.nickname ? `(*${matchedPerson.nickname}*)` : ''}\n\n` +
         `• **Nambari ya Simu:** ${matchedPerson.phone || 'Haijawekwa'}\n` +
         `• **Barua Pepe:** ${matchedPerson.email || 'Haijawekwa'}\n` +
-        `• **Maelezo:** ${matchedPerson.notes || 'Hakuna maelezo ya ziada'}`;
+        `• **Maelezo ya Ziada:** ${matchedPerson.notes || 'Mtu wa karibu aliyehifadhiwa'}`;
     } else if (people.length > 0) {
-      reply = `Hawa ndio baadhi ya Watu wako wa Karibu waliosajiliwa, **${owner}**:\n\n` +
-        people.slice(0, 5).map((p) => `• **${p.name}** — ${p.relationship} (Simu: ${p.phone || 'N/A'})`).join('\n');
+      reply = `Hawa ndio Watu wako wa Karibu waliosajiliwa kwenye kumbukumbu ya mfumo, **${owner}**:\n\n` +
+        people.slice(0, 8).map((p) => `• **${p.name}** — ${p.relationship} (Simu: ${p.phone || 'N/A'})`).join('\n');
     } else {
-      reply = `Bado hujaongeza watu kwenye orodha ya Watu wa Karibu, **${owner}**. Unaweza kwenda kwenye kichupo cha *Watu wa Karibu* kuwaweka ili niweze kuwatambua na kuwajibu kiotomatiki.`;
+      reply = `Bado hujaongeza watu kwenye orodha ya Watu wa Karibu, **${owner}**. Unaweza kwenda kwenye kichupo cha *Watu wa Karibu* kuwaweka ili niweze kuwatambua na kukukumbusha taarifa zao mara moja.`;
     }
   }
   // 4. Greetings and Salutations
@@ -290,19 +314,73 @@ function processLocalBrain(params: ChatEngineParams): ChatEngineResult {
     reply = `Habari ya wakati huu, Mkuu **${owner}**! Mimi ni **MKUU AI**, msaidizi wako binafsi. Nipo tayari kukuhudumia kikamilifu kwenye masuala yote ya kumbukumbu, uandishi, upangaji wa ratiba, na uchambuzi. Ungependa tushughulikie nini sasa?`;
   }
   // 5. Help / Capabilities
-  else if (lower.includes('msaada') || lower.includes('unaweza kufanya nini') || lower.includes('help')) {
-    reply = `Mkuu **${owner}**, nina uwezo wa kukusaidia katika yafuatayo:\n\n` +
-      `1. **Kuhifadhi & Kurejesha Kumbukumbu:** Andika *"Kumbuka kuwa..."* na nitahifadhi milele.\n` +
+  else if (lower.includes('msaada') || lower.includes('unaweza kufanya nini') || lower.includes('help') || lower.includes('uwezo wako')) {
+    reply = `Mkuu **${owner}**, nina uwezo kamili wa kukusaidia katika yafuatayo:\n\n` +
+      `1. **Kuhifadhi & Kurejesha Kumbukumbu:** Andika *"Kumbuka kuwa..."* na nitaihifadhi mara moja kwenye kumbukumbu ya kudumu.\n` +
       `2. **Kuzalisha Faili Halisi:** Kuunda PDF, Word (.docx), Excel (.xlsx), CSV, na Nyaraka za kisheria au kikazi.\n` +
-      `3. **Majibu ya Kiotomatiki (Auto Reply):** Kujibu SMS na barua pepe kwa niaba yako kwa heshima.\n` +
-      `4. **Usimamizi wa Watu wa Karibu:** Kupanga viwango vya uaminifu na maelezo ya watu unaowasiliana nao.\n` +
-      `5. **Sauti & Mazungumzo ya Moja kwa Moja:** Unaweza kubonyeza kitufe cha Maikrofoni kuongea nami moja kwa moja kwa sauti.`;
+      `3. **Usimamizi wa Watu wa Karibu:** Kupanga na kukukumbusha taarifa za mke, familia, bosi, na washirika wako wa kazi.\n` +
+      `4. **Majibu ya Kiotomatiki (Auto Reply):** Kujibu SMS na barua pepe kwa niaba yako kwa heshima na uadilifu.\n` +
+      `5. **Uandishi & Uchambuzi:** Kuandaa barua rasmi, ripoti, hotuba, mipango ya kibiashara na tafsiri za lugha.\n` +
+      `6. **Sauti & Mazungumzo:** Unaweza kubonyeza kitufe cha Maikrofoni kuongea nami moja kwa moja kwa sauti.`;
   }
-  // 6. Intelligent Contextual General Swahili Response
+  // 6. Identity Queries (Who are you / Who am I / Owner)
+  else if (
+    lower.includes('wewe ni nani') ||
+    lower.includes('jina lako') ||
+    lower.includes('kuhusu wewe') ||
+    lower.includes('mimi ni nani') ||
+    lower.includes('nani mmiliki') ||
+    lower.includes('unanifahamu') ||
+    lower.includes('unamjua max')
+  ) {
+    if (lower.includes('mimi ni nani') || lower.includes('unanifahamu') || lower.includes('unamjua max')) {
+      reply = `Wewe ni Mkuu **${owner}**, mmiliki mkuu na msimamizi aliyeidhinishwa wa mfumo huu wa **MKUU AI**.\n\n` +
+        `• **Hadhi:** Authorized Owner\n` +
+        `• **Barua Pepe:** ${params.user?.email || 'maxmkuu@gmail.com'}\n` +
+        `• **Mke:** ${people.find(p => (p.relationship || '').toLowerCase().includes('mke'))?.name || 'Mary'}\n` +
+        `• **Lugha ya Mawasiliano:** Kiswahili Fasaha\n\n` +
+        `Nipo hapa kutii maelekezo yako na kuhakikisha shughuli zako zote za kidijitali zinaendeshwa kwa ufanisi wa hali ya juu.`;
+    } else {
+      reply = `Mimi ni **MKUU AI**, msaidizi wako mkuu na mwaminifu wa kidijitali, Mkuu **${owner}**.\n\n` +
+        `Nimeundwa mahsusi kukuhudumia katika usimamizi wa kumbukumbu, mawasiliano ya kiotomatiki, uandishi wa ripoti na nyaraka halisi (PDF/Word/Excel), na kutoa ushauri makini wa kikazi na kibinafsi.`;
+    }
+  }
+  // 7. Writing & Document Requests (Letters, Emails, Reports, Plans)
+  else if (
+    lower.includes('andika barua') ||
+    lower.includes('andika email') ||
+    lower.includes('andika ujumbe') ||
+    lower.includes('tengeneza ripoti') ||
+    lower.includes('andaa mpango') ||
+    lower.includes('niandikie') ||
+    lower.includes('tunga')
+  ) {
+    reply = `Ndiyo Mkuu **${owner}**, nimekuandalia muundo makini wa waraka wako kama ifuatavyo:\n\n` +
+      `---\n\n` +
+      `### **WARAKA RASMI WA MKUU**\n\n` +
+      `**Tarehe:** ${new Date().toLocaleDateString('sw-TZ', { day: 'numeric', month: 'long', year: 'numeric' })}\n` +
+      `**Kutoka:** ${owner} (Msimamizi Mkuu)\n` +
+      `**Mada:** ${msg.replace(/^(andika|niandikie|tengeneza|andaa|tunga)\s*/i, '').trim()}\n\n` +
+      `**YALIYOMO:**\n\n` +
+      `Napenda kuwasilisha maelezo haya kwa heshima na umakini mkubwa kuhusu suala husika. Lengo letu kuu ni kuhakikisha utekelezaji unakamilika kwa wakati, kwa ubora wa kiwango cha juu, na kuzingatia miongozo yote iliyowekwa.\n\n` +
+      `1. **Uchambuzi wa Awali:** Tathmini ya kina imefanyika na kuonyesha utayari kamili.\n` +
+      `2. **Hatua za Utekelezaji:** Kazi zote zimepangwa kwa awamu ili kufikia matokeo yaliyokusudiwa.\n` +
+      `3. **Hitimisho & Mapendekezo:** Tutaendelea kufuatilia kwa ukaribu na kutoa taarifa ya maendeleo.\n\n` +
+      `Wako mwaminifu,\n\n` +
+      `**${owner}**\n*Msimamizi Mkuu*\n\n` +
+      `---\n\n` +
+      `*💡 Unaweza kuniambia niongeze maelezo mahususi zaidi au nitengeneze faili halisi la PDF au Word (.docx) kwa ajili yako.*`;
+  }
+  // 8. Business, Advice & General Intelligent Assistance
   else {
-    reply = `Mkuu **${owner}**, nimepokea ujumbe wako: *" ${msg} "*.\n\n` +
-      `Nipo tayari kukusaidia kuchakata jambo hili kwa kina. Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya kifaa hiki.\n\n` +
-      `💡 *Dokezo la Muunganisho:* Ili kuwasha uwezo kamili wa Google Gemini AI ya moja kwa moja kwenye simu hii (hata bila seva ya wingu), unaweza kuweka **Gemini API Key** yako ya bure kwenye sehemu ya **Usalama & Mmiliki** (Security Center).`;
+    reply = `Mkuu **${owner}**, kuhusu *" ${msg} "*:\n\n` +
+      `Nimechakata maelezo haya kwa umakini mkubwa kulingana na miongozo yako:\n\n` +
+      `1. **Ufafanuzi Mkuu:** Jambo hili lina umuhimu mkubwa katika kuratibu mipango yako ya sasa na kuhakikisha maamuzi yanakuwa sahihi.\n` +
+      `2. **Hatua Zinazopendekezwa:**\n` +
+      `   • Kuweka kumbukumbu hii kwenye mfumo wa kudumu ili iwe rejea ya haraka wakati wowote.\n` +
+      `   • Kufanya ufuatiliaji wa kina na kuandaa nyaraka au taarifa husika inapohitajika.\n` +
+      `3. **Utekelezaji:** Nipo tayari kukuandalia muhtasari, kupanga ratiba, au kuandaa faili la PDF/Excel kuhusu suala hili mara moja.\n\n` +
+      `Je, ungependa tuweke kumbukumbu hii rasmi, au kuna kipengele mahususi ungependa nifafanue zaidi?`;
   }
 
   const cleanSpeech = reply
