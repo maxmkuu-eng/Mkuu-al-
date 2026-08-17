@@ -9,7 +9,7 @@ import { processInboundAutoReply } from './server/autoreply.js';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Initialize initial seed files if vault is clean
   await ensureInitialSeedFiles();

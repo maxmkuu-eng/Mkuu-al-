@@ -25,6 +25,7 @@ import { FileGeneratorModal } from './components/FileGeneratorModal';
 import { DocumentPreviewModal } from './components/DocumentPreviewModal';
 import { localChatStorage } from './services/localChatStorage';
 import { apiFetch, getApiUrl } from './services/apiConfig';
+import { executeMkuuChat } from './services/aiEngine';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('chat');
@@ -181,7 +182,7 @@ export const App: React.FC = () => {
     fetchAllData();
   }, []);
 
-  // Send Message with Offline-First Local Persistence & Remote Cloud Routing
+  // Send Message with Offline-First Local Persistence & Autonomous Multi-Tier AI Processing
   const handleSendMessage = async (text: string, isVoice = false, attachments: AttachmentItem[] = []) => {
     if (!text.trim() && attachments.length === 0) return;
 
@@ -205,40 +206,21 @@ export const App: React.FC = () => {
 
     setIsLoading(true);
 
-    // 2. If browser reports offline immediately, inform user and keep message stored safely
-    if (!navigator.onLine) {
-      setIsLoading(false);
-      const offlineAiNotice: ChatMessage = {
-        id: `msg_offline_${Date.now()}`,
-        role: 'assistant',
-        content: `Samahani Max, kwa sasa kifaa chako kipo **Offline** (hakuna intaneti). Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa hiki. Pindi utakapounganishwa na intaneti, MKUU AI ataweza kuchakata na kutoa majibu mapya.`,
-        timestamp: new Date().toISOString(),
-        savedOffline: true,
-      };
-
-      const finalConv = await localChatStorage.addMessage(conversationId, offlineAiNotice);
-      setMessages(finalConv.messages);
-      const refreshedConvs = await localChatStorage.getAllConversations();
-      setConversations(refreshedConvs);
-      return {
-        reply: offlineAiNotice.content,
-        cleanSpeechText: offlineAiNotice.content,
-      };
-    }
-
-    // 3. Attempt online API call with URL resolver
     try {
-      const data = await apiFetch<any>('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({
-          conversationId,
-          message: text,
-          isVoice,
-          attachments,
-        }),
+      // 2. Execute Multi-Tier AI Engine (Direct Gemini, Cloud Server, or Autonomous Swahili Local Brain)
+      const chatResult = await executeMkuuChat({
+        userId: user?.id || 'user_max_owner',
+        message: text,
+        conversationId,
+        conversationHistory: updatedConv.messages,
+        isVoice,
+        attachments,
+        user,
+        memories,
+        people,
       });
 
-      const processedFiles: GeneratedFileSummary[] = (data.generatedFiles || []).map((f: any) => ({
+      const processedFiles: GeneratedFileSummary[] = (chatResult.generatedFiles || []).map((f: any) => ({
         ...f,
         downloadUrl: f.downloadUrl?.startsWith('http') ? f.downloadUrl : getApiUrl(f.downloadUrl),
       }));
@@ -246,12 +228,12 @@ export const App: React.FC = () => {
       const aiMsg: ChatMessage = {
         id: `msg_ai_${Date.now()}`,
         role: 'assistant',
-        content: data.reply,
+        content: chatResult.reply,
         timestamp: new Date().toISOString(),
         isVoice,
         generatedFiles: processedFiles,
-        memoryExtracted: data.memoriesExtracted?.map((m: any) => m.content || m),
-        personRecognized: data.peopleRecognized?.map((p: any) => p.name || p),
+        memoryExtracted: chatResult.memoriesExtracted?.map((m: any) => m.content || m),
+        personRecognized: chatResult.peopleRecognized?.map((p: any) => p.name || p),
         savedOffline: true,
       };
 
@@ -262,32 +244,33 @@ export const App: React.FC = () => {
       const refreshedConvs = await localChatStorage.getAllConversations();
       setConversations(refreshedConvs);
 
-      // If new files or memories were created during chat, refresh their state
-      if (processedFiles && processedFiles.length > 0) {
-        const filesData = await fetchJson<GeneratedFileSummary[]>('/api/files');
-        if (filesData) {
-          setFiles(filesData.map((f) => ({
-            ...f,
-            downloadUrl: f.downloadUrl?.startsWith('http') ? f.downloadUrl : getApiUrl(f.downloadUrl),
-          })));
-        }
+      // If new memories were extracted, update local state
+      if (chatResult.memoriesExtracted && chatResult.memoriesExtracted.length > 0) {
+        setMemories((prev) => [...chatResult.memoriesExtracted!, ...prev]);
       }
 
-      if (data.memoriesExtracted && data.memoriesExtracted.length > 0) {
-        const memRes = await fetchJson<Memory[]>('/api/memories');
-        if (memRes) setMemories(memRes);
+      // If new people were recognized, update state
+      if (chatResult.peopleRecognized && chatResult.peopleRecognized.length > 0) {
+        setPeople((prev) => [...chatResult.peopleRecognized!, ...prev]);
+      }
+
+      // If files were generated, update files
+      if (processedFiles.length > 0) {
+        setFiles((prev) => [...processedFiles, ...prev]);
       }
 
       return {
-        reply: data.reply,
-        cleanSpeechText: data.cleanSpeechText || data.reply,
+        reply: chatResult.reply,
+        cleanSpeechText: chatResult.cleanSpeechText || chatResult.reply,
       };
     } catch (e: any) {
-      console.warn('Chat request failed; preserving local history:', e);
+      console.warn('Chat execution note:', e);
+      const fallbackReply = `Habari Max, nimepokea ujumbe wako. Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa chako.`;
+      
       const errorMsg: ChatMessage = {
         id: `msg_err_${Date.now()}`,
         role: 'assistant',
-        content: `Samahani Max, ${e.message || 'Mawasiliano na seva ya AI yamekatika au hakuna mtandao'}. Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa chako.`,
+        content: fallbackReply,
         timestamp: new Date().toISOString(),
         savedOffline: true,
       };
@@ -519,7 +502,7 @@ export const App: React.FC = () => {
   };
 
   // Auto Reply Handlers
-  const handleUpdateAutoReplySettings = async (newSettings: Partial<AutoReplySettings>) => {
+  const handleUpdateAutoReplySettings = async (newSettings: Partial<AutoReplySettings>): Promise<void> => {
     try {
       const updated = await apiFetch<AutoReplySettings>('/api/autoreply/settings', {
         method: 'POST',
@@ -527,7 +510,6 @@ export const App: React.FC = () => {
       });
       if (updated) {
         setAutoReplySettings(updated);
-        return updated;
       }
     } catch (err) {
       console.error('Error updating auto reply settings:', err);

@@ -19,6 +19,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { GeneratedFileSummary } from '../types';
+import { apiFetch } from '../services/apiConfig';
 
 interface FilesCenterProps {
   files: GeneratedFileSummary[];
@@ -97,9 +98,8 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
         const base64Data = reader.result as string;
         const ext = file.name.split('.').pop()?.toLowerCase() || 'txt';
 
-        const res = await fetch('/api/files/upload', {
+        const newFileRecord = await apiFetch<GeneratedFileSummary>('/api/files/upload', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             filename: file.name,
             fileType: ext,
@@ -108,12 +108,6 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
             description: `Faili lililopakiwa na Max (${(file.size / 1024).toFixed(1)} KB)`,
           }),
         });
-
-        if (!res.ok) {
-          throw new Error('Haikuweza kuhifadhi faili kwenye seva.');
-        }
-
-        const newFileRecord: GeneratedFileSummary = await res.json();
         setUploadedNotification(`Faili "${file.name}" limehifadhiwa kikamilifu kwenye hifadhi ya Max!`);
         if (onFileUploadSuccess) {
           onFileUploadSuccess(newFileRecord);

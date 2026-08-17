@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Crown,
@@ -9,8 +9,14 @@ import {
   Database,
   Cpu,
   Server,
+  Globe,
+  Sparkles,
+  RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
 import { UserProfile, Memory, Person, AutoReplySettings } from '../types';
+import { getStoredGeminiApiKey, setStoredGeminiApiKey } from '../services/aiEngine';
+import { getRemoteServerUrl, setRemoteServerUrl, isCapacitorNative, getApiUrl, PRODUCTION_API_BASE_URL } from '../services/apiConfig';
 
 interface SecurityCenterProps {
   user: UserProfile | null;
@@ -35,6 +41,21 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
   const [pinSuccess, setPinSuccess] = useState(false);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
+  // Connection & API Key Configuration State
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [serverUrl, setServerUrl] = useState('');
+  const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [serverUrlSaved, setServerUrlSaved] = useState(false);
+  const [testResult, setTestResult] = useState<{ status: 'idle' | 'testing' | 'success' | 'error'; message: string }>({
+    status: 'idle',
+    message: '',
+  });
+
+  useEffect(() => {
+    setGeminiApiKey(getStoredGeminiApiKey());
+    setServerUrl(getRemoteServerUrl());
+  }, []);
+
   const handleSetPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pin.trim() || pin.length < 4) return;
@@ -43,6 +64,82 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
     setTimeout(() => setPinSuccess(false), 3000);
     setPin('');
   };
+
+  const handleSaveGeminiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    setStoredGeminiApiKey(geminiApiKey);
+    setApiKeySaved(true);
+    setTimeout(() => setApiKeySaved(false), 3000);
+  };
+
+  const handleSaveServerUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    setRemoteServerUrl(serverUrl);
+    setServerUrlSaved(true);
+    setTimeout(() => setServerUrlSaved(false), 3000);
+  };
+
+  const handleTestConnection = async () => {
+    setTestResult({ status: 'testing', message: 'Inajaribu muunganisho wa AI...' });
+
+    // 1. Test Live Production Backend Server (/api/health)
+    const targetHealthUrl = getApiUrl('/api/health');
+    try {
+      const res = await fetch(targetHealthUrl, {
+        headers: { 'Accept': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTestResult({
+          status: 'success',
+          message: `Muunganisho na Seva Kuu ya MKUU AI (${targetHealthUrl}) umethibitishwa kwa 100%!`,
+        });
+        return;
+      }
+    } catch (err: any) {
+      console.warn('Backend test connection error:', err);
+    }
+
+    // 2. Test Direct Gemini Key if present
+    const key = geminiApiKey.trim() || getStoredGeminiApiKey();
+    if (key) {
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: 'Sema jambo' }] }],
+          }),
+        });
+
+        if (res.ok) {
+          setTestResult({
+            status: 'success',
+            message: 'Muunganisho wa Moja kwa Moja na Google Gemini AI umethibitishwa kwa 100%!',
+          });
+          return;
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error?.message || `HTTP ${res.status}`);
+        }
+      } catch (err: any) {
+        setTestResult({
+          status: 'error',
+          message: `Hitilafu ya Gemini Key: ${err.message}`,
+        });
+        return;
+      }
+    }
+
+    // 3. Local Autonomous Engine Status
+    setTestResult({
+      status: 'idle',
+      message: 'MKUU AI anafanya kazi kwa Akili ya Ndani (Autonomous Local Intelligence).',
+    });
+  };
+
+  const isNative = isCapacitorNative();
+  const hasDirectKey = !!geminiApiKey.trim();
 
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-[#080808] space-y-6 text-[#F5F2ED]">
@@ -57,14 +154,138 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
             Ulinzi wa Faragha na Udhibiti wa Mmiliki (Max)
           </h2>
           <p className="text-xs sm:text-sm text-[#888888] max-w-2xl leading-relaxed">
-            Data zote za Max Memory, Watu wa Karibu, na Auto Reply zimehifadhiwa kwa usalama wa kiwango cha juu.
-            Hakuna siri za API au data za kibinafsi zinazofichuliwa kwenye kivinjari cha mbele.
+            Data zote za Max Memory, Watu wa Karibu, na Auto Reply zimehifadhiwa kwa usalama wa kiwango cha juu ndani ya kifaa chako.
           </p>
         </div>
       </div>
 
-      {/* Owner Identity Profile Card */}
+      {/* AI Connection & Standalone Phone Setup */}
       <div className="glass p-6 sm:p-7 rounded-3xl border border-[#222222] border-l-2 border-[#D4AF37] shadow-lg space-y-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="p-3 rounded-2xl bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/30">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="serif font-bold text-[#F5F2ED] text-base sm:text-lg">
+                Muunganisho wa Akili ya AI (Gemini Direct & Cloud Engine)
+              </h3>
+              <p className="text-xs text-[#888888]">
+                Sanidi jinsi simu hii inavyounganishwa na Google Gemini AI kwa uhuru kamili.
+              </p>
+            </div>
+          </div>
+
+          <div className="hidden sm:block">
+            {hasDirectKey ? (
+              <span className="text-xs px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Gemini Direct Ipo Tayari
+              </span>
+            ) : (
+              <span className="text-xs px-3 py-1.5 rounded-xl bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/30 font-bold flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5" />
+                Akili ya Ndani (Local AI)
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Gemini API Key Direct Input */}
+        <form onSubmit={handleSaveGeminiKey} className="space-y-3 pt-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-[#D4AF37] flex items-center gap-1.5">
+              <Key className="w-3.5 h-3.5" />
+              Google Gemini API Key (Kwa Matumizi ya Moja kwa Moja Kwenye Simu)
+            </label>
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-[#888888] hover:text-[#D4AF37] flex items-center gap-1 transition underline"
+            >
+              <span>Pata API Key Bure hapa</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="password"
+              value={geminiApiKey}
+              onChange={(e) => setGeminiApiKey(e.target.value)}
+              placeholder="Weka AIzaSy... au uache wazi kwa Local Brain"
+              className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#050505] border border-[#222222] text-[#F5F2ED] placeholder-[#888888] text-xs focus:outline-none focus:border-[#D4AF37] font-mono"
+            />
+            <button
+              type="submit"
+              className="px-5 py-2.5 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider transition cursor-pointer shrink-0"
+            >
+              HIFADHI KEY
+            </button>
+          </div>
+
+          {apiKeySaved && (
+            <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center space-x-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Gemini API Key imehifadhiwa salama kwenye simu yako!</span>
+            </div>
+          )}
+        </form>
+
+        {/* Custom Server URL (Optional) */}
+        <form onSubmit={handleSaveServerUrl} className="space-y-3 pt-1 border-t border-[#1a1a1a]">
+          <label className="text-xs font-semibold text-[#888888] flex items-center gap-1.5">
+            <Globe className="w-3.5 h-3.5 text-slate-400" />
+            Seva ya Wingu Binafsi (Custom Backend Server URL — Hiari)
+          </label>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              placeholder="https://seva-yako.app (hiari)"
+              className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#050505] border border-[#222222] text-[#F5F2ED] placeholder-[#888888] text-xs focus:outline-none focus:border-[#D4AF37] font-mono"
+            />
+            <button
+              type="submit"
+              className="px-5 py-2.5 rounded-xl glass hover:bg-[#222222] text-[#F5F2ED] font-bold text-xs uppercase tracking-wider transition cursor-pointer shrink-0 border border-[#333333]"
+            >
+              HIFADHI SEVA
+            </button>
+          </div>
+
+          {serverUrlSaved && (
+            <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs flex items-center space-x-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Anwani ya seva imehifadhiwa kikamilifu!</span>
+            </div>
+          )}
+        </form>
+
+        {/* Test Connection Button & Status Output */}
+        <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={handleTestConnection}
+            disabled={testResult.status === 'testing'}
+            className="px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#1a1a1a] text-[#F5F2ED] border border-[#333333] text-xs font-bold flex items-center gap-2 transition cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${testResult.status === 'testing' ? 'animate-spin text-[#D4AF37]' : ''}`} />
+            <span>JARIBU MUUNGANISHO WA AI</span>
+          </button>
+
+          {testResult.message && (
+            <p className={`text-xs ${testResult.status === 'success' ? 'text-emerald-400' : testResult.status === 'error' ? 'text-red-400' : 'text-[#888888]'}`}>
+              {testResult.message}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Owner Identity Profile Card */}
+      <div className="glass p-6 sm:p-7 rounded-3xl border border-[#222222] shadow-lg space-y-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <div className="w-14 h-14 rounded-2xl bg-[#111111] border border-[#D4AF37]/40 flex items-center justify-center text-[#D4AF37] font-bold text-xl shadow-lg">
@@ -111,30 +332,30 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
         <div className="glass p-5 rounded-2xl border border-[#222222] space-y-2">
           <div className="flex items-center space-x-2 text-[#D4AF37] font-bold text-xs">
             <Database className="w-4 h-4" />
-            <span>Hifadhi ya Seva (Isolated DB)</span>
+            <span>Hifadhi ya Ndani (Offline IndexedDB)</span>
           </div>
           <p className="text-xs text-[#888888] leading-relaxed">
-            Data zote zimefungwa kwa mtumiaji wa Max pekee. Hakuna muingiliano na watumiaji wengine.
+            Data zote zimefungwa kwa mtumiaji wa Max pekee ndani ya kifaa chako na hazipotei kamwe hata ukiwa bila intaneti.
           </p>
         </div>
 
         <div className="glass p-5 rounded-2xl border border-[#222222] space-y-2">
           <div className="flex items-center space-x-2 text-[#D4AF37] font-bold text-xs">
             <Cpu className="w-4 h-4" />
-            <span>Gemini AI Server Proxy</span>
+            <span>Unified Gemini Brain</span>
           </div>
           <p className="text-xs text-[#888888] leading-relaxed">
-            API Keys zinalindwa kwa 100% upande wa seva (`server/gemini.ts`) na hazionekani kamwe kwenye browser.
+            Inaauni utekelezaji wa moja kwa moja wa Gemini 2.5 Flash, Gemini Flash, na akili thabiti ya ndani ya Kiswahili.
           </p>
         </div>
 
         <div className="glass p-5 rounded-2xl border border-[#222222] space-y-2">
           <div className="flex items-center space-x-2 text-emerald-400 font-bold text-xs">
             <Server className="w-4 h-4" />
-            <span>Real File Sandbox</span>
+            <span>Real File Generation</span>
           </div>
           <p className="text-xs text-[#888888] leading-relaxed">
-            Mafaili ya PDF, Excel, na Word yanaundwa kwa binary halisi na kuthibitishwa kabla ya kumpa Max.
+            Mafaili ya PDF, Excel, na Word yanaundwa kwa binary halisi na kuthibitishwa kabla ya kupakuliwa.
           </p>
         </div>
       </div>

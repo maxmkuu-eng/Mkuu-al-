@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { GeneratedFileSummary } from '../types';
+import { getApiUrl } from '../services/apiConfig';
 
 interface DocumentPreviewModalProps {
   isOpen: boolean;
@@ -83,7 +84,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       setLoading(true);
       setError(null);
       // Fetch PDF as blob for direct reliable embedding
-      fetch(`/api/files/view/${file.id}`)
+      fetch(getApiUrl(`/api/files/view/${file.id}`))
         .then((res) => {
           if (!res.ok) throw new Error('Faili haikuweza kufunguliwa.');
           return res.blob();

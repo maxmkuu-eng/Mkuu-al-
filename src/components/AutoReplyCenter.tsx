@@ -24,6 +24,7 @@ import {
   Save,
 } from 'lucide-react';
 import { AutoReplySettings, AutoReplyLog, Person } from '../types';
+import { apiFetch } from '../services/apiConfig';
 
 interface AutoReplyCenterProps {
   settings: AutoReplySettings;
@@ -191,15 +192,10 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
     setVerifyError(null);
 
     try {
-      const res = await fetch('/api/autoreply/verify-phone', {
+      await apiFetch('/api/autoreply/verify-phone', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber: phoneNumber.trim() }),
       });
-
-      if (!res.ok) {
-        throw new Error('Hitilafu ya seva ya uthibitishaji.');
-      }
 
       await onUpdateSettings({
         myPhoneNumber: phoneNumber.trim(),
@@ -229,14 +225,9 @@ export const AutoReplyCenter: React.FC<AutoReplyCenterProps> = ({
   const handleExecuteRemove = async () => {
     setIsRemoving(true);
     try {
-      const res = await fetch('/api/autoreply/remove-phone', {
+      await apiFetch('/api/autoreply/remove-phone', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       });
-
-      if (!res.ok) {
-        throw new Error('Haikuweza kuondoa nambari ya simu.');
-      }
 
       setPhoneNumber('');
       await onUpdateSettings({
