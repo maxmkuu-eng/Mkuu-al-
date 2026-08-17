@@ -24,6 +24,7 @@ import { RightSidebar } from './components/RightSidebar';
 import { FileGeneratorModal } from './components/FileGeneratorModal';
 import { DocumentPreviewModal } from './components/DocumentPreviewModal';
 import { localChatStorage } from './services/localChatStorage';
+import { apiFetch, getApiUrl } from './services/apiConfig';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('chat');
@@ -76,16 +77,12 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Safe JSON fetch helper
-  const fetchJson = async <T,>(url: string): Promise<T | null> => {
+  // Safe JSON fetch helper with remote URL resolution
+  const fetchJson = async <T,>(endpoint: string): Promise<T | null> => {
     try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const contentType = res.headers.get('content-type');
-      if (contentType && !contentType.includes('application/json')) return null;
-      return (await res.json()) as T;
+      return await apiFetch<T>(endpoint);
     } catch (e) {
-      console.warn(`Fetch error for ${url}:`, e);
+      console.warn(`Fetch notice for ${endpoint}:`, e);
       return null;
     }
   };
@@ -146,7 +143,12 @@ export const App: React.FC = () => {
       // Files
       const filesData = await fetchJson<GeneratedFileSummary[]>('/api/files');
       if (filesData && Array.isArray(filesData)) {
-        setFiles(filesData);
+        // Ensure download URLs are resolved
+        const resolvedFiles = filesData.map((f) => ({
+          ...f,
+          downloadUrl: f.downloadUrl?.startsWith('http') ? f.downloadUrl : getApiUrl(f.downloadUrl),
+        }));
+        setFiles(resolvedFiles);
       }
 
       // Auto Reply Settings
@@ -179,7 +181,7 @@ export const App: React.FC = () => {
     fetchAllData();
   }, []);
 
-  // Send Message with Offline-First Local Persistence
+  // Send Message with Offline-First Local Persistence & Remote Cloud Routing
   const handleSendMessage = async (text: string, isVoice = false, attachments: AttachmentItem[] = []) => {
     if (!text.trim() && attachments.length === 0) return;
 
@@ -224,11 +226,10 @@ export const App: React.FC = () => {
       };
     }
 
-    // 3. Attempt online API call
+    // 3. Attempt online API call with URL resolver
     try {
-      const res = await fetch('/api/chat', {
+      const data = await apiFetch<any>('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId,
           message: text,
@@ -237,11 +238,10 @@ export const App: React.FC = () => {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Hitilafu ya mawasiliano na seva (${res.status})`);
-      }
-
-      const data = await res.json();
+      const processedFiles: GeneratedFileSummary[] = (data.generatedFiles || []).map((f: any) => ({
+        ...f,
+        downloadUrl: f.downloadUrl?.startsWith('http') ? f.downloadUrl : getApiUrl(f.downloadUrl),
+      }));
 
       const aiMsg: ChatMessage = {
         id: `msg_ai_${Date.now()}`,
@@ -249,7 +249,7 @@ export const App: React.FC = () => {
         content: data.reply,
         timestamp: new Date().toISOString(),
         isVoice,
-        generatedFiles: data.generatedFiles,
+        generatedFiles: processedFiles,
         memoryExtracted: data.memoriesExtracted?.map((m: any) => m.content || m),
         personRecognized: data.peopleRecognized?.map((p: any) => p.name || p),
         savedOffline: true,
@@ -263,14 +263,19 @@ export const App: React.FC = () => {
       setConversations(refreshedConvs);
 
       // If new files or memories were created during chat, refresh their state
-      if (data.generatedFiles && data.generatedFiles.length > 0) {
-        const filesRes = await fetch('/api/files');
-        if (filesRes.ok) setFiles(await filesRes.json());
+      if (processedFiles && processedFiles.length > 0) {
+        const filesData = await fetchJson<GeneratedFileSummary[]>('/api/files');
+        if (filesData) {
+          setFiles(filesData.map((f) => ({
+            ...f,
+            downloadUrl: f.downloadUrl?.startsWith('http') ? f.downloadUrl : getApiUrl(f.downloadUrl),
+          })));
+        }
       }
 
       if (data.memoriesExtracted && data.memoriesExtracted.length > 0) {
-        const memRes = await fetch('/api/memories');
-        if (memRes.ok) setMemories(await memRes.json());
+        const memRes = await fetchJson<Memory[]>('/api/memories');
+        if (memRes) setMemories(memRes);
       }
 
       return {
@@ -282,7 +287,7 @@ export const App: React.FC = () => {
       const errorMsg: ChatMessage = {
         id: `msg_err_${Date.now()}`,
         role: 'assistant',
-        content: `Samahani Max, mawasiliano na seva ya AI yamekatika au hakuna mtandao: ${e.message}. Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa chako.`,
+        content: `Samahani Max, ${e.message || 'Mawasiliano na seva ya AI yamekatika au hakuna mtandao'}. Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa chako.`,
         timestamp: new Date().toISOString(),
         savedOffline: true,
       };
@@ -363,7 +368,7 @@ export const App: React.FC = () => {
 
     // Also attempt delete on server
     try {
-      await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+      await apiFetch(`/api/conversations/${id}`, { method: 'DELETE' });
     } catch {
       // Ignore offline delete error
     }
@@ -400,14 +405,12 @@ export const App: React.FC = () => {
   const handleEmergencyStopToggle = async () => {
     try {
       const newStatus = !autoReplySettings.emergencyStop;
-      const res = await fetch('/api/autoreply/emergency-stop', {
+      const data = await apiFetch<any>('/api/autoreply/emergency-stop', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stop: newStatus }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
+      if (data && data.settings) {
         setAutoReplySettings(data.settings);
       }
     } catch (e) {
@@ -422,46 +425,50 @@ export const App: React.FC = () => {
     importance: Memory['importance'];
     tags: string[];
   }) => {
-    const res = await fetch('/api/memories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(memory),
-    });
-    if (res.ok) {
-      const newMem = await res.json();
-      setMemories((prev) => [newMem, ...prev]);
+    try {
+      const newMem = await apiFetch<Memory>('/api/memories', {
+        method: 'POST',
+        body: JSON.stringify(memory),
+      });
+      if (newMem) {
+        setMemories((prev) => [newMem, ...prev]);
+      }
+    } catch (e) {
+      console.error('Add memory error:', e);
     }
   };
 
   const handleEditMemory = async (id: string, updates: Partial<Memory>) => {
-    const res = await fetch(`/api/memories/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    if (res.ok) {
-      const updatedMem = await res.json();
-      setMemories((prev) => prev.map((m) => (m.id === id ? updatedMem : m)));
+    try {
+      const updatedMem = await apiFetch<Memory>(`/api/memories/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates),
+      });
+      if (updatedMem) {
+        setMemories((prev) => prev.map((m) => (m.id === id ? updatedMem : m)));
+      }
+    } catch (e) {
+      console.error('Edit memory error:', e);
     }
   };
 
   const handleDeleteMemory = async (id: string) => {
-    const res = await fetch(`/api/memories/${id}`, { method: 'DELETE' });
-    if (res.ok) {
+    try {
+      await apiFetch(`/api/memories/${id}`, { method: 'DELETE' });
       setMemories((prev) => prev.filter((m) => m.id !== id));
+    } catch (e) {
+      console.error('Delete memory error:', e);
     }
   };
 
   const handleTestMemoryQuery = async (query: string): Promise<string> => {
     try {
-      const res = await fetch('/api/chat', {
+      const data = await apiFetch<any>('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: `Swali kuhusu kumbukumbu za Max: ${query}`,
         }),
       });
-      const data = await res.json();
       return data.reply;
     } catch (e: any) {
       return `Hitilafu ya ukaguzi: ${e.message}`;
@@ -470,33 +477,39 @@ export const App: React.FC = () => {
 
   // People Handlers
   const handleAddPerson = async (personData: Omit<Person, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const res = await fetch('/api/people', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(personData),
-    });
-    if (res.ok) {
-      const newPerson = await res.json();
-      setPeople((prev) => [newPerson, ...prev]);
+    try {
+      const newPerson = await apiFetch<Person>('/api/people', {
+        method: 'POST',
+        body: JSON.stringify(personData),
+      });
+      if (newPerson) {
+        setPeople((prev) => [newPerson, ...prev]);
+      }
+    } catch (e) {
+      console.error('Add person error:', e);
     }
   };
 
   const handleEditPerson = async (id: string, updates: Partial<Person>) => {
-    const res = await fetch(`/api/people/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    if (res.ok) {
-      const updatedPerson = await res.json();
-      setPeople((prev) => prev.map((p) => (p.id === id ? updatedPerson : p)));
+    try {
+      const updatedPerson = await apiFetch<Person>(`/api/people/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates),
+      });
+      if (updatedPerson) {
+        setPeople((prev) => prev.map((p) => (p.id === id ? updatedPerson : p)));
+      }
+    } catch (e) {
+      console.error('Edit person error:', e);
     }
   };
 
   const handleDeletePerson = async (id: string) => {
-    const res = await fetch(`/api/people/${id}`, { method: 'DELETE' });
-    if (res.ok) {
+    try {
+      await apiFetch(`/api/people/${id}`, { method: 'DELETE' });
       setPeople((prev) => prev.filter((p) => p.id !== id));
+    } catch (e) {
+      console.error('Delete person error:', e);
     }
   };
 
@@ -508,18 +521,13 @@ export const App: React.FC = () => {
   // Auto Reply Handlers
   const handleUpdateAutoReplySettings = async (newSettings: Partial<AutoReplySettings>) => {
     try {
-      const res = await fetch('/api/autoreply/settings', {
+      const updated = await apiFetch<AutoReplySettings>('/api/autoreply/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSettings),
       });
-      if (res.ok) {
-        const updated = await res.json();
+      if (updated) {
         setAutoReplySettings(updated);
         return updated;
-      } else {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Haikuweza kusasisha mipangilio.');
       }
     } catch (err) {
       console.error('Error updating auto reply settings:', err);
@@ -533,21 +541,18 @@ export const App: React.FC = () => {
     channel: 'sms' | 'gmail';
   }): Promise<AutoReplyLog> => {
     try {
-      const res = await fetch('/api/autoreply/simulate', {
+      const data = await apiFetch<any>('/api/autoreply/simulate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sender: params.sender,
           content: params.message,
           channel: params.channel,
         }),
       });
-      const data = await res.json();
 
       // Refresh logs
-      const logsRes = await fetch('/api/autoreply/logs');
-      if (logsRes.ok) {
-        const freshLogs = await logsRes.json();
+      const freshLogs = await fetchJson<AutoReplyLog[]>('/api/autoreply/logs');
+      if (freshLogs) {
         setAutoReplyLogs(freshLogs);
       }
 
@@ -580,21 +585,23 @@ export const App: React.FC = () => {
   };
 
   const handleClearLogs = async () => {
-    const res = await fetch('/api/autoreply/logs/clear', { method: 'POST' });
-    if (res.ok) {
+    try {
+      await apiFetch('/api/autoreply/logs/clear', { method: 'POST' });
       setAutoReplyLogs([]);
+    } catch (e) {
+      console.error('Clear logs error:', e);
     }
   };
 
   // Files Handlers
   const handleDeleteFile = async (id: string) => {
-    const res = await fetch(`/api/files/${id}`, { method: 'DELETE' });
-    if (res.ok) {
+    try {
+      await apiFetch(`/api/files/${id}`, { method: 'DELETE' });
       setFiles((prev) => prev.filter((f) => f.id !== id));
       if (previewingFile?.id === id) {
         setPreviewingFile(null);
       }
-    } else {
+    } catch (e) {
       throw new Error('Faili haikuweza kufutwa.');
     }
   };
@@ -604,9 +611,8 @@ export const App: React.FC = () => {
     fileType: 'pdf' | 'docx' | 'xlsx' | 'csv' | 'txt' | 'json' | 'md';
     contentPrompt: string;
   }): Promise<GeneratedFileSummary> => {
-    const res = await fetch('/api/files/generate', {
+    const rawFile = await apiFetch<GeneratedFileSummary>('/api/files/generate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         filename: params.title,
         fileType: params.fileType,
@@ -614,25 +620,27 @@ export const App: React.FC = () => {
       }),
     });
 
-    if (!res.ok) {
-      throw new Error('Haikuweza kutengeneza faili.');
-    }
+    const newFile: GeneratedFileSummary = {
+      ...rawFile,
+      downloadUrl: rawFile.downloadUrl?.startsWith('http') ? rawFile.downloadUrl : getApiUrl(rawFile.downloadUrl),
+    };
 
-    const newFile = await res.json();
     setFiles((prev) => [newFile, ...prev]);
     return newFile;
   };
 
   // Security / Settings Handlers
   const handleUpdatePin = async (newPin: string) => {
-    const res = await fetch('/api/user/pin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: newPin }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setUser(data.user || data);
+    try {
+      const data = await apiFetch<any>('/api/user/pin', {
+        method: 'POST',
+        body: JSON.stringify({ pin: newPin }),
+      });
+      if (data) {
+        setUser(data.user || data);
+      }
+    } catch (e) {
+      console.error('Pin update error:', e);
     }
   };
 
@@ -664,11 +672,13 @@ export const App: React.FC = () => {
 
   const handleClearAllData = async () => {
     await localChatStorage.clearAllConversations();
-    const res = await fetch('/api/system/reset', { method: 'POST' });
-    if (res.ok) {
+    try {
+      await apiFetch('/api/system/reset', { method: 'POST' });
       await fetchAllData();
       setMessages([]);
       setConversations([]);
+    } catch (e) {
+      console.error('Reset error:', e);
     }
   };
 
@@ -827,4 +837,3 @@ export const App: React.FC = () => {
   );
 };
 export default App;
-
