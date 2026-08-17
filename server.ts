@@ -907,4 +907,90 @@ async function startServer() {
           resolvedMimeType =
             'application/pdf';
         } else if (ext === 'png') {
-          resolvedMimeType
+  resolvedMimeType = 'image/png';
+} else if (ext === 'jpg' || ext === 'jpeg') {
+  resolvedMimeType = 'image/jpeg';
+} else if (ext === 'webp') {
+  resolvedMimeType = 'image/webp';
+} else if (ext === 'gif') {
+  resolvedMimeType = 'image/gif';
+} else if (ext === 'txt') {
+  resolvedMimeType = 'text/plain';
+} else if (ext === 'json') {
+  resolvedMimeType = 'application/json';
+} else if (ext === 'csv') {
+  resolvedMimeType = 'text/csv';
+}
+
+const file = {
+  id: fileId,
+  userId: DEFAULT_USER_ID,
+  filename,
+  fileType: fileType || ext || 'file',
+  size: buffer.length,
+  mimeType: resolvedMimeType,
+  createdAt: new Date().toISOString(),
+  description,
+  downloadUrl: `/api/files/download/${fileId}`,
+};
+
+res.json({
+  success: true,
+  file,
+  ...file,
+});
+
+      } catch (e: any) {
+        console.error('File upload error:', e);
+
+        res.status(500).json({
+          error: e.message || 'Hitilafu wakati wa kupakia faili',
+        });
+      }
+    }
+  );
+
+  // ==========================================
+  // FRONTEND / VITE
+  // ==========================================
+
+  if (process.env.NODE_ENV === 'production') {
+    const distPath = path.resolve('dist');
+
+    app.use(express.static(distPath));
+
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/')) {
+        return next();
+      }
+
+      res.sendFile(
+        path.join(distPath, 'index.html')
+      );
+    });
+  } else {
+    const vite = await createViteServer({
+      server: {
+        middlewareMode: true,
+      },
+      appType: 'spa',
+    });
+
+    app.use(vite.middlewares);
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(
+      `MKUU AI server running on port ${PORT}`
+    );
+  });
+}
+
+startServer().catch((error) => {
+  console.error(
+    'Fatal MKUU AI server error:',
+    error
+  );
+
+  process.exit(1);
+});
