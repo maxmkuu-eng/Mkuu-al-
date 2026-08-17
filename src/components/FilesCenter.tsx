@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { GeneratedFileSummary } from '../types';
 import { apiFetch } from '../services/apiConfig';
+import { downloadFileHelper } from '../services/clientFileGenerator';
+import { localChatStorage } from '../services/localChatStorage';
 
 interface FilesCenterProps {
   files: GeneratedFileSummary[];
@@ -77,6 +79,12 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
     }
   };
 
+  const handleDownload = (file: GeneratedFileSummary, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    downloadFileHelper(file);
+  };
+
   const handleRealFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || !fileList[0]) return;
@@ -96,21 +104,42 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
     reader.onload = async () => {
       try {
         const base64Data = reader.result as string;
-        const ext = file.name.split('.').pop()?.toLowerCase() || 'txt';
+        const ext = (file.name.split('.').pop()?.toLowerCase() || 'txt') as any;
+        const fileId = `file_upload_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 
-        const newFileRecord = await apiFetch<GeneratedFileSummary>('/api/files/upload', {
-          method: 'POST',
-          body: JSON.stringify({
-            filename: file.name,
-            fileType: ext,
-            mimeType: file.type || 'application/octet-stream',
-            base64Data,
-            description: `Faili lililopakiwa na Max (${(file.size / 1024).toFixed(1)} KB)`,
-          }),
-        });
+        const localFileRecord: GeneratedFileSummary = {
+          id: fileId,
+          filename: file.name,
+          fileType: ext,
+          size: file.size,
+          mimeType: file.type || 'application/octet-stream',
+          createdAt: new Date().toISOString(),
+          description: `Faili lililopakiwa na Max (${(file.size / 1024).toFixed(1)} KB)`,
+          downloadUrl: base64Data,
+        };
+
+        // 1. Immediately store in local database
+        await localChatStorage.saveFile(localFileRecord, base64Data);
+
+        // 2. Try syncing to server if online
+        try {
+          await apiFetch<GeneratedFileSummary>('/api/files/upload', {
+            method: 'POST',
+            body: JSON.stringify({
+              filename: file.name,
+              fileType: ext,
+              mimeType: file.type || 'application/octet-stream',
+              base64Data,
+              description: localFileRecord.description,
+            }),
+          });
+        } catch (serverErr) {
+          console.warn('Server upload sync note (saved locally):', serverErr);
+        }
+
         setUploadedNotification(`Faili "${file.name}" limehifadhiwa kikamilifu kwenye hifadhi ya Max!`);
         if (onFileUploadSuccess) {
-          onFileUploadSuccess(newFileRecord);
+          onFileUploadSuccess(localFileRecord);
         }
         setTimeout(() => setUploadedNotification(null), 5000);
       } catch (err: any) {
@@ -210,7 +239,7 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
               Hifadhi ya Mafaili Halisi ya Max
             </h2>
             <p className="text-xs sm:text-sm text-[#888888] max-w-2xl leading-relaxed">
-              Kila faili lililopo hapa ni faili halisi lenye muundo wa binary (PDF, Excel, Word, CSV, TXT, JSON). Unaweza kufungua kusoma moja kwa moja (Open/Read), kupakua (Download), au kulifuta kabisa (Delete).
+              Kila faili lililopo hapa ni faili halisi lenye muundo wa binary (PDF, Excel, Word, CSV, TXT, JSON). Unaweza kufungua kusoma moja kwa moja (OPEN), kupakua (DOWNLOAD), au kulifuta kabisa (DELETE).
             </p>
           </div>
 
@@ -243,7 +272,7 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
         </div>
         <div className="glass p-4 rounded-2xl border border-[#222222]">
           <div className="text-[10px] uppercase tracking-wider text-[#888888]">Hali ya Mfumo</div>
-          <div className="serif text-2xl font-bold text-[#D4AF37] mt-1">Tayari</div>
+          <div className="serif text-2xl font-bold text-[#D4AF37] mt-1">Offline & Online</div>
         </div>
       </div>
 
@@ -252,8 +281,8 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
         onClick={() => fileInputRef.current?.click()}
         className={`glass p-6 rounded-2xl border border-dashed text-center relative transition cursor-pointer ${
           isUploading
-            ? 'border-[#D4AF37] bg-[#D4AF37]/5'
-            : 'border-[#333333] hover:border-[#D4AF37]/50'
+              ? 'border-[#D4AF37] bg-[#D4AF37]/5'
+              : 'border-[#333333] hover:border-[#D4AF37]/50'
         }`}
       >
         <input
@@ -399,15 +428,14 @@ export const FilesCenter: React.FC<FilesCenterProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
 
-                  <a
+                  <button
                     id={`vault-download-file-${file.id}`}
-                    href={file.downloadUrl}
-                    download={file.filename}
+                    onClick={(e) => handleDownload(file, e)}
                     className="px-3 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-1.5 shadow-md transition cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5 stroke-[2.5]" />
                     <span>DOWNLOAD</span>
-                  </a>
+                  </button>
                 </div>
               </div>
             </div>

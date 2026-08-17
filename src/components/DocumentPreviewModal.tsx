@@ -17,8 +17,11 @@ import {
   AlertCircle,
   RefreshCw,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { GeneratedFileSummary } from '../types';
 import { getApiUrl } from '../services/apiConfig';
+import { downloadFileHelper } from '../services/clientFileGenerator';
+import { localChatStorage } from '../services/localChatStorage';
 
 interface DocumentPreviewModalProps {
   isOpen: boolean;
@@ -34,6 +37,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   onDelete,
 }) => {
   const [textContent, setTextContent] = useState<string>('');
+  const [tableData, setTableData] = useState<any[][]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
@@ -46,6 +50,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   useEffect(() => {
     if (!isOpen || !file) {
       setTextContent('');
+      setTableData([]);
       setError(null);
       setShowDeleteConfirm(false);
       setIsDeleting(false);
@@ -60,46 +65,108 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
     setZoomLevel(100);
     setShowDeleteConfirm(false);
     setDeleteError(null);
+    setLoading(true);
+    setError(null);
 
-    const isTextual = ['txt', 'json', 'csv', 'md'].includes(file.fileType);
+    async function loadFileData() {
+      try {
+        // 1. Check local storage first (Offline / Local Generator Support)
+        const localRecord = await localChatStorage.getFileData(file!.id);
+        const dataUrl = localRecord?.data || (file!.downloadUrl?.startsWith('data:') ? file!.downloadUrl : null);
 
-    if (isTextual) {
-      setLoading(true);
-      setError(null);
-      fetch(file.downloadUrl)
-        .then((res) => {
-          if (!res.ok) throw new Error('Faili haikuweza kufunguliwa.');
-          return res.text();
-        })
-        .then((text) => {
-          setTextContent(text);
+        if (file!.fileType === 'pdf') {
+          if (dataUrl && dataUrl.startsWith('data:application/pdf')) {
+            // Convert data url to blob for iframe/object
+            const res = await fetch(dataUrl);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            setPdfBlobUrl(url);
+            setLoading(false);
+            return;
+          }
+
+          // Fetch PDF from server
+          try {
+            const res = await fetch(getApiUrl(`/api/files/view/${file!.id}`));
+            if (res.ok) {
+              const blob = await res.blob();
+              const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+              setPdfBlobUrl(url);
+              setLoading(false);
+              return;
+            }
+          } catch (e) {
+            console.warn('PDF server fetch note:', e);
+          }
+
+          // If fetch fails but downloadUrl exists
+          if (file!.downloadUrl) {
+            setPdfBlobUrl(getApiUrl(file!.downloadUrl));
+          }
           setLoading(false);
-        })
-        .catch((err) => {
-          console.error('File open error:', err);
-          setError('Faili haikuweza kufunguliwa.');
-          setLoading(false);
-        });
-    } else if (file.fileType === 'pdf') {
-      setLoading(true);
-      setError(null);
-      // Fetch PDF as blob for direct reliable embedding
-      fetch(getApiUrl(`/api/files/view/${file.id}`))
-        .then((res) => {
-          if (!res.ok) throw new Error('Faili haikuweza kufunguliwa.');
-          return res.blob();
-        })
-        .then((blob) => {
-          const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-          setPdfBlobUrl(url);
-          setLoading(false);
-        })
-        .catch((err) => {
-          console.error('PDF fetch error:', err);
-          setError('Faili haikuweza kufunguliwa.');
-          setLoading(false);
-        });
+          return;
+        }
+
+        if (file!.fileType === 'xlsx' || file!.fileType === 'csv') {
+          let arrayBuffer: ArrayBuffer | null = null;
+
+          if (dataUrl && dataUrl.startsWith('data:')) {
+            const res = await fetch(dataUrl);
+            arrayBuffer = await res.arrayBuffer();
+          } else {
+            try {
+              const res = await fetch(getApiUrl(file!.downloadUrl));
+              if (res.ok) {
+                arrayBuffer = await res.arrayBuffer();
+              }
+            } catch (e) {
+              console.warn('Excel fetch note:', e);
+            }
+          }
+
+          if (arrayBuffer) {
+            const wb = XLSX.read(arrayBuffer, { type: 'array' });
+            const firstSheetName = wb.SheetNames[0];
+            const ws = wb.Sheets[firstSheetName];
+            const jsonData = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+            setTableData(jsonData);
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Textual formats (txt, json, md, csv)
+        if (['txt', 'json', 'csv', 'md', 'docx'].includes(file!.fileType)) {
+          if (dataUrl && dataUrl.startsWith('data:')) {
+            const res = await fetch(dataUrl);
+            const text = await res.text();
+            setTextContent(text);
+            setLoading(false);
+            return;
+          }
+
+          try {
+            const res = await fetch(getApiUrl(file!.downloadUrl));
+            if (res.ok) {
+              const text = await res.text();
+              setTextContent(text);
+              setLoading(false);
+              return;
+            }
+          } catch (err) {
+            console.warn('Text fetch note:', err);
+          }
+        }
+
+        setLoading(false);
+      } catch (err) {
+        console.error('File load error:', err);
+        setError('Faili haikuweza kufunguliwa kikamilifu.');
+        setLoading(false);
+      }
     }
+
+    loadFileData();
 
     return () => {
       if (pdfBlobUrl) {
@@ -109,6 +176,10 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   }, [isOpen, file?.id]);
 
   if (!isOpen || !file) return null;
+
+  const handleDownload = () => {
+    downloadFileHelper(file);
+  };
 
   const handleCopyContent = () => {
     if (!textContent) return;
@@ -164,22 +235,23 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         <div className="p-8 text-center bg-[#150a0a] rounded-2xl border border-red-500/30 text-red-400 space-y-3">
           <AlertCircle className="w-8 h-8 mx-auto text-red-400" />
           <p className="text-sm font-bold">{error}</p>
-          <p className="text-xs text-[#888888]">Tafadhali jaribu kupakua faili moja kwa moja au fungua kwenye programu nyingine.</p>
-          <a
-            href={file.downloadUrl}
-            download={file.filename}
-            className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-[#D4AF37] text-black font-bold text-xs"
+          <p className="text-xs text-[#888888]">
+            Tafadhali pakua faili hili moja kwa moja ili kulifungua kwenye programu yako unayoipenda.
+          </p>
+          <button
+            onClick={handleDownload}
+            className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-[#D4AF37] text-black font-bold text-xs uppercase cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Pakua Faili ({ (file.size / 1024).toFixed(1) } KB)</span>
-          </a>
+            <span>Pakua Faili ({(file.size / 1024).toFixed(1)} KB)</span>
+          </button>
         </div>
       );
     }
 
     // PDF Preview
     if (file.fileType === 'pdf') {
-      const inlineUrl = pdfBlobUrl || `/api/files/view/${file.id}`;
+      const inlineUrl = pdfBlobUrl || getApiUrl(`/api/files/view/${file.id}`);
       return (
         <div className="w-full flex flex-col bg-[#111111] rounded-2xl overflow-hidden border border-[#222222]">
           <div className="p-2.5 bg-[#1a1a1a] border-b border-[#2a2a2a] flex items-center justify-between px-4 text-xs text-[#888888]">
@@ -188,39 +260,28 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               <span>PDF In-App Viewer (Muundo Halisi wa PDF)</span>
             </span>
             <div className="flex items-center space-x-3">
-              <a
-                href={`/api/files/view/${file.id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[#D4AF37] hover:underline flex items-center gap-1 font-semibold"
+              <button
+                onClick={handleDownload}
+                className="text-[#D4AF37] hover:underline flex items-center gap-1 font-semibold cursor-pointer"
               >
-                <span>Fungua Tab Mpya</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+                <span>Pakua Moja kwa Moja</span>
+                <Download className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
           <div className="w-full h-[62vh] relative bg-[#1e1e1e] flex flex-col items-center justify-center">
-            <object
-              data={inlineUrl}
-              type="application/pdf"
-              className="w-full h-full border-0"
-            >
-              <iframe
-                src={`${inlineUrl}#toolbar=1&navpanes=0`}
-                title={file.filename}
-                className="w-full h-full border-0"
-              >
+            <object data={inlineUrl} type="application/pdf" className="w-full h-full border-0">
+              <iframe src={`${inlineUrl}#toolbar=1&navpanes=0`} title={file.filename} className="w-full h-full border-0">
                 <div className="p-6 text-center text-[#888888]">
                   <p className="text-sm text-[#F5F2ED] font-bold mb-2">PDF haikuweza kuonekana moja kwa moja kwenye fremu hii.</p>
-                  <a
-                    href={file.downloadUrl}
-                    download={file.filename}
-                    className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#D4AF37] text-black font-bold text-xs uppercase"
+                  <button
+                    onClick={handleDownload}
+                    className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#D4AF37] text-black font-bold text-xs uppercase cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
-                    <span>Pakua PDF ({ (file.size / 1024).toFixed(1) } KB)</span>
-                  </a>
+                    <span>Pakua PDF ({(file.size / 1024).toFixed(1)} KB)</span>
+                  </button>
                 </div>
               </iframe>
             </object>
@@ -229,18 +290,50 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       );
     }
 
+    // Excel Table Preview
+    if ((file.fileType === 'xlsx' || file.fileType === 'csv') && tableData.length > 0) {
+      return (
+        <div className="bg-[#050505] p-4 rounded-2xl border border-[#222222] max-h-[60vh] overflow-auto">
+          <table className="w-full text-left text-xs border-collapse font-mono">
+            <thead>
+              {tableData.slice(0, 1).map((row, rIdx) => (
+                <tr key={rIdx} className="bg-[#1a1a1a] border-b border-[#333333]">
+                  {row.map((cell: any, cIdx: number) => (
+                    <th key={cIdx} className="p-2.5 text-[#D4AF37] font-bold uppercase tracking-wider">
+                      {String(cell || '')}
+                    </th>
+                  ))}
+                </tr>
+              ))}
+            </thead>
+            <tbody>
+              {tableData.slice(1).map((row, rIdx) => (
+                <tr key={rIdx} className="border-b border-[#1f1f1f] hover:bg-[#111111]">
+                  {row.map((cell: any, cIdx: number) => (
+                    <td key={cIdx} className="p-2.5 text-[#F5F2ED]">
+                      {String(cell !== undefined && cell !== null ? cell : '')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
     // Image Preview
     if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(file.fileType)) {
+      const imgSrc = file.downloadUrl?.startsWith('data:') ? file.downloadUrl : getApiUrl(`/api/files/view/${file.id}`);
       return (
         <div className="flex flex-col items-center justify-center p-4 bg-[#0a0a0a] rounded-2xl border border-[#222222] min-h-[300px] overflow-auto">
           <img
-            src={`/api/files/view/${file.id}`}
+            src={imgSrc}
             alt={file.filename}
             style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'center center' }}
             className="max-h-[60vh] max-w-full object-contain rounded-lg transition-transform duration-150"
             onError={(e) => {
-              // fallback to downloadUrl if view fails
-              (e.target as HTMLImageElement).src = file.downloadUrl;
+              (e.target as HTMLImageElement).src = getApiUrl(file.downloadUrl);
             }}
           />
         </div>
@@ -248,7 +341,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
     }
 
     // Textual: JSON / CSV / TXT / MD
-    if (['txt', 'json', 'csv', 'md'].includes(file.fileType)) {
+    if (['txt', 'json', 'csv', 'md'].includes(file.fileType) || textContent) {
       return (
         <div className="relative bg-[#050505] p-4 sm:p-6 rounded-2xl border border-[#222222] max-h-[60vh] overflow-y-auto font-mono text-xs sm:text-sm text-[#F5F2ED] leading-relaxed">
           <div className="sticky top-0 right-0 flex justify-end pb-2">
@@ -277,7 +370,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       );
     }
 
-    // Word (DOCX) or Excel (XLSX)
+    // Word (DOCX) fallback card
     return (
       <div className="p-8 sm:p-12 text-center bg-[#0a0a0a] rounded-2xl border border-[#222222] space-y-4">
         <div className="w-16 h-16 rounded-2xl bg-[#151515] border border-[#262626] flex items-center justify-center mx-auto shadow-xl">
@@ -286,23 +379,22 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         <div className="space-y-1">
           <h4 className="serif font-bold text-base sm:text-lg text-[#F5F2ED]">{file.filename}</h4>
           <p className="text-xs text-[#888888]">
-            Muundo wa {file.fileType.toUpperCase()} ({ (file.size / 1024).toFixed(1) } KB)
+            Muundo wa {file.fileType.toUpperCase()} ({(file.size / 1024).toFixed(1)} KB)
           </p>
           <p className="text-xs text-[#666666] max-w-md mx-auto pt-2">
-            Faili hili limetengenezwa kwa binary halisi ya {file.fileType.toUpperCase()}. Unaweza kulipakua mara moja au kulifungua kwenye Microsoft Office, Google Docs, au programu nyingine kwenye kifaa chako.
+            Faili hili limetengenezwa kwa muundo halisi wa binary wa {file.fileType.toUpperCase()}. Unaweza kulipakua mara moja au kulifungua kwenye kifaa chako.
           </p>
         </div>
 
         <div className="pt-2 flex justify-center">
-          <a
+          <button
             id="modal-doc-download-action"
-            href={file.downloadUrl}
-            download={file.filename}
+            onClick={handleDownload}
             className="px-6 py-3 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg transition cursor-pointer"
           >
             <Download className="w-4 h-4 stroke-[2.5]" />
-            <span>PAKUA FAILI SASA ({ (file.size / 1024).toFixed(1) } KB)</span>
-          </a>
+            <span>PAKUA FAILI SASA ({(file.size / 1024).toFixed(1)} KB)</span>
+          </button>
         </div>
       </div>
     );
@@ -320,7 +412,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             <div className="space-y-1 max-w-md">
               <h3 className="serif font-bold text-lg text-white">Una uhakika unataka kufuta faili hili?</h3>
               <p className="text-xs text-[#888888]">
-                Faili <span className="text-[#F5F2ED] font-mono font-bold">"{file.filename}"</span> litafutwa kabisa kutoka kwenye diski na database.
+                Faili <span className="text-[#F5F2ED] font-mono font-bold">"{file.filename}"</span> litafutwa kabisa kutoka kwenye hifadhi ya kifaa hiki.
               </p>
             </div>
 
@@ -391,7 +483,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               <div className="flex items-center space-x-1 glass p-1 rounded-xl border border-[#222222] mr-1">
                 <button
                   onClick={() => setZoomLevel((z) => Math.max(50, z - 20))}
-                  className="p-1.5 rounded-lg hover:bg-white/5 text-[#888888] hover:text-[#F5F2ED]"
+                  className="p-1.5 rounded-lg hover:bg-white/5 text-[#888888] hover:text-[#F5F2ED] cursor-pointer"
                   title="Zoom Out"
                 >
                   <ZoomOut className="w-3.5 h-3.5" />
@@ -399,7 +491,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                 <span className="text-[10px] text-[#888888] px-1 font-mono">{zoomLevel}%</span>
                 <button
                   onClick={() => setZoomLevel((z) => Math.min(200, z + 20))}
-                  className="p-1.5 rounded-lg hover:bg-white/5 text-[#888888] hover:text-[#F5F2ED]"
+                  className="p-1.5 rounded-lg hover:bg-white/5 text-[#888888] hover:text-[#F5F2ED] cursor-pointer"
                   title="Zoom In"
                 >
                   <ZoomIn className="w-3.5 h-3.5" />
@@ -419,9 +511,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         </div>
 
         {/* Viewer Content */}
-        <div className="flex-1 overflow-y-auto py-1">
-          {renderViewer()}
-        </div>
+        <div className="flex-1 overflow-y-auto py-1">{renderViewer()}</div>
 
         {/* Bottom Actions Bar */}
         <div className="flex items-center justify-between border-t border-[#202020] pt-3">
@@ -439,15 +529,14 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           </div>
 
           <div className="flex items-center space-x-2">
-            <a
+            <button
               id="doc-preview-download-btn"
-              href={file.downloadUrl}
-              download={file.filename}
+              onClick={handleDownload}
               className="px-5 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-2 shadow-lg transition cursor-pointer"
             >
               <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>DOWNLOAD ({ (file.size / 1024).toFixed(1) } KB)</span>
-            </a>
+              <span>DOWNLOAD ({(file.size / 1024).toFixed(1)} KB)</span>
+            </button>
           </div>
         </div>
       </div>

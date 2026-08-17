@@ -7,6 +7,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { GeneratedFileSummary } from '../types';
+import { downloadFileHelper } from '../services/clientFileGenerator';
 
 interface FileGeneratorModalProps {
   isOpen: boolean;
@@ -82,6 +83,12 @@ export const FileGeneratorModal: React.FC<FileGeneratorModalProps> = ({
       console.error('File generation error', e);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleDownload = () => {
+    if (generatedFile) {
+      downloadFileHelper(generatedFile);
     }
   };
 
@@ -200,15 +207,14 @@ export const FileGeneratorModal: React.FC<FileGeneratorModalProps> = ({
               </div>
             </div>
 
-            <a
+            <button
               id={`modal-download-${generatedFile.id}`}
-              href={generatedFile.downloadUrl}
-              download={generatedFile.filename}
+              onClick={handleDownload}
               className="px-4 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider flex items-center space-x-1.5 shadow-md flex-shrink-0 cursor-pointer"
             >
               <Download className="w-4 h-4 stroke-[2.5]" />
               <span>PAKUA SASA</span>
-            </a>
+            </button>
           </div>
         )}
       </div>

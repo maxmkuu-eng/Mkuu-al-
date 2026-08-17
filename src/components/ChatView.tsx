@@ -31,6 +31,7 @@ import {
   HardDrive,
 } from 'lucide-react';
 import { ChatMessage, GeneratedFileSummary, Memory, Person, AttachmentItem } from '../types';
+import { downloadFileHelper } from '../services/clientFileGenerator';
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -511,15 +512,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
                                     <span>SOMA</span>
                                   </button>
 
-                                  <a
+                                  <button
                                     id={`download-file-${file.id}`}
-                                    href={file.downloadUrl}
-                                    download={file.filename}
-                                    className="px-3.5 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs flex items-center space-x-1.5 shadow-md transition"
+                                    onClick={() => downloadFileHelper(file)}
+                                    className="px-3.5 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs flex items-center space-x-1.5 shadow-md transition cursor-pointer"
+                                    title="Pakua Faili"
                                   >
                                     <Download className="w-3.5 h-3.5" />
                                     <span>PAKUA</span>
-                                  </a>
+                                  </button>
                                 </div>
                               </div>
                             ))}

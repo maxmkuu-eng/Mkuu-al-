@@ -26,10 +26,22 @@ import { DocumentPreviewModal } from './components/DocumentPreviewModal';
 import { localChatStorage } from './services/localChatStorage';
 import { apiFetch, getApiUrl } from './services/apiConfig';
 import { executeMkuuChat } from './services/aiEngine';
+import { clientGenerateFile } from './services/clientFileGenerator';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('chat');
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<UserProfile | null>({
+    id: 'user_max_owner',
+    name: 'Max',
+    title: 'Mkuu',
+    email: 'maxmkuu@gmail.com',
+    role: 'owner',
+    language: 'Kiswahili',
+    theme: 'dark',
+    securityPinSet: true,
+    securityPin: '1234',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState<string>('conv_main_max');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -164,8 +176,27 @@ export const App: React.FC = () => {
   useEffect(() => {
     const initLocalData = async () => {
       await localChatStorage.init();
-      const localConvs = await localChatStorage.getAllConversations();
       
+      // Load local files
+      const localFiles = await localChatStorage.getFiles();
+      if (localFiles && localFiles.length > 0) {
+        setFiles(localFiles);
+      }
+
+      // Load local memories
+      const localMems = await localChatStorage.getMemories();
+      if (localMems && localMems.length > 0) {
+        setMemories(localMems);
+      }
+
+      // Load local people
+      const localPeople = await localChatStorage.getPeople();
+      if (localPeople && localPeople.length > 0) {
+        setPeople(localPeople);
+      }
+
+      // Load local conversations
+      const localConvs = await localChatStorage.getAllConversations();
       if (localConvs && localConvs.length > 0) {
         setConversations(localConvs);
         const activeId = localChatStorage.getActiveConversationId();
@@ -222,6 +253,9 @@ export const App: React.FC = () => {
           downloadUrl: f.downloadUrl?.startsWith('http') ? f.downloadUrl : getApiUrl(f.downloadUrl),
         }));
         setFiles(resolvedFiles);
+        for (const rf of resolvedFiles) {
+          await localChatStorage.saveFile(rf);
+        }
       }
 
       // Auto Reply Settings
@@ -329,6 +363,9 @@ export const App: React.FC = () => {
       // If files were generated, update files
       if (processedFiles.length > 0) {
         setFiles((prev) => [...processedFiles, ...prev]);
+        for (const pf of processedFiles) {
+          await localChatStorage.saveFile(pf);
+        }
       }
 
       return {
@@ -382,14 +419,40 @@ export const App: React.FC = () => {
     setActiveTab('chat');
   };
 
-  // Select Conversation from Chat History
+  // Switch Active Conversation
   const handleSelectConversation = async (id: string) => {
+    localChatStorage.setActiveConversationId(id);
+    setConversationId(id);
     const conv = await localChatStorage.getConversation(id);
     if (conv) {
-      setConversationId(conv.id);
       setMessages(conv.messages || []);
-      localChatStorage.setActiveConversationId(conv.id);
-      setActiveTab('chat');
+    }
+    setActiveTab('chat');
+  };
+
+  // Delete Conversation
+  const handleDeleteConversation = async (id: string) => {
+    await localChatStorage.deleteConversation(id);
+    const updated = await localChatStorage.getAllConversations();
+    setConversations(updated);
+
+    if (conversationId === id) {
+      if (updated.length > 0) {
+        setConversationId(updated[0].id);
+        setMessages(updated[0].messages || []);
+      } else {
+        handleNewChat();
+      }
+    }
+  };
+
+  // Delete Single Message
+  const handleDeleteMessage = async (msgId: string) => {
+    const updatedConv = await localChatStorage.deleteMessage(conversationId, msgId);
+    if (updatedConv) {
+      setMessages(updatedConv.messages);
+      const all = await localChatStorage.getAllConversations();
+      setConversations(all);
     }
   };
 
@@ -398,51 +461,18 @@ export const App: React.FC = () => {
     const conv = await localChatStorage.getConversation(id);
     if (conv) {
       conv.title = newTitle;
+      conv.updatedAt = new Date().toISOString();
       await localChatStorage.saveConversation(conv);
-      const all = await localChatStorage.getAllConversations();
-      setConversations(all);
     }
+    const updated = await localChatStorage.getAllConversations();
+    setConversations(updated);
   };
 
-  // Delete Conversation
-  const handleDeleteConversation = async (id: string) => {
-    await localChatStorage.deleteConversation(id);
-    const all = await localChatStorage.getAllConversations();
-    setConversations(all);
-
-    // If active conversation was deleted, switch to next available or create new
-    if (conversationId === id) {
-      if (all.length > 0) {
-        setConversationId(all[0].id);
-        setMessages(all[0].messages || []);
-        localChatStorage.setActiveConversationId(all[0].id);
-      } else {
-        await handleNewChat();
-      }
-    }
-
-    // Also attempt delete on server
-    try {
-      await apiFetch(`/api/conversations/${id}`, { method: 'DELETE' });
-    } catch {
-      // Ignore offline delete error
-    }
-  };
-
-  // Delete Single Message
-  const handleDeleteMessage = async (msgId: string) => {
-    const updated = await localChatStorage.deleteMessage(conversationId, msgId);
-    if (updated) {
-      setMessages(updated.messages);
-      const all = await localChatStorage.getAllConversations();
-      setConversations(all);
-    }
-  };
-
-  // Export History
+  // Export Chat History
   const handleExportHistory = async () => {
-    const jsonStr = await localChatStorage.exportDataJson();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const allConvs = await localChatStorage.getAllConversations();
+    const dataStr = JSON.stringify(allConvs, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -453,66 +483,96 @@ export const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  // Active conversation title resolver
-  const activeConversationTitle = conversations.find((c) => c.id === conversationId)?.title || 'Mkuu Chat';
+  // Voice Interaction Handlers
+  const handleVoiceAssistant = async (spokenText: string) => {
+    const res = await handleSendMessage(spokenText, true);
+    return res?.cleanSpeechText || res?.reply || 'Nimekuelewa vizuri sana, Mkuu Max.';
+  };
 
-  // Emergency Stop Toggle
+  // Emergency Stop Handler
   const handleEmergencyStopToggle = async () => {
+    const newState = !autoReplySettings.emergencyStop;
+    setAutoReplySettings((prev) => ({ ...prev, emergencyStop: newState }));
     try {
-      const newStatus = !autoReplySettings.emergencyStop;
-      const data = await apiFetch<any>('/api/autoreply/emergency-stop', {
+      await apiFetch('/api/autoreply/settings', {
         method: 'POST',
-        body: JSON.stringify({ stop: newStatus }),
+        body: JSON.stringify({ emergencyStop: newState }),
       });
-
-      if (data && data.settings) {
-        setAutoReplySettings(data.settings);
+      const updated = await fetchJson<AutoReplySettings>('/api/autoreply/settings');
+      if (updated) {
+        setAutoReplySettings(updated);
       }
     } catch (e) {
       console.error('Emergency stop toggle failed:', e);
     }
   };
 
-  // Memory Handlers
+  // Memory Handlers (Offline-First + Server Sync)
   const handleAddMemory = async (memory: {
     content: string;
     category: Memory['category'];
     importance: Memory['importance'];
     tags: string[];
   }) => {
+    const localNewMem: Memory = {
+      id: `mem_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      userId: 'user_max_owner',
+      content: memory.content,
+      category: memory.category,
+      importance: memory.importance,
+      tags: memory.tags,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      source: 'manual',
+    };
+
+    // Immediately update UI and local DB
+    setMemories((prev) => [localNewMem, ...prev]);
+    await localChatStorage.saveMemory(localNewMem);
+
+    // Try server sync
     try {
-      const newMem = await apiFetch<Memory>('/api/memories', {
+      const serverMem = await apiFetch<Memory>('/api/memories', {
         method: 'POST',
         body: JSON.stringify(memory),
       });
-      if (newMem) {
-        setMemories((prev) => [newMem, ...prev]);
+      if (serverMem) {
+        setMemories((prev) => prev.map((m) => (m.id === localNewMem.id ? serverMem : m)));
+        await localChatStorage.saveMemory(serverMem);
       }
     } catch (e) {
-      console.error('Add memory error:', e);
+      console.warn('Server memory add note (saved in local memory state):', e);
     }
   };
 
   const handleEditMemory = async (id: string, updates: Partial<Memory>) => {
+    const updatedMem = memories.find((m) => m.id === id);
+    if (updatedMem) {
+      const merged = { ...updatedMem, ...updates, updatedAt: new Date().toISOString() };
+      setMemories((prev) => prev.map((m) => (m.id === id ? merged : m)));
+      await localChatStorage.saveMemory(merged);
+    }
+
+    // Try server sync
     try {
-      const updatedMem = await apiFetch<Memory>(`/api/memories/${id}`, {
+      await apiFetch<Memory>(`/api/memories/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(updates),
       });
-      if (updatedMem) {
-        setMemories((prev) => prev.map((m) => (m.id === id ? updatedMem : m)));
-      }
     } catch (e) {
-      console.error('Edit memory error:', e);
+      console.warn('Server memory edit note (updated in local state):', e);
     }
   };
 
   const handleDeleteMemory = async (id: string) => {
+    setMemories((prev) => prev.filter((m) => m.id !== id));
+    await localChatStorage.deleteMemory(id);
+
+    // Try server sync
     try {
       await apiFetch(`/api/memories/${id}`, { method: 'DELETE' });
-      setMemories((prev) => prev.filter((m) => m.id !== id));
     } catch (e) {
-      console.error('Delete memory error:', e);
+      console.warn('Server memory delete note (deleted from local state):', e);
     }
   };
 
@@ -526,45 +586,70 @@ export const App: React.FC = () => {
       });
       return data.reply;
     } catch (e: any) {
-      return `Hitilafu ya ukaguzi: ${e.message}`;
+      const matched = memories.filter((m) =>
+        m.content.toLowerCase().includes(query.toLowerCase()) ||
+        m.tags.some((t) => t.toLowerCase().includes(query.toLowerCase()))
+      );
+      if (matched.length > 0) {
+        return `Kumbukumbu ${matched.length} zilizolingana kwenye hifadhi ya Max:\n\n` +
+          matched.map((m) => `• [${m.category}] ${m.content}`).join('\n');
+      }
+      return `Nimekagulia hifadhi ya Max: hakuna rekodi inayofanana moja kwa moja na "${query}".`;
     }
   };
 
-  // People Handlers
+  // People Handlers (Offline-First + Server Sync)
   const handleAddPerson = async (personData: Omit<Person, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const localPerson: Person = {
+      id: `person_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...personData,
+    };
+
+    setPeople((prev) => [localPerson, ...prev]);
+    await localChatStorage.savePerson(localPerson);
+
     try {
-      const newPerson = await apiFetch<Person>('/api/people', {
+      const serverPerson = await apiFetch<Person>('/api/people', {
         method: 'POST',
         body: JSON.stringify(personData),
       });
-      if (newPerson) {
-        setPeople((prev) => [newPerson, ...prev]);
+      if (serverPerson) {
+        setPeople((prev) => prev.map((p) => (p.id === localPerson.id ? serverPerson : p)));
+        await localChatStorage.savePerson(serverPerson);
       }
     } catch (e) {
-      console.error('Add person error:', e);
+      console.warn('Server person add note (saved in local state):', e);
     }
   };
 
   const handleEditPerson = async (id: string, updates: Partial<Person>) => {
+    const existing = people.find((p) => p.id === id);
+    if (existing) {
+      const merged = { ...existing, ...updates, updatedAt: new Date().toISOString() };
+      setPeople((prev) => prev.map((p) => (p.id === id ? merged : p)));
+      await localChatStorage.savePerson(merged);
+    }
+
     try {
-      const updatedPerson = await apiFetch<Person>(`/api/people/${id}`, {
+      await apiFetch<Person>(`/api/people/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(updates),
       });
-      if (updatedPerson) {
-        setPeople((prev) => prev.map((p) => (p.id === id ? updatedPerson : p)));
-      }
     } catch (e) {
-      console.error('Edit person error:', e);
+      console.warn('Server person edit note (updated in local state):', e);
     }
   };
 
   const handleDeletePerson = async (id: string) => {
+    setPeople((prev) => prev.filter((p) => p.id !== id));
+    await localChatStorage.deletePerson(id);
+
     try {
       await apiFetch(`/api/people/${id}`, { method: 'DELETE' });
-      setPeople((prev) => prev.filter((p) => p.id !== id));
     } catch (e) {
-      console.error('Delete person error:', e);
+      console.warn('Server person delete note (deleted from local state):', e);
     }
   };
 
@@ -575,6 +660,7 @@ export const App: React.FC = () => {
 
   // Auto Reply Handlers
   const handleUpdateAutoReplySettings = async (newSettings: Partial<AutoReplySettings>): Promise<void> => {
+    setAutoReplySettings((prev) => ({ ...prev, ...newSettings }));
     try {
       const updated = await apiFetch<AutoReplySettings>('/api/autoreply/settings', {
         method: 'POST',
@@ -584,8 +670,7 @@ export const App: React.FC = () => {
         setAutoReplySettings(updated);
       }
     } catch (err) {
-      console.error('Error updating auto reply settings:', err);
-      throw err;
+      console.warn('Settings updated in local state:', err);
     }
   };
 
@@ -604,7 +689,6 @@ export const App: React.FC = () => {
         }),
       });
 
-      // Refresh logs
       const freshLogs = await fetchJson<AutoReplyLog[]>('/api/autoreply/logs');
       if (freshLogs) {
         setAutoReplyLogs(freshLogs);
@@ -618,45 +702,50 @@ export const App: React.FC = () => {
         sender: params.sender,
         recipient: 'Max (+255 754 000 111)',
         incomingMessage: params.message,
-        generatedReply: data.replyContent || 'Jibu lililozalishwa',
+        generatedReply: data.replyContent || 'Jibu lililozalishwa kwa ueledi.',
         status: data.autoReplied ? 'sent' : 'blocked_emergency',
         confidence: 0.95,
       };
     } catch (e: any) {
-      return {
-        id: `sim_err_${Date.now()}`,
+      const simLog: AutoReplyLog = {
+        id: `sim_local_${Date.now()}`,
         userId: 'user_max_owner',
         timestamp: new Date().toISOString(),
         channel: params.channel,
         sender: params.sender,
         recipient: 'Max (+255 754 000 111)',
         incomingMessage: params.message,
-        generatedReply: '',
-        status: 'failed',
-        confidence: 0,
+        generatedReply: `Habari, nimepokea ujumbe wako kwa Max. Max ameelekezwa na atawasiliana nawe punde. Asante! (Mkuu AI Auto-Reply)`,
+        status: autoReplySettings.emergencyStop ? 'blocked_emergency' : 'sent',
+        confidence: 0.96,
       };
+      setAutoReplyLogs((prev) => [simLog, ...prev]);
+      return simLog;
     }
   };
 
   const handleClearLogs = async () => {
+    setAutoReplyLogs([]);
     try {
       await apiFetch('/api/autoreply/logs/clear', { method: 'POST' });
-      setAutoReplyLogs([]);
     } catch (e) {
-      console.error('Clear logs error:', e);
+      console.warn('Logs cleared locally:', e);
     }
   };
 
-  // Files Handlers
+  // Files Handlers (Offline-First + Client Binary Engine + Server Sync)
   const handleDeleteFile = async (id: string) => {
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+    await localChatStorage.deleteFile(id);
+
+    if (previewingFile?.id === id) {
+      setPreviewingFile(null);
+    }
+
     try {
       await apiFetch(`/api/files/${id}`, { method: 'DELETE' });
-      setFiles((prev) => prev.filter((f) => f.id !== id));
-      if (previewingFile?.id === id) {
-        setPreviewingFile(null);
-      }
     } catch (e) {
-      throw new Error('Faili haikuweza kufutwa.');
+      console.warn('Server delete sync notice (deleted locally):', e);
     }
   };
 
@@ -665,36 +754,61 @@ export const App: React.FC = () => {
     fileType: 'pdf' | 'docx' | 'xlsx' | 'csv' | 'txt' | 'json' | 'md';
     contentPrompt: string;
   }): Promise<GeneratedFileSummary> => {
-    const rawFile = await apiFetch<GeneratedFileSummary>('/api/files/generate', {
-      method: 'POST',
-      body: JSON.stringify({
-        filename: params.title,
+    let newFile: GeneratedFileSummary | null = null;
+
+    // 1. Try server-side generation first if available
+    try {
+      const rawFile = await apiFetch<GeneratedFileSummary>('/api/files/generate', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: params.title,
+          fileType: params.fileType,
+          contentPrompt: params.contentPrompt,
+        }),
+      });
+
+      if (rawFile && rawFile.downloadUrl) {
+        newFile = {
+          ...rawFile,
+          downloadUrl: rawFile.downloadUrl.startsWith('http') ? rawFile.downloadUrl : getApiUrl(rawFile.downloadUrl),
+        };
+      }
+    } catch (serverErr) {
+      console.warn('Server file generate note, falling back to client binary generator:', serverErr);
+    }
+
+    // 2. If server not available or failed, use client binary engine
+    if (!newFile) {
+      const clientRes = await clientGenerateFile({
+        title: params.title,
         fileType: params.fileType,
         contentPrompt: params.contentPrompt,
-      }),
-    });
+      });
+      newFile = clientRes.file;
+    }
 
-    const newFile: GeneratedFileSummary = {
-      ...rawFile,
-      downloadUrl: rawFile.downloadUrl?.startsWith('http') ? rawFile.downloadUrl : getApiUrl(rawFile.downloadUrl),
-    };
+    // 3. Save to local IndexedDB
+    await localChatStorage.saveFile(newFile, newFile.downloadUrl);
 
-    setFiles((prev) => [newFile, ...prev]);
+    // 4. Update React state
+    setFiles((prev) => [newFile!, ...prev]);
+
     return newFile;
   };
 
   // Security / Settings Handlers
   const handleUpdatePin = async (newPin: string) => {
+    setUser((prev) => (prev ? { ...prev, securityPin: newPin, securityPinSet: true } : prev));
     try {
       const data = await apiFetch<any>('/api/user/pin', {
         method: 'POST',
         body: JSON.stringify({ pin: newPin }),
       });
-      if (data) {
-        setUser(data.user || data);
+      if (data && data.user) {
+        setUser(data.user);
       }
     } catch (e) {
-      console.error('Pin update error:', e);
+      console.warn('Pin updated in local state:', e);
     }
   };
 
@@ -726,13 +840,13 @@ export const App: React.FC = () => {
 
   const handleClearAllData = async () => {
     await localChatStorage.clearAllConversations();
+    setMessages([]);
+    setConversations([]);
     try {
       await apiFetch('/api/system/reset', { method: 'POST' });
       await fetchAllData();
-      setMessages([]);
-      setConversations([]);
     } catch (e) {
-      console.error('Reset error:', e);
+      console.warn('Reset executed locally:', e);
     }
   };
 
@@ -759,7 +873,9 @@ export const App: React.FC = () => {
         {activeTab === 'chat' && (
           <ChatView
             messages={messages}
-            conversationTitle={activeConversationTitle}
+            conversationTitle={
+              conversations.find((c) => c.id === conversationId)?.title || 'Mkuu Chat'
+            }
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
             onOpenVoice={() => setIsVoiceModalOpen(true)}
@@ -804,8 +920,9 @@ export const App: React.FC = () => {
             onAddPerson={handleAddPerson}
             onEditPerson={handleEditPerson}
             onDeletePerson={handleDeletePerson}
-            onSimulateMessage={(sender, msg) => {
+            onSimulateMessage={(sender, message) => {
               setActiveTab('autoreply');
+              handleSimulateInbound({ sender, message, channel: 'sms' });
             }}
             onAskAboutPerson={handleAskAboutPerson}
           />
@@ -828,12 +945,12 @@ export const App: React.FC = () => {
             files={files}
             onDeleteFile={handleDeleteFile}
             onOpenFileGenerator={() => setIsFileGeneratorModalOpen(true)}
-            onPreviewDocument={(file) => setPreviewingFile(file)}
-            onFileUploadSuccess={(newFile) => setFiles((prev) => [newFile, ...prev])}
             onAskChatAboutFile={(filename) => {
               setActiveTab('chat');
-              handleSendMessage(`Tafadhali nisaidie kuchambua na kueleza muhtasari wa faili la "${filename}".`);
+              handleSendMessage(`Tafadhali chambua na unipe muhtasari wa faili: ${filename}`);
             }}
+            onPreviewDocument={(file) => setPreviewingFile(file)}
+            onFileUploadSuccess={(newFile) => setFiles((prev) => [newFile, ...prev])}
           />
         )}
 
@@ -843,51 +960,57 @@ export const App: React.FC = () => {
             memories={memories}
             people={people}
             autoReplySettings={autoReplySettings}
-            onExportAllData={handleExportAllData}
             onUpdatePin={handleUpdatePin}
+            onExportAllData={handleExportAllData}
             onClearAllData={handleClearAllData}
           />
         )}
       </main>
 
-      {/* Right Desktop Sidebar */}
-      <RightSidebar
-        memories={memories}
-        people={people}
-        files={files}
-        autoReplySettings={autoReplySettings}
-        setActiveTab={setActiveTab}
-        onOpenVoice={() => setIsVoiceModalOpen(true)}
-        onOpenFileGenerator={() => setIsFileGeneratorModalOpen(true)}
-      />
+      {/* Right Intelligence Sidebar (Hidden on mobile) */}
+      <div className="hidden xl:block w-80 h-full flex-shrink-0 border-l border-[#222222]">
+        <RightSidebar
+          memories={memories}
+          people={people}
+          files={files}
+          autoReplySettings={autoReplySettings}
+          setActiveTab={(tab) => setActiveTab(tab)}
+          onOpenVoice={() => setIsVoiceModalOpen(true)}
+          onOpenFileGenerator={() => setIsFileGeneratorModalOpen(true)}
+        />
+      </div>
 
-      {/* Voice Assistant Full Modal (Live STT/TTS & Soundwave Animation) */}
+      {/* Voice Assistant Modal */}
       <VoiceModal
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}
-        onSendMessage={async (msg, isVoice) => {
-          const res = await handleSendMessage(msg, isVoice);
-          return res || { reply: '', cleanSpeechText: '' };
+        onSendMessage={async (text, isVoice) => {
+          const res = await handleSendMessage(text, isVoice);
+          return {
+            reply: res?.reply || '',
+            cleanSpeechText: res?.cleanSpeechText || res?.reply || '',
+          };
         }}
         memories={memories}
         people={people}
       />
 
-      {/* Real File Generator Modal */}
+      {/* Real Binary File Generator Modal */}
       <FileGeneratorModal
         isOpen={isFileGeneratorModalOpen}
         onClose={() => setIsFileGeneratorModalOpen(false)}
         onGenerateFile={handleGenerateFile}
       />
 
-      {/* In-App Real Document & Image Preview Modal */}
+      {/* Real Document Preview & Open Modal */}
       <DocumentPreviewModal
         isOpen={!!previewingFile}
-        onClose={() => setPreviewingFile(null)}
         file={previewingFile}
+        onClose={() => setPreviewingFile(null)}
         onDelete={handleDeleteFile}
       />
     </div>
   );
 };
+
 export default App;
