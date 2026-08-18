@@ -68,6 +68,14 @@ Dhamira yako kuu:
 3. Zingatia na unukuu taarifa kutoka kwenye Kumbukumbu na Watu wa Karibu kila inapohitajika.
 4. Ukigundua taarifa mpya muhimu kuhusu ${ownerName} (kama vile mipango, miadi, ahadi, namba za siri au mapendeleo), zihifadhi kiakili na umthibitishie.
 5. Majibu yako yawe wazi, yaliyopangika vizuri kwa aya fupi au vipengele (bullet points).
+6. MULTIMODAL AI IMAGE-EDITING & VISION ASSISTANT:
+   - CRITICAL RULE (EXECUTE IMMEDIATELY): When an image is provided with an editing request, modify ONLY what is requested and output the result. Do NOT merely acknowledge, give a work plan, or explain how to edit.
+   - Core Preservation: Modify ONLY what ${ownerName} requests. Preserve every other characteristic (subject identity, facial structure, skin texture, hair, body proportions, pose, clothing, accessories, lighting, perspective, realism).
+   - Object Removal & Replacement: Remove specified objects cleanly and naturally reconstruct background; match surrounding textures and lighting.
+   - Background Editing: Preserve foreground subject accurately, maintaining natural hair and clothing edges with consistent lighting and depth.
+   - Face, Identity & Person Editing: Preserve recognizable facial identity and natural anatomy; avoid plastic skin or artificial distortions.
+   - Photo Enhancement: Improve sharpness, contrast, color balance, dynamic range without inventing unnatural details.
+   - Files & Image Production: This system generates actual files and cutout PNG/JPEG images directly in conversation. NEVER claim you cannot output images or send the user to third-party websites.
 
 TAARIFA ZA MMILIKI (MAX):
 - Jina: ${ownerName}
@@ -92,22 +100,70 @@ async function callDirectGemini(
 ): Promise<ChatEngineResult> {
   const systemPrompt = buildSystemPrompt(params.user || null, params.memories, params.people);
   
-  // Format conversation history for Gemini REST API
-  const contents: any[] = [];
+  // Format robust alternating conversation history for Gemini REST API
+  const contents: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
 
-  // Add past conversation turns
-  if (params.conversationHistory && params.conversationHistory.length > 0) {
-    const recent = params.conversationHistory.slice(-10);
-    for (const msg of recent) {
-      contents.push({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }],
-      });
+  // Filter and sanitize past history (excluding trailing user message if already added)
+  const rawHistory = Array.isArray(params.conversationHistory) ? [...params.conversationHistory] : [];
+  
+  if (rawHistory.length > 0) {
+    const last = rawHistory[rawHistory.length - 1];
+    if (last.role === 'user' && (last.content === params.message || (!last.content && !params.message))) {
+      rawHistory.pop();
     }
   }
 
+  const recentHistory = rawHistory.slice(-20);
+
+  for (const h of recentHistory) {
+    const text = (h.content || '').trim();
+    if (!text && (!h.attachments || h.attachments.length === 0)) continue;
+
+    const role: 'user' | 'model' = h.role === 'user' ? 'user' : 'model';
+    const parts: any[] = [];
+    if (text) {
+      parts.push({ text });
+    }
+
+    if (h.attachments && Array.isArray(h.attachments)) {
+      for (const att of h.attachments) {
+        if (att.previewUrl?.startsWith('data:image/') || att.base64Data) {
+          const b64 = (att.previewUrl || att.base64Data || '').replace(/^data:image\/\w+;base64,/, '');
+          if (b64) {
+            parts.push({
+              inlineData: {
+                data: b64,
+                mimeType: att.mimeType || 'image/jpeg',
+              },
+            });
+          }
+        }
+      }
+    }
+
+    if (parts.length === 0) continue;
+
+    const lastTurn = contents[contents.length - 1];
+    if (lastTurn && lastTurn.role === role) {
+      lastTurn.parts.push(...parts);
+    } else {
+      contents.push({ role, parts });
+    }
+  }
+
+  // Ensure first turn is 'user' if history exists
+  if (contents.length > 0 && contents[0].role === 'model') {
+    contents.unshift({
+      role: 'user',
+      parts: [{ text: 'Habari MKUU AI, mimi ni Max mmiliki wako.' }],
+    });
+  }
+
   // Add current user prompt
-  const currentParts: any[] = [{ text: params.message }];
+  const currentParts: any[] = [];
+  if (params.message) {
+    currentParts.push({ text: params.message });
+  }
 
   // Add attachments if any (images, etc.)
   if (params.attachments && params.attachments.length > 0) {
@@ -126,15 +182,24 @@ async function callDirectGemini(
     }
   }
 
-  contents.push({
-    role: 'user',
-    parts: currentParts,
-  });
+  if (currentParts.length === 0) {
+    currentParts.push({ text: params.message || 'Tafadhali endelea na mazungumzo.' });
+  }
+
+  const lastTurn = contents[contents.length - 1];
+  if (lastTurn && lastTurn.role === 'user') {
+    lastTurn.parts.push(...currentParts);
+  } else {
+    contents.push({
+      role: 'user',
+      parts: currentParts,
+    });
+  }
 
   const modelsToTry = [
+    'gemini-3.7-flash',
+    'gemini-3.5-flash-lite',
     'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
   ];
 
   let lastError: any = null;
@@ -376,15 +441,27 @@ function processLocalBrain(params: ChatEngineParams): ChatEngineResult {
       `---\n\n` +
       `*💡 Unaweza kuniambia niongeze maelezo mahususi zaidi au nitengeneze faili halisi la PDF au Word (.docx) kwa ajili yako.*`;
   }
-  // 9. Business, Advice & General Intelligent Assistance
+  // 9. Image Editing / Remove Background Requests
+  else if (
+    lower.includes('remove background') ||
+    lower.includes('background') ||
+    lower.includes('toa background') ||
+    lower.includes('futa background') ||
+    lower.includes('ondoa background') ||
+    lower.includes('hariri picha') ||
+    lower.includes('badili picha')
+  ) {
+    reply = `Ndiyo Mkuu **${owner}**, nipo tayari kukusaidia kuondoa au kubadilisha mandharinyuma (*Background*) ya picha yako!\n\n` +
+      `📌 **Jinsi ya Kufanya Haraka:**\n` +
+      `1. **Ambatanisha Picha:** Bonyeza alama ya **+** au **Kamera/Kiambatisho** hapo chini kuchagua picha unayotaka kuondoa background.\n` +
+      `2. **Eleza Maelekezo:** Andika mfano: *"Ondoa background ya picha hii na uweke background nyeupe au ya ofisi"*, kisha nitakufanyia uchambuzi na uhariri wa papo hapo.\n` +
+      `3. **Utoaji wa Faili:** Picha iliyohaririwa itaandaliwa ikiwa na ubora wa juu (HD PNG Transparent).\n\n` +
+      `Tafadhali ambatanisha picha hiyo sasa ili nianze kazi mara moja, Mkuu wangu!`;
+  }
+  // 10. General Knowledge, Tasks & Autonomous Responses
   else {
-    reply = `Mkuu **${owner}**, kuhusu *" ${msg} "*:\n\n` +
-      `Nimechambua jambo hili kwa umakini mkubwa kulingana na muktadha wako:\n\n` +
-      `1. **Uchambuzi:** Hili ni suala la msingi katika mipango yako na linahitaji uangalizi makini wa kiutendaji.\n` +
-      `2. **Mapendekezo ya Utekelezaji:**\n` +
-      `   • Kuweka kumbukumbu hii kwenye mfumo wa kudumu ili iwe rejea ya haraka wakati wowote.\n` +
-      `   • Kuandaa taarifa au nyaraka husika (kama vile PDF, Word, au Excel) ili kuweka kumbukumbu rasmi.\n` +
-      `3. **Hatua Inayofuata:** Niambie unachopenda nifanye sasa—nipo tayari kukuandalia muhtasari, kurekodi kumbukumbu, au kufanya uchambuzi zaidi.`;
+    reply = `Nimepokea ujumbe wako Mkuu **${owner}** kuhusu: *" ${msg} "*.\n\n` +
+      `Nipo tayari kukuhudumia katika utekelezaji wa jambo hili. Unaweza kuniambia hatua maalum unazotaka nianze nazo (kama vile kuandaa muhtasari, kuunda faili halisi la PDF/Word, au kupanga ratiba ya kazi), na nitakamilisha mara moja kwa ufanisi wa hali ya juu!`;
   }
 
   const cleanSpeech = reply
@@ -449,6 +526,12 @@ export async function executeMkuuChat(params: ChatEngineParams): Promise<ChatEng
         message: params.message,
         isVoice: params.isVoice,
         attachments: params.attachments,
+        conversationHistory: (params.conversationHistory || []).map((m: any) => ({
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments,
+          generatedFiles: m.generatedFiles,
+        })),
       }),
     });
 

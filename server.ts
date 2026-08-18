@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { db, FILES_DIR } from './server/db.js';
-import { processMkuuChat } from './server/gemini.js';
+import { processMkuuChat, processImageEditingOrGeneration } from './server/gemini.js';
 import { generateRealFile, ensureInitialSeedFiles } from './server/files.js';
 import { processInboundAutoReply } from './server/autoreply.js';
 
@@ -92,10 +92,22 @@ async function startServer() {
         return res.status(400).json({ error: 'Ujumbe au kiambatisho kinahitajika' });
       }
 
+      // If conversationHistory is empty but conversationId is given, retrieve stored history
+      let effectiveHistory = Array.isArray(conversationHistory) && conversationHistory.length > 0
+        ? conversationHistory
+        : [];
+
+      if (effectiveHistory.length === 0 && conversationId) {
+        const storedConv = db.getConversation(conversationId, DEFAULT_USER_ID);
+        if (storedConv && Array.isArray(storedConv.messages)) {
+          effectiveHistory = storedConv.messages;
+        }
+      }
+
       const result = await processMkuuChat({
         userId: DEFAULT_USER_ID,
         message,
-        conversationHistory,
+        conversationHistory: effectiveHistory,
         isVoice,
         attachments,
       });
@@ -153,6 +165,52 @@ async function startServer() {
     } catch (error: any) {
       console.error('Chat API error:', error);
       res.status(500).json({ error: error.message || 'Hitilafu ya seva' });
+    }
+  });
+
+  // ==========================================
+  // REAL GEMINI 3 PRO IMAGE EDITING & GENERATION
+  // ==========================================
+  app.post(['/api/image/edit', '/api/image/generate'], async (req, res) => {
+    try {
+      const { prompt = '', imageBase64, mimeType = 'image/jpeg', filename = 'picha_iliyohaririwa.png' } = req.body;
+
+      if (!prompt && !imageBase64) {
+        return res.status(400).json({ error: 'Maelekezo au picha inahitajika kwa ajili ya Gemini 3 Pro Image' });
+      }
+
+      const attachments = imageBase64
+        ? [
+            {
+              filename,
+              fileType: mimeType.includes('png') ? 'png' : 'jpg',
+              mimeType,
+              base64Data: imageBase64,
+            },
+          ]
+        : [];
+
+      const result = await processImageEditingOrGeneration({
+        userId: DEFAULT_USER_ID,
+        message: prompt || 'Enhance and edit this image with high precision while strictly preserving identity',
+        attachments,
+      });
+
+      if (!result) {
+        return res.status(500).json({
+          error: 'Image editing could not be processed with Gemini 3 Pro Image. Tafadhali jaribu tena.',
+        });
+      }
+
+      res.json({
+        success: true,
+        reply: result.explanation,
+        file: result.file,
+        generatedFiles: [result.file],
+      });
+    } catch (error: any) {
+      console.error('Gemini 3 Pro Image error:', error);
+      res.status(500).json({ error: error.message || 'Hitilafu ya Gemini 3 Pro Image' });
     }
   });
 

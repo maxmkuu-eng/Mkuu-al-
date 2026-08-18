@@ -77,9 +77,9 @@ export function getApiUrl(endpoint: string): string {
 }
 
 /**
- * Safe fetch wrapper that handles network errors, CORS, timeouts, and JSON parsing
+ * Safe fetch wrapper that handles network errors, CORS, timeouts, and JSON parsing with auto-retry
  */
-export async function apiFetch<T>(endpoint: string, options?: RequestInit, timeoutMs = 12000): Promise<T> {
+export async function apiFetch<T>(endpoint: string, options?: RequestInit, timeoutMs = 45000): Promise<T> {
   const url = getApiUrl(endpoint);
   
   const headers: Record<string, string> = {
@@ -91,46 +91,64 @@ export async function apiFetch<T>(endpoint: string, options?: RequestInit, timeo
     headers['Content-Type'] = 'application/json';
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let attempt = 0;
+  const maxAttempts = 2;
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...options,
-      headers,
-      signal: options?.signal || controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  while (attempt < maxAttempts) {
+    attempt++;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  const contentType = response.headers.get('content-type') || '';
-
-  // Handle Non-OK response
-  if (!response.ok) {
-    let errorDetail = `Seva imerudisha hitilafu (${response.status} ${response.statusText})`;
-    if (contentType.includes('application/json')) {
-      try {
-        const errorJson = await response.json();
-        if (errorJson.error) errorDetail = errorJson.error;
-      } catch (_) {}
-    }
-    throw new Error(errorDetail);
-  }
-
-  // Handle Unexpected HTML / Non-JSON
-  if (!contentType.includes('application/json')) {
-    const text = await response.text();
-    if (text.includes('<!DOCTYPE') || text.includes('<!doctype') || text.includes('<html')) {
-      throw new Error(`Seva imerudisha ukurasa wa HTML badala ya data za JSON. Hakikisha anwani ya seva "${url}" ipo sahihi.`);
-    }
     try {
-      return JSON.parse(text) as T;
-    } catch (_) {
-      throw new Error(`Jibu lisilotarajiwa kutoka kwenye seva.`);
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        signal: options?.signal || controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const contentType = response.headers.get('content-type') || '';
+
+      // Handle Non-OK response
+      if (!response.ok) {
+        let errorDetail = `Seva imerudisha hitilafu (${response.status} ${response.statusText})`;
+        if (contentType.includes('application/json')) {
+          try {
+            const errorJson = await response.json();
+            if (errorJson.error) errorDetail = errorJson.error;
+          } catch (_) {}
+        }
+        // If server 5xx or rate limit, retry once if attempts remain
+        if ((response.status >= 500 || response.status === 429) && attempt < maxAttempts) {
+          await new Promise((res) => setTimeout(res, 800));
+          continue;
+        }
+        throw new Error(errorDetail);
+      }
+
+      // Handle Unexpected HTML / Non-JSON
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        if (text.includes('<!DOCTYPE') || text.includes('<!doctype') || text.includes('<html')) {
+          throw new Error(`Seva imerudisha ukurasa wa HTML badala ya data za JSON. Hakikisha anwani ya seva "${url}" ipo sahihi.`);
+        }
+        try {
+          return JSON.parse(text) as T;
+        } catch (_) {
+          throw new Error(`Jibu lisilotarajiwa kutoka kwenye seva.`);
+        }
+      }
+
+      return (await response.json()) as T;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (attempt < maxAttempts && (err?.name === 'AbortError' || err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError'))) {
+        await new Promise((res) => setTimeout(res, 800));
+        continue;
+      }
+      throw err;
     }
   }
 
-  return (await response.json()) as T;
+  throw new Error('Mawasiliano na seva yameshindikana.');
 }

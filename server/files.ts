@@ -8,15 +8,16 @@ import { db, FILES_DIR, GeneratedFileSummary } from './db.js';
 export interface GenerateFileOptions {
   userId: string;
   filename: string;
-  fileType: 'pdf' | 'docx' | 'xlsx' | 'csv' | 'txt' | 'json' | 'md' | 'zip';
+  fileType: 'pdf' | 'docx' | 'xlsx' | 'csv' | 'txt' | 'json' | 'md' | 'zip' | 'png' | 'jpg' | 'jpeg' | 'webp' | 'svg';
   title?: string;
   content: string;
   data?: any[];
   description?: string;
+  base64Data?: string;
 }
 
 export async function generateRealFile(options: GenerateFileOptions): Promise<GeneratedFileSummary> {
-  const { userId, fileType, title, content, data, description } = options;
+  const { userId, fileType, title, content, data, description, base64Data } = options;
   const safeFilename = sanitizeFilename(options.filename || `mkuu_document_${Date.now()}.${fileType}`);
   const finalFilename = safeFilename.endsWith(`.${fileType}`) ? safeFilename : `${safeFilename}.${fileType}`;
   const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
@@ -26,7 +27,19 @@ export async function generateRealFile(options: GenerateFileOptions): Promise<Ge
   let mimeType = 'text/plain';
   let buffer: Buffer;
 
-  if (fileType === 'pdf') {
+  if (fileType === 'png') {
+    mimeType = 'image/png';
+    buffer = base64Data ? Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ''), 'base64') : Buffer.from(content, 'base64');
+  } else if (fileType === 'jpg' || fileType === 'jpeg') {
+    mimeType = 'image/jpeg';
+    buffer = base64Data ? Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ''), 'base64') : Buffer.from(content, 'base64');
+  } else if (fileType === 'webp') {
+    mimeType = 'image/webp';
+    buffer = base64Data ? Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ''), 'base64') : Buffer.from(content, 'base64');
+  } else if (fileType === 'svg') {
+    mimeType = 'image/svg+xml';
+    buffer = Buffer.from(content, 'utf-8');
+  } else if (fileType === 'pdf') {
     mimeType = 'application/pdf';
     buffer = await generatePdfBuffer(title || 'MKUU AI Document', content, data);
   } else if (fileType === 'xlsx') {
@@ -40,7 +53,7 @@ export async function generateRealFile(options: GenerateFileOptions): Promise<Ge
     buffer = Buffer.from(generateCsvContent(content, data), 'utf-8');
   } else if (fileType === 'json') {
     mimeType = 'application/json';
-    const jsonStr = typeof content === 'string' && content.startsWith('{') || content.startsWith('[')
+    const jsonStr = typeof content === 'string' && (content.startsWith('{') || content.startsWith('['))
       ? content
       : JSON.stringify(data || { title, generatedBy: 'MKUU AI', owner: 'Max', content, date: new Date().toISOString() }, null, 2);
     buffer = Buffer.from(jsonStr, 'utf-8');

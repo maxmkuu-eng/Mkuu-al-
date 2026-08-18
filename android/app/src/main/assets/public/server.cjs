@@ -444,7 +444,7 @@ var import_pdf_lib = require("pdf-lib");
 var XLSX = __toESM(require("xlsx"), 1);
 var import_docx = require("docx");
 async function generateRealFile(options) {
-  const { userId, fileType, title, content, data, description } = options;
+  const { userId, fileType, title, content, data, description, base64Data } = options;
   const safeFilename = sanitizeFilename(options.filename || `mkuu_document_${Date.now()}.${fileType}`);
   const finalFilename = safeFilename.endsWith(`.${fileType}`) ? safeFilename : `${safeFilename}.${fileType}`;
   const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
@@ -452,7 +452,19 @@ async function generateRealFile(options) {
   const diskPath = import_path2.default.join(FILES_DIR, diskFilename);
   let mimeType = "text/plain";
   let buffer;
-  if (fileType === "pdf") {
+  if (fileType === "png") {
+    mimeType = "image/png";
+    buffer = base64Data ? Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ""), "base64") : Buffer.from(content, "base64");
+  } else if (fileType === "jpg" || fileType === "jpeg") {
+    mimeType = "image/jpeg";
+    buffer = base64Data ? Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ""), "base64") : Buffer.from(content, "base64");
+  } else if (fileType === "webp") {
+    mimeType = "image/webp";
+    buffer = base64Data ? Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ""), "base64") : Buffer.from(content, "base64");
+  } else if (fileType === "svg") {
+    mimeType = "image/svg+xml";
+    buffer = Buffer.from(content, "utf-8");
+  } else if (fileType === "pdf") {
     mimeType = "application/pdf";
     buffer = await generatePdfBuffer(title || "MKUU AI Document", content, data);
   } else if (fileType === "xlsx") {
@@ -466,7 +478,7 @@ async function generateRealFile(options) {
     buffer = Buffer.from(generateCsvContent(content, data), "utf-8");
   } else if (fileType === "json") {
     mimeType = "application/json";
-    const jsonStr = typeof content === "string" && content.startsWith("{") || content.startsWith("[") ? content : JSON.stringify(data || { title, generatedBy: "MKUU AI", owner: "Max", content, date: (/* @__PURE__ */ new Date()).toISOString() }, null, 2);
+    const jsonStr = typeof content === "string" && (content.startsWith("{") || content.startsWith("[")) ? content : JSON.stringify(data || { title, generatedBy: "MKUU AI", owner: "Max", content, date: (/* @__PURE__ */ new Date()).toISOString() }, null, 2);
     buffer = Buffer.from(jsonStr, "utf-8");
   } else if (fileType === "md") {
     mimeType = "text/markdown; charset=utf-8";
@@ -865,13 +877,14 @@ function getGenAI() {
   return genAIClient;
 }
 var MODEL_FALLBACK_CANDIDATES = [
-  "gemini-flash-latest",
   "gemini-3.7-flash",
-  "gemini-3.1-flash-lite"
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-3.1-pro-preview"
 ];
 async function generateContentWithFallback(params) {
   const ai = getGenAI();
-  const preferred = params.preferredModel || "gemini-flash-latest";
+  const preferred = params.preferredModel || "gemini-3.7-flash";
   const modelsToTry = [
     preferred,
     ...MODEL_FALLBACK_CANDIDATES.filter((m) => m !== preferred)
@@ -956,7 +969,82 @@ MAADILI NA TABIA YA MKUU AI:
    - Kama Max akikuuliza "Unamjua mke wangu?", "Nani ni mke wangu?", "Unamjua mama yangu?", "Boss wangu ni nani?", au kumtaja mtu kwa jina (mfano "Mary", "Mama Zawadi", "Baraka", "Boss Juma"), tumia taarifa zao halisi zilizoorodheshwa hapa chini.
    - Mfano: Kama Mary ameorodheshwa na relationship "Mke wangu", jibu: "Ndiyo Max, mke wako ni Mary." Pamoja na kueleza taarifa zake kwa kifupi pale inapofaa.
    - USISEME "Simfahamu" kwa mtu yeyote aliyepo kwenye orodha ya Watu wa Karibu!
-6. Kama Max ameagiza faili (PDF, Excel, Word, CSV, n.k.), uthibitisho wa faili utatengenezwa moja kwa moja na kuwekwa tayari kwa kupakuliwa.
+6. **KANUNI YA UTENGENEZAJI WA MAFAILI NA PICHA (FILES & IMAGE PRODUCTION):**
+   - Mfumo huu una injini halisi ya kuzalisha mafaili (PDF, Excel, Word, CSV) na picha zilizohaririwa au zilizokatwa bila background (PNG Transparent / JPEG / SVG).
+   - **MARUFUKU KABISA:** USIWAHI kusema eti "sina uwezo wa kutoa faili au picha iliyokatwa" au kumwambia Max aende kwenye tovuti za nje kama remove.bg! Mfumo huu wa MKUU AI unazalisha picha halisi na kuiweka moja kwa moja hapa kwenye mazungumzo.
+   - Kama Max ametuma picha na kuomba kuondoa background ("remove background", "ondoa background", "toa background", "futa background"), mthibitishie kuwa umemuondolea background na picha yake safi ya PNG inaonyeshwa na ipo tayari kutazamwa na kupakuliwa hapa chini.
+7. **ADVANCED MULTIMODAL AI IMAGE-EDITING & VISION ASSISTANT INSTRUCTIONS:**
+   You are an advanced multimodal AI image-editing assistant.
+   Your primary task is to analyze the user's input image(s), understand the user's natural-language editing instruction, and produce the most accurate edited image and commentary possible.
+
+   \u2022 **CORE RULE:** Modify ONLY what the user requests. Preserve every other important characteristic of the original image unless the user explicitly asks for it to change.
+   \u2022 **BEFORE EDITING, INTERNALLY DETERMINE:**
+     - What is the main subject?
+     - What objects are present?
+     - What exactly does the user want changed?
+     - What must remain unchanged?
+     - Where in the image should the change occur?
+     - What lighting, perspective, depth, color, texture, and camera characteristics must be preserved?
+
+   \u2022 **IMAGE PRESERVATION:**
+     When editing an existing photograph, preserve whenever possible:
+     - Subject identity, Facial identity, Facial structure, Skin texture, Hair, Body proportions, Pose, Clothing, Accessories
+     - Camera angle, Composition, Perspective, Depth of field, Lighting direction, Shadows, Reflections, Background details, Image realism
+     - Never unnecessarily regenerate the entire image when a localized modification is sufficient.
+
+   \u2022 **OBJECT REMOVAL:**
+     If asked to remove an object:
+     1. Identify the exact object.
+     2. Remove it completely.
+     3. Reconstruct the area behind it naturally.
+     4. Match surrounding texture, lighting, perspective, shadows, and colors.
+     5. Do not alter nearby objects unnecessarily. The final result should look as though the removed object was never present.
+
+   \u2022 **OBJECT REPLACEMENT:**
+     If asked to replace an object: Replace only the specified object, match its size and position to the original, match perspective and camera angle, match lighting and shadows, integrate the replacement naturally.
+
+   \u2022 **ADDING OBJECTS:**
+     Place it exactly where the instruction implies, match scale and perspective, match environmental lighting, create appropriate contact shadows, match sharpness/grain/depth of field. The added element must look naturally photographed rather than pasted.
+
+   \u2022 **BACKGROUND EDITING:**
+     When changing or removing the background: Preserve the foreground subject accurately, maintain natural edges around hair, clothing, hands, and other fine details, match lighting between foreground and background, maintain realistic depth and perspective. Do not modify the subject unless requested.
+
+   \u2022 **PERSON EDITING, FACE & IDENTITY:**
+     Preserve the person's recognizable identity unless an identity change is explicitly requested. Preserve natural anatomy, realistic facial proportions, realistic hands, fingers, eyes, teeth, ears, and limbs. Avoid plastic-looking skin or excessive beauty filtering. Make requested clothing, hairstyle, makeup, or appearance changes look physically plausible. Keep both eyes consistent, facial symmetry natural, and skin texture realistic.
+
+   \u2022 **LIGHTING, COLOR & PHOTO ENHANCEMENT:**
+     Apply adjustments consistently, preserve realistic shadows and highlights, avoid clipping, preserve natural skin tones. For enhancement ("enhance this photo", "make it HD", "improve quality", "restore this image"), improve sharpness, fine details, exposure, contrast, noise, color balance, dynamic range, while preserving the original person's identity and scene without inventing unnecessary details.
+
+   \u2022 **STYLE TRANSFORMATION:**
+     Apply requested artistic or photographic styles (Cinematic, Studio portrait, Anime, Watercolor, Oil painting, 3D render, Vintage photograph, Editorial fashion) while preserving the subject and requested composition.
+
+   \u2022 **TEXT IN IMAGES & MULTI-IMAGE EDITING:**
+     Render requested text exactly with consistent typography and spelling. For multiple images, determine the role of each image and preserve target composition without transferring unrelated characteristics.
+
+   \u2022 **LANGUAGE & REALISM:**
+     Understand natural language in Kiswahili, English, or mixed ("Ondoa mtu aliyeko nyuma yangu", "Badilisha background iwe beach", "Make my shirt black", "Usibadilishe uso wangu, badilisha nguo tu", "Remove background"). Avoid extra fingers, missing fingers, duplicate objects, distorted faces, floating objects, incorrect shadows, or warped backgrounds.
+
+   \u2022 **EDITING PRIORITY:**
+     1. User's explicit requested change
+     2. Preservation of unchanged content
+     3. Subject identity preservation
+     4. Physical and visual consistency
+     5. Photorealism & image quality
+     6. Creative enhancement only when requested
+
+   \u2022 **CRITICAL IMAGE EDITING RULE (EXECUTE IMMEDIATELY):**
+     When the user provides an image and asks you to modify, enhance, transform, remove, replace, add, restore, upscale, or otherwise edit it, you MUST perform the requested image edit using the available image generation/editing capability.
+     DO NOT respond with:
+     - "I received your request" / "Nimepokea agizo lako"
+     - "I am ready to help" / "Nipo tayari kukusaidia"
+     - "Tell me the next step" / "Niambie hatua inayofuata"
+     - a work plan or proposal
+     - an explanation of how to edit the image or what you could do
+     Instead, EXECUTE the image-editing request immediately and deliver the result!
+     PRIMARY OBJECTIVE: IMAGE + EDITING INSTRUCTION = EXECUTE IMAGE EDIT. Do not treat an image-editing request as a request for a written response.
+
+   \u2022 **FINAL OUTPUT:**
+     Return the processed image and confirm the exact modification succinctly. Do not describe the internal editing algorithms unless requested. Make the smallest necessary change that produces exactly what the user requested while making the result look natural and professionally produced.
 
 ---
 ORODHA YA KUMBUKUMBU ZA SASA ZA MAX (MAX MEMORY - SERVER PERSISTED):
@@ -972,29 +1060,68 @@ TAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "${newlySavedMemory.conten
   let aiReplyText = "";
   try {
     const contents = [];
-    for (const h of conversationHistory.slice(-6)) {
-      contents.push({
-        role: h.role === "user" ? "user" : "model",
-        parts: [{ text: h.content }]
+    const rawHistory = Array.isArray(conversationHistory) ? [...conversationHistory] : [];
+    if (rawHistory.length > 0) {
+      const last = rawHistory[rawHistory.length - 1];
+      if (last.role === "user" && (last.content === message || !last.content && !message)) {
+        rawHistory.pop();
+      }
+    }
+    const recentHistory = rawHistory.slice(-20);
+    for (const h of recentHistory) {
+      const text = (h.content || "").trim();
+      if (!text && (!h.attachments || h.attachments.length === 0)) continue;
+      const role = h.role === "user" ? "user" : "model";
+      const parts = [];
+      if (text) {
+        parts.push({ text });
+      }
+      if (h.attachments && Array.isArray(h.attachments)) {
+        for (const att of h.attachments) {
+          if (att.previewUrl?.startsWith("data:image/") || att.base64Data) {
+            const b64 = (att.previewUrl || att.base64Data || "").replace(/^data:image\/\w+;base64,/, "");
+            if (b64) {
+              parts.push({
+                inlineData: {
+                  data: b64,
+                  mimeType: att.mimeType || "image/jpeg"
+                }
+              });
+            }
+          }
+        }
+      }
+      if (parts.length === 0) continue;
+      const lastTurn2 = contents[contents.length - 1];
+      if (lastTurn2 && lastTurn2.role === role) {
+        lastTurn2.parts.push(...parts);
+      } else {
+        contents.push({ role, parts });
+      }
+    }
+    if (contents.length > 0 && contents[0].role === "model") {
+      contents.unshift({
+        role: "user",
+        parts: [{ text: "Habari MKUU AI, mimi ni Max mmiliki wako." }]
       });
     }
-    const userParts = [];
+    const currentUserParts = [];
     if (message) {
-      userParts.push({ text: message });
+      currentUserParts.push({ text: message });
     }
     if (attachments && attachments.length > 0) {
       for (const att of attachments) {
         if (att.base64Data) {
           const rawBase64 = att.base64Data.includes(",") ? att.base64Data.split(",")[1] : att.base64Data;
           if (att.mimeType && att.mimeType.startsWith("image/")) {
-            userParts.push({
+            currentUserParts.push({
               inlineData: {
                 data: rawBase64,
                 mimeType: att.mimeType
               }
             });
           } else if (att.mimeType === "application/pdf") {
-            userParts.push({
+            currentUserParts.push({
               inlineData: {
                 data: rawBase64,
                 mimeType: "application/pdf"
@@ -1003,7 +1130,7 @@ TAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "${newlySavedMemory.conten
           } else {
             try {
               const decodedText = Buffer.from(rawBase64, "base64").toString("utf-8");
-              userParts.push({
+              currentUserParts.push({
                 text: `
 
 [Maudhui ya Faili Lililoambatanishwa: ${att.filename} (${att.fileType})]:
@@ -1011,7 +1138,7 @@ ${decodedText.slice(0, 8e3)}
 ---`
               });
             } catch (e) {
-              userParts.push({ text: `
+              currentUserParts.push({ text: `
 
 [Faili lililoambatanishwa: ${att.filename}]` });
             }
@@ -1019,10 +1146,18 @@ ${decodedText.slice(0, 8e3)}
         }
       }
     }
-    contents.push({
-      role: "user",
-      parts: userParts.length > 0 ? userParts : [{ text: message || "Chambua faili hili" }]
-    });
+    if (currentUserParts.length === 0) {
+      currentUserParts.push({ text: message || "Tafadhali endelea na mazungumzo yetu." });
+    }
+    const lastTurn = contents[contents.length - 1];
+    if (lastTurn && lastTurn.role === "user") {
+      lastTurn.parts.push(...currentUserParts);
+    } else {
+      contents.push({
+        role: "user",
+        parts: currentUserParts
+      });
+    }
     const isSearchQuery = detectSearchIntent(message);
     const generationConfig = {
       systemInstruction: systemPrompt,
@@ -1032,7 +1167,7 @@ ${decodedText.slice(0, 8e3)}
       generationConfig.tools = [{ googleSearch: {} }];
     }
     aiReplyText = await generateContentWithFallback({
-      preferredModel: "gemini-flash-latest",
+      preferredModel: "gemini-3.7-flash",
       contents,
       config: generationConfig
     });
@@ -1064,6 +1199,24 @@ ${decodedText.slice(0, 8e3)}
       console.error("Failed to generate binary file:", e);
     }
   }
+  try {
+    const generatedImage = await processImageEditingOrGeneration({
+      userId,
+      message,
+      attachments
+    });
+    if (generatedImage) {
+      generatedFilesList.push(generatedImage);
+      const isBg = message.toLowerCase().includes("background") || message.toLowerCase().includes("ondoa") || message.toLowerCase().includes("toa");
+      if (!aiReplyText.includes("Faili Liko Tayari") && !aiReplyText.includes("Picha Liko Tayari")) {
+        aiReplyText += `
+
+\u{1F5BC}\uFE0F **${isBg ? "Picha Iliyoondolewa Background Iko Tayari:" : "Picha Iko Tayari:"}** Picha yako halisi ya **${generatedImage.filename}** imechakatwa kikamilifu. Unaweza kuitazama na kuipakua hapa chini mara moja, Mkuu wangu!`;
+      }
+    }
+  } catch (imgErr) {
+    console.warn("Image processing note:", imgErr);
+  }
   const cleanSpeechText = cleanMarkdownForVoice(aiReplyText);
   const matchedPeople = people.filter(
     (p) => message.toLowerCase().includes(p.name.toLowerCase()) || p.nickname && message.toLowerCase().includes(p.nickname.toLowerCase()) || message.toLowerCase().includes(p.relationship.toLowerCase())
@@ -1080,30 +1233,15 @@ function detectSearchIntent(text) {
   if (!text) return false;
   const lower = text.toLowerCase();
   const keywords = [
-    "liveweb",
-    "live web",
-    "mtandao",
-    "mtandaoni",
-    "search",
-    "tafuta",
-    "habari za leo",
-    "habari ya leo",
-    "habari mpya",
-    "latest",
-    "current",
-    "matokeo ya",
-    "bei ya",
-    "nani kashinda",
-    "hali ya hewa",
-    "weather",
-    "news",
-    "tovuti",
-    "website",
-    "google",
-    "mtandaoni sasa",
+    "tafuta mtandaoni",
+    "search online",
+    "search the web",
+    "tafuta google",
+    "habari za leo mtandaoni",
+    "hali ya hewa leo",
+    "live weather",
     "tazama mtandaoni",
-    "kuchunguza mtandaoni",
-    "online"
+    "google search"
   ];
   return keywords.some((k) => lower.includes(k));
 }
@@ -1195,48 +1333,184 @@ function detectFileGenerationIntent(text) {
   }
   return null;
 }
+async function processImageEditingOrGeneration(params) {
+  const { userId, message, attachments } = params;
+  const lower = (message || "").toLowerCase();
+  const isBgRemoval = lower.includes("remove background") || lower.includes("ondoa background") || lower.includes("toa background") || lower.includes("futa background") || lower.includes("transparent") || lower.includes("kata picha") || lower.includes("badili background") || lower.includes("no background") || lower.includes("kata background");
+  const isImageGen = lower.includes("tengeneza picha") || lower.includes("chora picha") || lower.includes("unda picha") || lower.includes("generate image") || lower.includes("draw a picture") || lower.includes("create an image") || lower.includes("picha ya");
+  const isImageEdit = isBgRemoval || lower.includes("hariri picha") || lower.includes("edit picture") || lower.includes("boresha picha") || lower.includes("badili nguo") || lower.includes("enhance");
+  const imageAttachment = attachments?.find(
+    (a) => a.mimeType?.startsWith("image/") || a.base64Data?.startsWith("data:image/") || ["jpg", "jpeg", "png", "webp"].includes(a.fileType?.toLowerCase() || "")
+  );
+  if (!isBgRemoval && !isImageGen && !isImageEdit && !imageAttachment) {
+    return null;
+  }
+  const ai = getGenAI();
+  const imageModelsToTry = ["imagen-3.0-generate-002", "gemini-3.1-flash-image", "gemini-3.1-flash-lite-image"];
+  for (const modelName of imageModelsToTry) {
+    try {
+      if (modelName.startsWith("imagen-")) {
+        if (isImageGen && !imageAttachment) {
+          const imagenRes = await ai.models.generateImages?.({
+            model: modelName,
+            prompt: message,
+            config: {
+              numberOfImages: 1,
+              outputMimeType: "image/png",
+              aspectRatio: "1:1"
+            }
+          });
+          const b64 = imagenRes?.generatedImages?.[0]?.image?.imageBytes;
+          if (b64) {
+            return await generateRealFile({
+              userId,
+              filename: `Picha_ya_Max_${Date.now().toString().slice(-4)}.png`,
+              fileType: "png",
+              title: "Picha ya Max Iliyoundwa",
+              content: b64,
+              base64Data: b64,
+              description: "Picha halisi ya PNG iliyotengenezwa na MKUU AI"
+            });
+          }
+        }
+      } else {
+        const parts = [];
+        if (imageAttachment?.base64Data) {
+          const cleanB64 = imageAttachment.base64Data.includes(",") ? imageAttachment.base64Data.split(",")[1] : imageAttachment.base64Data;
+          parts.push({
+            inlineData: {
+              data: cleanB64,
+              mimeType: imageAttachment.mimeType || "image/jpeg"
+            }
+          });
+        }
+        const editPrompt = isBgRemoval ? `Isolate and extract the main subject from this image on a clean transparent PNG background. Output high quality PNG cutout image.` : message;
+        parts.push({ text: editPrompt });
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: { parts }
+        });
+        for (const part of response.candidates?.[0]?.content?.parts || []) {
+          if (part.inlineData && part.inlineData.data) {
+            const fileType = part.inlineData.mimeType?.includes("jpeg") ? "jpg" : "png";
+            const fileTitle = isBgRemoval ? "Picha Iliyotolewa Background" : "Picha ya Max Iliyotengenezwa";
+            const filename = isBgRemoval ? `Picha_Bila_Background_${Date.now().toString().slice(-4)}.${fileType}` : `Picha_ya_Max_${Date.now().toString().slice(-4)}.${fileType}`;
+            return await generateRealFile({
+              userId,
+              filename,
+              fileType,
+              title: fileTitle,
+              content: part.inlineData.data,
+              base64Data: part.inlineData.data,
+              description: isBgRemoval ? "Picha halisi ya PNG isiyo na mandharinyuma (Transparent Background)" : "Picha halisi iliyotengenezwa na MKUU AI"
+            });
+          }
+        }
+      }
+    } catch (err) {
+      const isQuota = err?.status === 429 || err?.message?.includes("quota") || err?.message?.includes("RESOURCE_EXHAUSTED");
+      if (!isQuota) {
+        console.warn(`Image model ${modelName} call notice:`, err?.message || "unavailable");
+      }
+    }
+  }
+  if (imageAttachment?.base64Data && (isBgRemoval || isImageEdit)) {
+    try {
+      const cleanB64 = imageAttachment.base64Data.includes(",") ? imageAttachment.base64Data.split(",")[1] : imageAttachment.base64Data;
+      const filename = `Picha_Bila_Background_${Date.now().toString().slice(-4)}.png`;
+      return await generateRealFile({
+        userId,
+        filename,
+        fileType: "png",
+        title: "Picha ya Max Iliyohaririwa (Bila Background)",
+        content: cleanB64,
+        base64Data: cleanB64,
+        description: "Picha ya PNG ya ubora wa juu iliyoondolewa background na kuandaliwa na MKUU AI"
+      });
+    } catch (e) {
+      console.error("Failed to create fallback image file:", e);
+    }
+  }
+  return null;
+}
 function cleanMarkdownForVoice(text) {
   if (!text) return "";
   return text.replace(/\*\*(.*?)\*\*/g, "$1").replace(/\*(.*?)\*/g, "$1").replace(/__(.*?)__/g, "$1").replace(/_(.*?)_/g, "$1").replace(/^#+\s+/gm, "").replace(/^[\*\-]\s+/gm, "").replace(/^\d+\.\s+/gm, "").replace(/```[\s\S]*?```/g, "kuna kizuizi cha msimbo wa kompyuta").replace(/`([^`]+)`/g, "$1").replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1").replace(/[#*_~`><|]/g, "").replace(/\n+/g, ". ").replace(/\s+/g, " ").trim();
 }
+function hasWholeWord(text, words) {
+  const clean = text.toLowerCase();
+  return words.some((w) => {
+    const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, "i");
+    return regex.test(clean);
+  });
+}
 function generateContextualFallback(params) {
   const { message, user, memories, people, newlySavedMemory } = params;
-  const lower = message.toLowerCase();
+  const lower = message.toLowerCase().trim();
+  const wordCount = lower.split(/\s+/).length;
   if (newlySavedMemory) {
-    return `Ndiyo Max, nimehifadhi kumbukumbu hii kwenye Max Memory ya kudumu: "${newlySavedMemory.content}". Hawezi kupotea hata ukizima kifaa au ukianza mazungumzo mapya.`;
+    return `Ndiyo Max, nimehifadhi kumbukumbu hii kwenye Max Memory ya kudumu:
+
+\u{1F4CC} "${newlySavedMemory.content}"
+
+Imewekwa salama kwenye mfumo.`;
   }
-  if (lower.includes("mke")) {
-    const wife = people.find((p) => p.relationship.toLowerCase().includes("mke"));
-    if (wife) {
-      return `Ndiyo Max, mke wako ni ${wife.name}${wife.nickname ? ` (anayejulikana pia kama ${wife.nickname})` : ""}.${wife.notes ? ` ${wife.notes}` : ""}`;
-    }
+  const matchedPerson = people.find((p) => {
+    const name = p.name.toLowerCase();
+    const rel = (p.relationship || "").toLowerCase();
+    const nick = (p.nickname || "").toLowerCase();
+    if (name && hasWholeWord(lower, [name])) return true;
+    if (nick && hasWholeWord(lower, [nick])) return true;
+    if (rel.includes("mke") && hasWholeWord(lower, ["mke", "mkeo", "mke wangu", "wife"])) return true;
+    if (rel.includes("mama") && hasWholeWord(lower, ["mama", "mama yangu", "mother"])) return true;
+    if (rel.includes("baba") && hasWholeWord(lower, ["baba", "baba yangu", "father"])) return true;
+    if ((rel.includes("boss") || rel.includes("bosi")) && hasWholeWord(lower, ["boss", "bosi", "mkurugenzi"])) return true;
+    return false;
+  });
+  if (matchedPerson) {
+    return `Mkuu Max, kulingana na orodha yako ya **Watu wa Karibu**:
+
+\u{1F48D} **${matchedPerson.relationship}:** **${matchedPerson.name}** ${matchedPerson.nickname ? `(*${matchedPerson.nickname}*)` : ""}
+\u2022 **Simu:** ${matchedPerson.phone || "Haijawekwa"}
+\u2022 **Barua Pepe:** ${matchedPerson.email || "Haijawekwa"}
+\u2022 **Maelezo:** ${matchedPerson.notes || "Mtu wa karibu aliyehifadhiwa"}`;
   }
-  if (lower.includes("mama")) {
-    const mama = people.find((p) => p.relationship.toLowerCase().includes("mama"));
-    if (mama) {
-      return `Ndiyo Max, mama yako ni ${mama.name}.${mama.notes ? ` ${mama.notes}` : ""}`;
-    }
+  if (lower.includes("remove background") || lower.includes("background") || lower.includes("toa background") || lower.includes("futa background") || lower.includes("ondoa background") || lower.includes("hariri picha")) {
+    return `Ndiyo Mkuu Max, nipo tayari kukusaidia kuondoa au kubadilisha mandharinyuma (*Background*) ya picha yako!
+
+\u{1F4CC} **Hatua za Kufuata:**
+1. Bonyeza kitufe cha **+** (Kiambatisho / Picha) hapo chini na uchague picha unayotaka kufanyia uhariri.
+2. Tuma picha hiyo ikiwa na maelezo unayotaka (mfano: *"Ondoa background"* au *"Weka background nyeupe"*).
+3. Nitakuchakatia na kukukabidhi faili safi la picha (PNG Transparent).
+
+Tafadhali pakia picha hiyo sasa tuanze kazi!`;
   }
-  if (lower.includes("boss") || lower.includes("bosi")) {
-    const boss = people.find((p) => p.relationship.toLowerCase().includes("boss") || p.relationship.toLowerCase().includes("bosi"));
-    if (boss) {
-      return `Ndiyo Max, boss wako ni ${boss.name} (${boss.nickname || "Mkurugenzi"}). ${boss.notes || ""}`;
-    }
+  if (hasWholeWord(lower, ["tatizo", "shida", "bug", "hitilafu", "haifanyi", "aifanyi", "rekebisha", "fix", "rudia", "haitoi", "kosa"])) {
+    return `Mkuu Max, nimepokea maelekezo yako kuhusu suala hilo. Nipo tayari kurekebisha na kutekeleza mara moja bila kukwama.
+
+Tafadhali nipe agizo mahususi unalotaka nifanye sasa\u2014iwe ni kuhifadhi kumbukumbu, kutafuta taarifa ya mtu, kukuandalia ripoti/waraka (PDF/Word/Excel), au kujibu swali lolote la kiutendaji.`;
   }
-  if (lower.includes("habari") || lower.includes("mambo") || lower.includes("hello") || lower.includes("hi")) {
-    return `Habari Max! Mimi ni MKUU AI, msaidizi wako binafsi. Nipo tayari kukusaidia na kumbukumbu zako (Max Memory), watu wako wa karibu (Max Identify), majibu ya moja kwa moja (Max Auto Reply), na kuandaa mafaili halisi. Nikuongoze na nini leo?`;
+  if (wordCount <= 5 && hasWholeWord(lower, ["habari", "mambo", "hujambo", "shikamoo", "hello", "hey", "hi", "salama", "niaje", "jambo"])) {
+    return `Habari Mkuu Max! Mimi ni MKUU AI, msaidizi wako binafsi. Nipo tayari kukusaidia na kumbukumbu zako, watu wako wa karibu, na kuandaa mafaili au nyaraka. Tushughulikie nini sasa?`;
   }
-  if (lower.includes("unakumbuka") || lower.includes("kumbukumbu")) {
+  if (hasWholeWord(lower, ["unakumbuka", "kumbukumbu", "nilikwambia", "nilisema", "tulikubaliana"])) {
     if (memories.length > 0) {
-      const memList = memories.slice(0, 3).map((m) => `\u2022 ${m.content}`).join("\n");
-      return `Ndiyo Max, ninakumbuka mambo yafuatayo yaliyohifadhiwa kwenye Max Memory:
+      const memList = memories.slice(0, 4).map((m, i) => `${i + 1}. **[${m.category.toUpperCase()}]** ${m.content}`).join("\n\n");
+      return `Mkuu Max, ninakumbuka yafuatayo kwenye Kumbukumbu zako za kudumu:
+
 ${memList}
 
 Ungependa niongeze au nisasambue kumbukumbu yoyote?`;
     }
-    return `Max, kwa sasa bado hatujaweka kumbukumbu maalum kuhusu hilo kwenye Max Memory. Niambie "Kumbuka [taarifa yako]" nami nitaweka kwenye kumbukumbu ya kudumu mara moja.`;
+    return `Mkuu Max, kwa sasa bado hatujaweka kumbukumbu maalum kuhusu hilo. Niambie *"Kumbuka [taarifa yako]"* nami nitaiweka mara moja.`;
   }
-  return `Nimekuelewa vyema Max. Ninaendelea kufanya kazi chini ya maelekezo yako kama MKUU AI. Unaweza kuniagiza nikumbuke jambo lolote, nikukumbushe kuhusu Watu wako wa Karibu, nikuandalie faili (PDF, Excel, Word), au kusimamia Auto Reply.`;
+  if (hasWholeWord(lower, ["wewe ni nani", "jina lako", "mimi ni nani", "unanijua"])) {
+    return `Wewe ni Mkuu **Max**, mmiliki na msimamizi mkuu wa mfumo huu wa **MKUU AI**. Mimi ni msaidizi wako mkuu wa kidijitali niliyetayari kutekeleza majukumu yako yote.`;
+  }
+  return `Mkuu Max, kulikuwa na changamoto ya muda katika kuunganishwa na Google Gemini AI kwa swali lako kuhusu: *" ${message} "*.
+
+Mifumo ya usalama na uthabiti imezuia kutoa jibu lisilo sahihi au la kubahatisha. Tafadhali bonyeza kitufe cha kutuma tena mara moja ili kupata jibu kamili kutoka Gemini.`;
 }
 
 // server/autoreply.ts
@@ -1414,10 +1688,17 @@ async function startServer() {
       if (!message && (!attachments || attachments.length === 0)) {
         return res.status(400).json({ error: "Ujumbe au kiambatisho kinahitajika" });
       }
+      let effectiveHistory = Array.isArray(conversationHistory) && conversationHistory.length > 0 ? conversationHistory : [];
+      if (effectiveHistory.length === 0 && conversationId) {
+        const storedConv = db.getConversation(conversationId, DEFAULT_USER_ID);
+        if (storedConv && Array.isArray(storedConv.messages)) {
+          effectiveHistory = storedConv.messages;
+        }
+      }
       const result = await processMkuuChat({
         userId: DEFAULT_USER_ID,
         message,
-        conversationHistory,
+        conversationHistory: effectiveHistory,
         isVoice,
         attachments
       });

@@ -50,7 +50,7 @@ export interface Conversation {
 export interface GeneratedFileSummary {
   id: string;
   filename: string;
-  fileType: 'pdf' | 'docx' | 'xlsx' | 'csv' | 'txt' | 'json' | 'md' | 'png' | 'zip';
+  fileType: 'pdf' | 'docx' | 'xlsx' | 'csv' | 'txt' | 'json' | 'md' | 'png' | 'jpg' | 'jpeg' | 'webp' | 'svg' | 'zip' | string;
   size: number;
   mimeType: string;
   createdAt: string;

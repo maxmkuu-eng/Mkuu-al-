@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { ChatMessage, GeneratedFileSummary, Memory, Person, AttachmentItem } from '../types';
 import { downloadFileHelper } from '../services/clientFileGenerator';
+import { getApiUrl } from '../services/apiConfig';
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -475,55 +476,93 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           </div>
                         )}
 
-                        {/* Generated Real Binary Files Cards */}
+                        {/* Generated Real Binary Files / Images Cards */}
                         {msg.generatedFiles && msg.generatedFiles.length > 0 && (
-                          <div className="mt-3 pt-3 border-t border-[#222222] space-y-2 not-italic font-sans">
+                          <div className="mt-3 pt-3 border-t border-[#222222] space-y-3 not-italic font-sans">
                             <div className="text-[11px] font-bold text-[#D4AF37] flex items-center gap-1 uppercase tracking-wider">
                               <Sparkles className="w-3.5 h-3.5" />
-                              <span>Faili Lililoandaliwa Halisi:</span>
+                              <span>Faili / Picha Iliyotengenezwa Halisi:</span>
                             </div>
-                            {msg.generatedFiles.map((file) => (
-                              <div
-                                key={file.id}
-                                className="p-3 rounded-xl glass border border-[#222222] flex items-center justify-between gap-3 shadow-lg"
-                              >
-                                <div className="flex items-center space-x-3 overflow-hidden">
-                                  <div className="p-2 rounded-lg bg-[#111111] border border-[#222222] flex-shrink-0">
-                                    {getFileIcon(file.fileType)}
-                                  </div>
-                                  <div className="truncate">
-                                    <div className="font-bold text-[#F5F2ED] text-xs truncate">
-                                      {file.filename}
+                            {msg.generatedFiles.map((file) => {
+                              const isImage =
+                                ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'].includes(file.fileType?.toLowerCase() || '') ||
+                                file.mimeType?.startsWith('image/') ||
+                                file.downloadUrl?.startsWith('data:image/');
+
+                              const imageUrl = file.downloadUrl?.startsWith('data:')
+                                ? file.downloadUrl
+                                : file.downloadUrl
+                                ? getApiUrl(file.downloadUrl)
+                                : '';
+
+                              return (
+                                <div
+                                  key={file.id}
+                                  className="rounded-xl glass border border-[#222222] overflow-hidden shadow-lg"
+                                >
+                                  {/* Auto-opening image preview for images */}
+                                  {isImage && imageUrl && (
+                                    <div className="relative bg-black/60 border-b border-[#222222] p-2 flex justify-center items-center group">
+                                      <img
+                                        src={imageUrl}
+                                        alt={file.filename}
+                                        className="max-h-72 w-auto max-w-full object-contain rounded-lg shadow cursor-pointer transition-transform duration-200 group-hover:scale-[1.01]"
+                                        onClick={() => onPreviewDocument(file)}
+                                        loading="lazy"
+                                      />
+                                      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                          onClick={() => onPreviewDocument(file)}
+                                          className="p-1.5 rounded-lg bg-black/70 hover:bg-black text-white text-xs font-semibold flex items-center space-x-1 backdrop-blur-md border border-white/20 cursor-pointer shadow"
+                                          title="Tazama Kikubwa"
+                                        >
+                                          <Eye className="w-3.5 h-3.5 text-[#D4AF37]" />
+                                          <span>Kikubwa</span>
+                                        </button>
+                                      </div>
                                     </div>
-                                    <div className="text-[10px] text-[#888888]">
-                                      {file.fileType.toUpperCase()} • {(file.size / 1024).toFixed(1)} KB • Halisi
+                                  )}
+
+                                  <div className="p-3 flex items-center justify-between gap-3">
+                                    <div className="flex items-center space-x-3 overflow-hidden">
+                                      <div className="p-2 rounded-lg bg-[#111111] border border-[#222222] flex-shrink-0">
+                                        {getFileIcon(file.fileType)}
+                                      </div>
+                                      <div className="truncate">
+                                        <div className="font-bold text-[#F5F2ED] text-xs truncate">
+                                          {file.filename}
+                                        </div>
+                                        <div className="text-[10px] text-[#888888]">
+                                          {file.fileType.toUpperCase()} • {(file.size / 1024).toFixed(1)} KB • Tayari Kwenye Mfumo
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center space-x-2 flex-shrink-0">
+                                      <button
+                                        id={`preview-file-btn-${file.id}`}
+                                        onClick={() => onPreviewDocument(file)}
+                                        className="px-2.5 py-1.5 rounded-lg glass hover:bg-white/10 text-xs font-semibold text-[#CCCCCC] hover:text-white flex items-center space-x-1 border border-[#333333] transition cursor-pointer"
+                                        title="Soma / Tazama Faili"
+                                      >
+                                        <Eye className="w-3.5 h-3.5 text-[#D4AF37]" />
+                                        <span>TAZAMA</span>
+                                      </button>
+
+                                      <button
+                                        id={`download-file-${file.id}`}
+                                        onClick={() => downloadFileHelper(file)}
+                                        className="px-3.5 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs flex items-center space-x-1.5 shadow-md transition cursor-pointer"
+                                        title="Hifadhi / Pakua Kwenye Simu"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                        <span>HIFADHI KWENYE SIMU</span>
+                                      </button>
                                     </div>
                                   </div>
                                 </div>
-
-                                <div className="flex items-center space-x-2 flex-shrink-0">
-                                  <button
-                                    id={`preview-file-btn-${file.id}`}
-                                    onClick={() => onPreviewDocument(file)}
-                                    className="px-2.5 py-1.5 rounded-lg glass hover:bg-white/10 text-xs font-semibold text-[#CCCCCC] hover:text-white flex items-center space-x-1 border border-[#333333] transition cursor-pointer"
-                                    title="Soma / Tazama Faili"
-                                  >
-                                    <Eye className="w-3.5 h-3.5 text-[#D4AF37]" />
-                                    <span>SOMA</span>
-                                  </button>
-
-                                  <button
-                                    id={`download-file-${file.id}`}
-                                    onClick={() => downloadFileHelper(file)}
-                                    className="px-3.5 py-1.5 rounded-lg bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs flex items-center space-x-1.5 shadow-md transition cursor-pointer"
-                                    title="Pakua Faili"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                    <span>PAKUA</span>
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
