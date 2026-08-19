@@ -4,9 +4,16 @@
  * Configures the live Cloud Run backend URL for standalone Android APK and Web environments.
  */
 
-export const PRODUCTION_API_BASE_URL = 'https://ais-dev-226ybn2ptvxoimveetx6am-805534629417.europe-west2.run.app';
+export const PRIMARY_PRODUCTION_URL = 'https://ais-dev-226ybn2ptvxoimveetx6am-805534629417.europe-west2.run.app';
+export const SHARED_PRODUCTION_URL = 'https://ais-pre-226ybn2ptvxoimveetx6am-805534629417.europe-west2.run.app';
+
+export const PRODUCTION_API_FALLBACK_URLS = [
+  PRIMARY_PRODUCTION_URL,
+  SHARED_PRODUCTION_URL,
+];
 
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
+export const STORAGE_SERVER_KEY_CUSTOM = 'mkuu_backend_api_url_v1';
 
 /**
  * Detect if running inside true native Capacitor environment (Android / iOS / Local WebView)
@@ -20,13 +27,16 @@ export function isCapacitorNative(): boolean {
   if (window.location.protocol === 'capacitor:' || window.location.protocol === 'file:') {
     return true;
   }
+  if (window.location.hostname === 'localhost' && !window.location.port) {
+    return true;
+  }
   return false;
 }
 
 /**
  * Returns configured API Base URL
  * - If user configured a custom URL in settings, use that
- * - If running in native Android / Capacitor APK, use PRODUCTION_API_BASE_URL
+ * - If running in native Android / Capacitor APK, use PRIMARY_PRODUCTION_URL
  * - If running in browser web context, use relative '' so it hits the live same-origin backend seamlessly
  */
 export function getApiBaseUrl(): string {
@@ -40,12 +50,19 @@ export function getApiBaseUrl(): string {
 
   // 2. Capacitor Android APK standalone mode
   if (isCapacitorNative()) {
-    return PRODUCTION_API_BASE_URL;
+    return PRIMARY_PRODUCTION_URL;
   }
 
-  // 3. Web browser context: Use relative path '' to hit backend without CORS issues
-  return '';
+  // 3. If hosted on a cloud domain or preview iframe, relative paths work directly
+  if (window.location.hostname.includes('run.app') || window.location.port === '3000') {
+    return '';
+  }
+
+  // 4. Default fallback
+  return PRIMARY_PRODUCTION_URL;
 }
+
+export const PRODUCTION_API_BASE_URL = getApiBaseUrl() || PRIMARY_PRODUCTION_URL;
 
 export function getRemoteServerUrl(): string {
   return getApiBaseUrl();
@@ -63,13 +80,13 @@ export function setRemoteServerUrl(url: string): void {
 /**
  * Resolves full API endpoint URL: e.g. ${API_BASE_URL}/api/chat
  */
-export function getApiUrl(endpoint: string): string {
-  if (!endpoint) return getApiBaseUrl();
+export function getApiUrl(endpoint: string, explicitBase?: string): string {
+  if (!endpoint) return explicitBase || getApiBaseUrl();
   if (endpoint.startsWith('http://') || endpoint.startsWith('https://') || endpoint.startsWith('blob:') || endpoint.startsWith('data:')) {
     return endpoint;
   }
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const baseUrl = getApiBaseUrl();
+  const baseUrl = explicitBase !== undefined ? explicitBase : getApiBaseUrl();
   if (baseUrl) {
     return `${baseUrl}${cleanEndpoint}`;
   }
@@ -77,78 +94,112 @@ export function getApiUrl(endpoint: string): string {
 }
 
 /**
- * Safe fetch wrapper that handles network errors, CORS, timeouts, and JSON parsing with auto-retry
+ * Check active network and server health reachability
+ */
+export async function checkServerReachability(): Promise<{ reachable: boolean; latencyMs: number; error?: string }> {
+  const start = Date.now();
+  try {
+    const data = await apiFetch<{ status: string; chatModel?: string }>('/api/status', {}, 8000);
+    return {
+      reachable: !!data && data.status === 'connected',
+      latencyMs: Date.now() - start,
+    };
+  } catch (err: any) {
+    return {
+      reachable: false,
+      latencyMs: Date.now() - start,
+      error: err.message || 'Haikuweza kufikia seva',
+    };
+  }
+}
+
+/**
+ * Safe fetch wrapper that handles network errors, CORS, timeouts, retries, and multi-endpoint fallback
  */
 export async function apiFetch<T>(endpoint: string, options?: RequestInit, timeoutMs = 45000): Promise<T> {
-  const url = getApiUrl(endpoint);
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   
-  const headers: Record<string, string> = {
-    'Accept': 'application/json',
-    ...(options?.headers as Record<string, string> || {}),
-  };
-
-  if (options?.body && !headers['Content-Type']) {
-    headers['Content-Type'] = 'application/json';
+  // Build candidate list of base URLs to attempt
+  const candidateBases: string[] = [];
+  const custom = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_SERVER_KEY_CUSTOM) : null;
+  if (custom && custom.trim().startsWith('http')) {
+    candidateBases.push(custom.trim().replace(/\/+$/, ''));
   }
 
-  let attempt = 0;
-  const maxAttempts = 2;
+  if (isCapacitorNative()) {
+    candidateBases.push(PRIMARY_PRODUCTION_URL);
+    candidateBases.push(SHARED_PRODUCTION_URL);
+  } else {
+    candidateBases.push('');
+    candidateBases.push(PRIMARY_PRODUCTION_URL);
+    candidateBases.push(SHARED_PRODUCTION_URL);
+  }
 
-  while (attempt < maxAttempts) {
-    attempt++;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const uniqueBases = Array.from(new Set(candidateBases));
+  let lastError: any = null;
 
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        signal: options?.signal || controller.signal,
-      });
-      clearTimeout(timeoutId);
+  for (const base of uniqueBases) {
+    const targetUrl = getApiUrl(cleanEndpoint, base);
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+      ...(options?.headers as Record<string, string> || {}),
+    };
 
-      const contentType = response.headers.get('content-type') || '';
+    if (options?.body && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
 
-      // Handle Non-OK response
-      if (!response.ok) {
-        let errorDetail = `Seva imerudisha hitilafu (${response.status} ${response.statusText})`;
-        if (contentType.includes('application/json')) {
+    // Try up to 2 attempts per base URL with short retry
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        const response = await fetch(targetUrl, {
+          ...options,
+          headers,
+          signal: options?.signal || controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        const contentType = response.headers.get('content-type') || '';
+
+        // Handle Non-OK response
+        if (!response.ok) {
+          let errorDetail = `Seva imerudisha hitilafu (${response.status} ${response.statusText})`;
+          if (contentType.includes('application/json')) {
+            try {
+              const errorJson = await response.json();
+              if (errorJson.error) errorDetail = errorJson.error;
+            } catch (_) {}
+          }
+          throw new Error(errorDetail);
+        }
+
+        // Handle Unexpected HTML / Non-JSON
+        if (!contentType.includes('application/json')) {
+          const text = await response.text();
+          if (text.includes('<!DOCTYPE') || text.includes('<!doctype') || text.includes('<html')) {
+            throw new Error(`Seva imerudisha ukurasa wa HTML badala ya data za JSON.`);
+          }
           try {
-            const errorJson = await response.json();
-            if (errorJson.error) errorDetail = errorJson.error;
-          } catch (_) {}
+            return JSON.parse(text) as T;
+          } catch (_) {
+            throw new Error(`Jibu lisilotarajiwa kutoka kwenye seva.`);
+          }
         }
-        // If server 5xx or rate limit, retry once if attempts remain
-        if ((response.status >= 500 || response.status === 429) && attempt < maxAttempts) {
-          await new Promise((res) => setTimeout(res, 800));
-          continue;
-        }
-        throw new Error(errorDetail);
-      }
 
-      // Handle Unexpected HTML / Non-JSON
-      if (!contentType.includes('application/json')) {
-        const text = await response.text();
-        if (text.includes('<!DOCTYPE') || text.includes('<!doctype') || text.includes('<html')) {
-          throw new Error(`Seva imerudisha ukurasa wa HTML badala ya data za JSON. Hakikisha anwani ya seva "${url}" ipo sahihi.`);
-        }
-        try {
-          return JSON.parse(text) as T;
-        } catch (_) {
-          throw new Error(`Jibu lisilotarajiwa kutoka kwenye seva.`);
+        return (await response.json()) as T;
+      } catch (err: any) {
+        lastError = err;
+        // Wait 400ms before second attempt on same base
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 400));
         }
       }
-
-      return (await response.json()) as T;
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      if (attempt < maxAttempts && (err?.name === 'AbortError' || err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError'))) {
-        await new Promise((res) => setTimeout(res, 800));
-        continue;
-      }
-      throw err;
     }
   }
 
-  throw new Error('Mawasiliano na seva yameshindikana.');
+  const detailedMsg = lastError?.message || 'Hitilafu ya mtandao';
+  throw new Error(`Imeshindwa kuunganishwa na huduma ya AI. Tafadhali angalia muunganisho wako wa intaneti kisha ujaribu tena. (${detailedMsg})`);
 }

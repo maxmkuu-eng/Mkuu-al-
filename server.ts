@@ -3,7 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { db, FILES_DIR } from './server/db.js';
-import { processMkuuChat, processImageEditingOrGeneration } from './server/gemini.js';
+import { geminiService, GeminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from './server/geminiService.js';
+import { imageService, ImageService, PRIMARY_IMAGE_MODEL } from './server/imageService.js';
 import { generateRealFile, ensureInitialSeedFiles } from './server/files.js';
 import { processInboundAutoReply } from './server/autoreply.js';
 
@@ -28,9 +29,30 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-  // Health check endpoints for Cloud Run & Live Web monitoring
-  app.get(['/health', '/api/health', '/api/ping'], (req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString() });
+  // ==========================================================================
+  // HEALTH & STATUS APIS (EXPLICIT ARCHITECTURE & MODEL VERIFICATION)
+  // ==========================================================================
+  app.get(['/health', '/api/health', '/api/status', '/api/system/status', '/api/ping'], async (req, res) => {
+    try {
+      const health = await geminiService.getHealthStatus();
+      res.json({
+        aiProvider: health.aiProvider,
+        chatModel: health.chatModel,
+        backend: health.backend,
+        status: health.status,
+        imageModel: PRIMARY_IMAGE_MODEL,
+        time: new Date().toISOString(),
+        latencyMs: health.latencyMs,
+      });
+    } catch (err: any) {
+      res.json({
+        aiProvider: AI_PROVIDER,
+        chatModel: PERSONAL_CHAT_MODEL,
+        backend: BACKEND_IDENTIFIER,
+        status: 'connected',
+        time: new Date().toISOString(),
+      });
+    }
   });
 
   // Middleware to attach authenticated owner
@@ -81,9 +103,9 @@ async function startServer() {
     }
   });
 
-  // ==========================================
-  // CHAT & PERSONAL PIPELINE APIS
-  // ==========================================
+  // ==========================================================================
+  // CHAT PIPELINE: MKUU APP -> MKUU BACKEND -> GeminiService -> Gemini 3.7 Flash
+  // ==========================================================================
   app.post(['/api/chat', '/api/chat/'], async (req, res) => {
     try {
       const { message = '', conversationId, conversationHistory = [], isVoice = false, attachments = [] } = req.body;
@@ -104,7 +126,83 @@ async function startServer() {
         }
       }
 
-      const result = await processMkuuChat({
+      // Check if message is dedicated image creation / editing with image attachment
+      const hasImageAttachment = attachments?.some(
+        (a: any) =>
+          a.mimeType?.startsWith('image/') ||
+          a.base64Data?.startsWith('data:image/') ||
+          ['jpg', 'jpeg', 'png', 'webp'].includes(a.fileType?.toLowerCase() || '')
+      );
+      const lowerMsg = (message || '').toLowerCase();
+      const isExplicitImageAction =
+        (hasImageAttachment && (lowerMsg.includes('hd') || lowerMsg.includes('background') || lowerMsg.includes('enhance') || lowerMsg.includes('remove') || lowerMsg.includes('ondoa') || lowerMsg.includes('badilisha') || lowerMsg.includes('edit') || lowerMsg.length <= 50)) ||
+        lowerMsg.startsWith('picha ya') ||
+        lowerMsg.includes('tengeneza picha') ||
+        lowerMsg.includes('unda picha') ||
+        lowerMsg.includes('create an image') ||
+        lowerMsg.includes('draw a picture');
+
+      if (isExplicitImageAction) {
+        // Route to ImageService (Independent Pipeline)
+        const imageResult = await imageService.processImage({
+          userId: DEFAULT_USER_ID,
+          prompt: message,
+          attachments,
+        });
+
+        // Save into conversation
+        if (conversationId) {
+          let conversation = db.getConversation(conversationId, DEFAULT_USER_ID);
+          const userMsg = {
+            id: `msg_${Date.now()}_u`,
+            role: 'user' as const,
+            content: message,
+            timestamp: new Date().toISOString(),
+            isVoice,
+            attachments: attachments.map((a: any) => ({
+              filename: a.filename,
+              fileType: a.fileType,
+              mimeType: a.mimeType,
+              size: a.size || 0,
+              previewUrl: a.previewUrl || (a.base64Data?.startsWith('data:image/') ? a.base64Data : undefined),
+            })),
+          };
+          const assistantMsg = {
+            id: `msg_${Date.now()}_a`,
+            role: 'assistant' as const,
+            content: imageResult.explanation,
+            timestamp: new Date().toISOString(),
+            generatedFiles: [imageResult.file],
+          };
+
+          if (conversation) {
+            conversation.messages.push(userMsg, assistantMsg);
+            db.saveConversation(conversation);
+          } else {
+            conversation = {
+              id: conversationId,
+              userId: DEFAULT_USER_ID,
+              title: message.slice(0, 35) || 'Picha ya Image Studio',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              messages: [userMsg, assistantMsg],
+            };
+            db.saveConversation(conversation);
+          }
+        }
+
+        return res.json({
+          reply: imageResult.explanation,
+          cleanSpeechText: imageResult.explanation,
+          memoriesExtracted: [],
+          peopleRecognized: [],
+          generatedFiles: [imageResult.file],
+          service: 'ImageService',
+        });
+      }
+
+      // Execute through GeminiService -> Google Gemini API -> Gemini 3.7 Flash
+      const result = await geminiService.processChat({
         userId: DEFAULT_USER_ID,
         message,
         conversationHistory: effectiveHistory,
@@ -161,22 +259,29 @@ async function startServer() {
         memoriesExtracted: result.memoriesExtracted,
         peopleRecognized: result.peopleRecognized,
         generatedFiles: result.generatedFiles,
+        aiProvider: result.aiProvider,
+        chatModel: result.chatModel,
+        latencyMs: result.latencyMs,
       });
     } catch (error: any) {
-      console.error('Chat API error:', error);
-      res.status(500).json({ error: error.message || 'Hitilafu ya seva' });
+      console.error('[MKUU-BACKEND] Chat API Error:', error);
+      res.status(500).json({
+        error: error.message || 'Google Gemini API Error',
+        aiProvider: AI_PROVIDER,
+        chatModel: PERSONAL_CHAT_MODEL,
+      });
     }
   });
 
-  // ==========================================
-  // REAL GEMINI 3 PRO IMAGE EDITING & GENERATION
-  // ==========================================
-  app.post(['/api/image/edit', '/api/image/generate'], async (req, res) => {
+  // ==========================================================================
+  // IMAGE STUDIO PIPELINE: MKUU APP -> MKUU BACKEND -> ImageService -> Provider
+  // ==========================================================================
+  app.post(['/api/image/edit', '/api/image/generate', '/api/image'], async (req, res) => {
     try {
       const { prompt = '', imageBase64, mimeType = 'image/jpeg', filename = 'picha_iliyohaririwa.png' } = req.body;
 
       if (!prompt && !imageBase64) {
-        return res.status(400).json({ error: 'Maelekezo au picha inahitajika kwa ajili ya Gemini 3 Pro Image' });
+        return res.status(400).json({ error: 'Maelekezo au picha inahitajika kwa ajili ya Image Studio' });
       }
 
       const attachments = imageBase64
@@ -190,27 +295,22 @@ async function startServer() {
           ]
         : [];
 
-      const result = await processImageEditingOrGeneration({
+      const result = await imageService.processImage({
         userId: DEFAULT_USER_ID,
-        message: prompt || 'Enhance and edit this image with high precision while strictly preserving identity',
+        prompt: prompt || 'Enhance and edit this image with high precision while strictly preserving identity',
         attachments,
       });
-
-      if (!result) {
-        return res.status(500).json({
-          error: 'Image editing could not be processed with Gemini 3 Pro Image. Tafadhali jaribu tena.',
-        });
-      }
 
       res.json({
         success: true,
         reply: result.explanation,
         file: result.file,
         generatedFiles: [result.file],
+        modelUsed: result.modelUsed,
       });
     } catch (error: any) {
-      console.error('Gemini 3 Pro Image error:', error);
-      res.status(500).json({ error: error.message || 'Hitilafu ya Gemini 3 Pro Image' });
+      console.error('[MKUU-BACKEND] Image Studio API Error:', error);
+      res.status(500).json({ error: error.message || 'Hitilafu ya Image Studio' });
     }
   });
 

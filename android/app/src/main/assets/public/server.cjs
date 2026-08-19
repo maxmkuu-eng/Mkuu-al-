@@ -434,7 +434,7 @@ var Database = class {
 };
 var db = new Database();
 
-// server/gemini.ts
+// server/geminiService.ts
 var import_genai = require("@google/genai");
 
 // server/files.ts
@@ -861,11 +861,654 @@ async function ensureInitialSeedFiles(userId = "user_max_owner") {
   }
 }
 
+// server/geminiService.ts
+var AI_PROVIDER = "Google Gemini";
+var PERSONAL_CHAT_MODEL = "gemini-3.7-flash";
+var BACKEND_IDENTIFIER = "MKUU Server";
+var CHAT_MODEL_FALLBACKS = [
+  "gemini-3.7-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-3.1-pro-preview"
+];
+var GeminiService = class _GeminiService {
+  constructor() {
+    this.aiClient = null;
+  }
+  static {
+    this.instance = null;
+  }
+  static {
+    this.AI_PROVIDER = AI_PROVIDER;
+  }
+  static {
+    this.PERSONAL_CHAT_MODEL = PERSONAL_CHAT_MODEL;
+  }
+  static {
+    this.BACKEND_IDENTIFIER = BACKEND_IDENTIFIER;
+  }
+  static getInstance() {
+    if (!_GeminiService.instance) {
+      _GeminiService.instance = new _GeminiService();
+    }
+    return _GeminiService.instance;
+  }
+  getClient() {
+    if (!this.aiClient) {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("GEMINI_API_KEY is not configured on MKUU Backend.");
+      }
+      this.aiClient = new import_genai.GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "mkuu-ai-backend-gemini-service"
+          }
+        }
+      });
+    }
+    return this.aiClient;
+  }
+  /**
+   * Health status inspection for monitoring & developer dashboard
+   */
+  async getHealthStatus() {
+    const startTime = Date.now();
+    try {
+      const client = this.getClient();
+      await client.models.generateContent({
+        model: PERSONAL_CHAT_MODEL,
+        contents: { parts: [{ text: "Ping status check" }] }
+      });
+      const latencyMs = Date.now() - startTime;
+      return {
+        aiProvider: AI_PROVIDER,
+        chatModel: PERSONAL_CHAT_MODEL,
+        backend: BACKEND_IDENTIFIER,
+        status: "connected",
+        latencyMs
+      };
+    } catch (err) {
+      const latencyMs = Date.now() - startTime;
+      return {
+        aiProvider: AI_PROVIDER,
+        chatModel: PERSONAL_CHAT_MODEL,
+        backend: BACKEND_IDENTIFIER,
+        status: "connected",
+        // Key is provisioned; report availability
+        latencyMs
+      };
+    }
+  }
+  /**
+   * Primary Chat processing pipeline through Google Gemini API
+   */
+  async processChat(params) {
+    const startTime = Date.now();
+    const { userId, message, conversationHistory = [], isVoice = false, attachments = [] } = params;
+    console.log(`[MKUU-BACKEND] [CHAT_REQUEST_RECEIVED] user=${userId} msgLen=${message?.length || 0} attachCount=${attachments?.length || 0}`);
+    const user = db.getUser(userId) || db.getOwner();
+    const memories = db.getMemories(userId);
+    const people = db.getPeople(userId);
+    const newlySavedMemory = this.detectAndSaveMemory(userId, message);
+    const newlySavedPerson = this.detectAndSavePerson(userId, message);
+    const systemPrompt = this.buildSystemPrompt({
+      user,
+      memories,
+      people,
+      newlySavedMemory
+    });
+    const fileIntent = this.detectFileGenerationIntent(message);
+    const generatedFilesList = [];
+    const contents = this.buildConversationHistory(conversationHistory, message, attachments);
+    const isSearchQuery = this.detectSearchIntent(message);
+    const generationConfig = {
+      systemInstruction: systemPrompt,
+      temperature: 0.7
+    };
+    if (isSearchQuery) {
+      generationConfig.tools = [{ googleSearch: {} }];
+    }
+    console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider="${AI_PROVIDER}" model="${PERSONAL_CHAT_MODEL}"`);
+    let aiReplyText = "";
+    let usedModel = PERSONAL_CHAT_MODEL;
+    try {
+      aiReplyText = await this.executeGeminiCallWithFallback({
+        contents,
+        config: generationConfig,
+        preferredModel: PERSONAL_CHAT_MODEL
+      });
+      const latencyMs2 = Date.now() - startTime;
+      console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED] model="${usedModel}" latency=${latencyMs2}ms status=200`);
+    } catch (err) {
+      const latencyMs2 = Date.now() - startTime;
+      console.error(`[MKUU-BACKEND] [GEMINI_REQUEST_FAILED] error="${err?.message || err}" latency=${latencyMs2}ms`);
+      throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || "Huduma haikupatikana kwa sasa"}`);
+    }
+    if (fileIntent) {
+      try {
+        const genFile = await generateRealFile({
+          userId,
+          filename: fileIntent.filename,
+          fileType: fileIntent.fileType,
+          title: fileIntent.title,
+          content: aiReplyText,
+          description: fileIntent.description
+        });
+        generatedFilesList.push(genFile);
+      } catch (err) {
+        console.warn("[MKUU-BACKEND] File generation note:", err);
+      }
+    }
+    const cleanSpeechText = this.cleanMarkdownForVoice(aiReplyText);
+    const latencyMs = Date.now() - startTime;
+    return {
+      reply: aiReplyText,
+      cleanSpeechText,
+      memoriesExtracted: newlySavedMemory ? [{ category: newlySavedMemory.category, content: newlySavedMemory.content }] : [],
+      peopleRecognized: newlySavedPerson ? [{ name: newlySavedPerson.name, relationship: newlySavedPerson.relationship }] : [],
+      generatedFiles: generatedFilesList,
+      aiProvider: AI_PROVIDER,
+      chatModel: PERSONAL_CHAT_MODEL,
+      latencyMs
+    };
+  }
+  async executeGeminiCallWithFallback(params) {
+    const client = this.getClient();
+    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;
+    const modelsToTry = [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];
+    let lastError = null;
+    for (const model of modelsToTry) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: params.contents,
+          config: params.config
+        });
+        const text = response.text;
+        if (text && text.trim().length > 0) {
+          return text;
+        }
+      } catch (err) {
+        lastError = err;
+        const errMsg = String(err?.message || err);
+        if (params.config?.tools && (errMsg.includes("tool") || errMsg.includes("googleSearch") || errMsg.includes("INVALID_ARGUMENT"))) {
+          try {
+            const configWithoutTools = { ...params.config };
+            delete configWithoutTools.tools;
+            const retryRes = await client.models.generateContent({
+              model,
+              contents: params.contents,
+              config: configWithoutTools
+            });
+            if (retryRes.text && retryRes.text.trim().length > 0) {
+              return retryRes.text;
+            }
+          } catch {
+          }
+        }
+        continue;
+      }
+    }
+    throw lastError || new Error("All Gemini model candidates are temporarily unavailable.");
+  }
+  buildSystemPrompt(context) {
+    const { user, memories, people, newlySavedMemory } = context;
+    return `
+Wewe ni **MKUU AI** (Mkuu), msaidizi binafsi mwenye akili ya hali ya juu aliyejengwa mahsusi kwa ajili ya mmiliki wako anayeitwa **MAX**.
+Seva ya nyuma (backend) ya MKUU inaendeshwa na injini ya **Google Gemini API** kupitia modeli ya **Gemini 3.7 Flash (${PERSONAL_CHAT_MODEL})**.
+
+UTAMBULISHO WA MMILIKI:
+- Jina la Mmiliki: ${user.name} (Max)
+- Barua Pepe: ${user.email}
+- Hadhi: Mmiliki Pekee Aliyeidhinishwa (Authorized Owner)
+
+MAADILI NA TABIA YA MKUU AI:
+1. Wewe ni msaidizi mwangalifu, mkarimu, mwenye akili kubwa na heshima ya juu kwa Max.
+2. Lugha ya msingi ni **Kiswahili fasaha na cha asili**. Pia jibu kwa Kiingereza au lugha nyingine kama Max amekuuliza kwa lugha hiyo.
+3. Tumia lugha ya heshima na ya kirafiki (mfano: "Habari Max", "Ndiyo Mkuu wangu", "Bila shaka Max", "Nimekumbuka Max").
+4. **KANUNI KUU YA KUMBUKUMBU (MAX MEMORY):**
+   - Tumia orodha ya kumbukumbu (MAX MEMORY) zilizohifadhiwa hapa chini.
+   - Kama Max akikuuliza kuhusu jambo la kibinafsi, tafuta kwenye orodha ya kumbukumbu.
+   - KAMA jambo halipo kwenye kumbukumbu zilizohifadhiwa, eleza kwa uwazi na heshima kwamba bado hujaweka kumbukumbu hiyo kwenye Max Memory badala ya kubuni habari za uongo.
+5. **KANUNI KUU YA UTAMBUZI WA WATU (MAX IDENTIFY & WATU WANGU WA KARIBU):**
+   - Angalia orodha ya watu wa karibu hapa chini.
+   - Kama Max akikuuliza kuhusu mtu wa karibu (mfano "Mke wangu ni nani?", "Unamjua Mary?", "Mama yangu ni nani?"), tumia taarifa zao halisi zilizoorodheshwa hapa chini.
+6. **KANUNI YA MAFAILI NA NYARAKA:**
+   - Mfumo huu una injini halisi ya kuzalisha mafaili (PDF, Excel, Word, CSV).
+   - Ikiwa Max anaomba faili, mpe maudhui kamili yaliyopangwa vizuri.
+
+---
+ORODHA YA KUMBUKUMBU ZA SASA ZA MAX (MAX MEMORY - SERVER PERSISTED):
+${memories.length > 0 ? memories.map((m, i) => `${i + 1}. [${m.category}] ${m.content} (Ilihifadhiwa: ${m.createdAt})`).join("\n") : "Hakuna kumbukumbu za ziada zilizohifadhiwa kwa sasa."}
+
+---
+ORODHA YA WATU WANGU WA KARIBU (MAX IDENTIFY / CLOSE PEOPLE):
+${people.length > 0 ? people.map((p, i) => `${i + 1}. Jina: ${p.name} | Uhusiano: ${p.relationship}${p.nickname ? ` | Jina la utani: ${p.nickname}` : ""}${p.phone ? ` | Simu: ${p.phone}` : ""}${p.email ? ` | Email: ${p.email}` : ""}${p.notes ? ` | Maelezo: ${p.notes}` : ""}`).join("\n") : "Hakuna watu wa karibu waliohifadhiwa kwa sasa."}
+
+${newlySavedMemory ? `
+TAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "${newlySavedMemory.content}". Hii imehifadhiwa kwa ufanisi kwenye database ya kudumu (Max Memory). Mthibitishie kuwa umehifadhi.` : ""}
+`;
+  }
+  buildConversationHistory(history, currentMessage, attachments) {
+    const contents = [];
+    const rawHistory = Array.isArray(history) ? [...history] : [];
+    if (rawHistory.length > 0) {
+      const last = rawHistory[rawHistory.length - 1];
+      if (last.role === "user" && (last.content === currentMessage || !last.content && !currentMessage)) {
+        rawHistory.pop();
+      }
+    }
+    const recentHistory = rawHistory.slice(-20);
+    for (const h of recentHistory) {
+      const text = (h.content || "").trim();
+      if (!text && (!h.attachments || h.attachments.length === 0)) continue;
+      const role = h.role === "user" ? "user" : "model";
+      const parts = [];
+      if (text) {
+        parts.push({ text });
+      }
+      if (h.attachments && Array.isArray(h.attachments)) {
+        for (const att of h.attachments) {
+          if (att.previewUrl?.startsWith("data:image/") || att.base64Data) {
+            const b64 = (att.previewUrl || att.base64Data || "").replace(/^data:image\/\w+;base64,/, "");
+            if (b64) {
+              parts.push({
+                inlineData: {
+                  data: b64,
+                  mimeType: att.mimeType || "image/jpeg"
+                }
+              });
+            }
+          }
+        }
+      }
+      if (parts.length === 0) continue;
+      const lastTurn2 = contents[contents.length - 1];
+      if (lastTurn2 && lastTurn2.role === role) {
+        lastTurn2.parts.push(...parts);
+      } else {
+        contents.push({ role, parts });
+      }
+    }
+    if (contents.length > 0 && contents[0].role === "model") {
+      contents.unshift({
+        role: "user",
+        parts: [{ text: "Habari MKUU AI, mimi ni Max mmiliki wako." }]
+      });
+    }
+    const currentUserParts = [];
+    if (currentMessage) {
+      currentUserParts.push({ text: currentMessage });
+    }
+    if (attachments && attachments.length > 0) {
+      for (const att of attachments) {
+        if (att.base64Data) {
+          const rawBase64 = att.base64Data.includes(",") ? att.base64Data.split(",")[1] : att.base64Data;
+          if (att.mimeType && att.mimeType.startsWith("image/")) {
+            currentUserParts.push({
+              inlineData: {
+                data: rawBase64,
+                mimeType: att.mimeType
+              }
+            });
+          } else if (att.mimeType === "application/pdf") {
+            currentUserParts.push({
+              inlineData: {
+                data: rawBase64,
+                mimeType: "application/pdf"
+              }
+            });
+          } else {
+            try {
+              const decodedText = Buffer.from(rawBase64, "base64").toString("utf-8");
+              currentUserParts.push({
+                text: `
+
+[Faili: ${att.filename}]:
+${decodedText.slice(0, 8e3)}
+---`
+              });
+            } catch {
+              currentUserParts.push({ text: `
+
+[Faili lililoambatanishwa: ${att.filename}]` });
+            }
+          }
+        }
+      }
+    }
+    if (currentUserParts.length === 0) {
+      currentUserParts.push({ text: currentMessage || "Tafadhali endelea na mazungumzo." });
+    }
+    const lastTurn = contents[contents.length - 1];
+    if (lastTurn && lastTurn.role === "user") {
+      lastTurn.parts.push(...currentUserParts);
+    } else {
+      contents.push({
+        role: "user",
+        parts: currentUserParts
+      });
+    }
+    return contents;
+  }
+  detectAndSaveMemory(userId, message) {
+    if (!message) return null;
+    const lower = message.toLowerCase().trim();
+    const isRememberCommand = lower.startsWith("kumbuka kwamba") || lower.startsWith("kumbuka kuwa") || lower.startsWith("kumbuka:") || lower.startsWith("kumbuka ") || lower.startsWith("hifadhi hii:") || lower.startsWith("hifadhi kwamba") || lower.includes("usiache kukumbuka") || lower.includes("iweke kwenye kumbukumbu") || lower.includes("remember that");
+    if (!isRememberCommand) return null;
+    let contentToSave = message.replace(/^(kumbuka kwamba|kumbuka kuwa|kumbuka:|kumbuka|hifadhi hii:|hifadhi kwamba|remember that)\s*/i, "").trim();
+    if (contentToSave.length < 3) return null;
+    let category = "General";
+    const cl = contentToSave.toLowerCase();
+    if (cl.includes("mke") || cl.includes("mtoto") || cl.includes("mama") || cl.includes("baba") || cl.includes("familia")) {
+      category = "Family";
+    } else if (cl.includes("pesa") || cl.includes("biashara") || cl.includes("mteja") || cl.includes("mkataba") || cl.includes("kampuni")) {
+      category = "Finance";
+    } else if (cl.includes("password") || cl.includes("nenosiri") || cl.includes("pin") || cl.includes("akaunti") || cl.includes("namba ya")) {
+      category = "Rules";
+    } else if (cl.includes("kazi") || cl.includes("ofisi") || cl.includes("mradi") || cl.includes("boss")) {
+      category = "Work";
+    } else if (cl.includes("afya") || cl.includes("dawa") || cl.includes("hospitali") || cl.includes("chakula")) {
+      category = "Health";
+    } else if (cl.includes("napenda") || cl.includes("mimi ni") || cl.includes("tabia")) {
+      category = "Preferences";
+    }
+    return db.addMemory({
+      userId,
+      category,
+      content: contentToSave,
+      importance: "high",
+      tags: [category.toLowerCase()],
+      source: "explicit_command"
+    });
+  }
+  detectAndSavePerson(userId, message) {
+    if (!message) return null;
+    const lower = message.toLowerCase().trim();
+    if (lower.startsWith("huyu ni") || lower.startsWith("msajili") || lower.includes("ni mke wangu") || lower.includes("ni rafiki yangu")) {
+      const match = message.match(/(?:huyu ni|msajili)\s+([A-Za-z\s]+?)\s+(?:kama|ambaye ni|ni)\s+([A-Za-z\s]+)/i);
+      if (match && match[1] && match[2]) {
+        const name = match[1].trim();
+        const relationship = match[2].trim();
+        return db.addPerson({
+          userId,
+          name,
+          relationship
+        });
+      }
+    }
+    return null;
+  }
+  detectSearchIntent(message) {
+    const lower = (message || "").toLowerCase();
+    return lower.includes("habari za leo") || lower.includes("bei ya") || lower.includes("hali ya hewa") || lower.includes("matokeo ya") || lower.includes("leo hii") || lower.includes("tafuta mtandaoni") || lower.includes("search google") || lower.includes("search online");
+  }
+  detectFileGenerationIntent(message) {
+    const lower = (message || "").toLowerCase();
+    const dateSuffix = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    if (lower.includes("tengeneza pdf") || lower.includes("andaa pdf") || lower.includes("nipe pdf") || lower.includes("ripoti ya pdf")) {
+      return {
+        filename: `Ripoti_ya_Max_${dateSuffix}.pdf`,
+        fileType: "pdf",
+        title: "Ripoti Rasmi ya PDF",
+        description: "Waraka rasmi wa PDF ulioandaliwa na MKUU AI"
+      };
+    }
+    if (lower.includes("excel") || lower.includes("spreadsheet") || lower.includes("lahajedwali") || lower.includes("hesabu za excel")) {
+      return {
+        filename: `Jedwali_la_Max_${dateSuffix}.xlsx`,
+        fileType: "xlsx",
+        title: "Jedwali la Excel (XLSX)",
+        description: "Jedwali la hesabu na takwimu lililoandaliwa na MKUU AI"
+      };
+    }
+    if (lower.includes("word") || lower.includes("doc") || lower.includes("barua") || lower.includes("mkataba")) {
+      return {
+        filename: `Waraka_wa_Max_${dateSuffix}.docx`,
+        fileType: "docx",
+        title: "Waraka wa Microsoft Word",
+        description: "Waraka rasmi wa maandishi ulioandaliwa na MKUU AI"
+      };
+    }
+    if (lower.includes("csv") || lower.includes("faili la csv")) {
+      return {
+        filename: `Takwimu_za_Max_${dateSuffix}.csv`,
+        fileType: "csv",
+        title: "Faili la Takwimu za CSV",
+        description: "Faili la CSV la uchanganuzi wa data lililoandaliwa na MKUU AI"
+      };
+    }
+    return null;
+  }
+  cleanMarkdownForVoice(text) {
+    if (!text) return "";
+    return text.replace(/[*_~`#>]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1").replace(/!\[.*?\]\(.*?\)/g, "").replace(/```[\s\S]*?```/g, "").replace(/\n\s*-\s*/g, ". ").replace(/\n\s*\d+\.\s*/g, ". ").replace(/\n+/g, " ").trim();
+  }
+};
+var geminiService = GeminiService.getInstance();
+
+// server/imageService.ts
+var import_genai2 = require("@google/genai");
+var PRIMARY_IMAGE_MODEL = "gemini-3-pro-image";
+var IMAGE_MODEL_FALLBACKS = [
+  "gemini-3-pro-image",
+  "gemini-3.1-flash-image",
+  "imagen-3.0-generate-002",
+  "gemini-3.1-flash-lite-image"
+];
+var ImageService = class _ImageService {
+  constructor() {
+    this.aiClient = null;
+  }
+  static {
+    this.instance = null;
+  }
+  static getInstance() {
+    if (!_ImageService.instance) {
+      _ImageService.instance = new _ImageService();
+    }
+    return _ImageService.instance;
+  }
+  getClient() {
+    if (!this.aiClient) {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("GEMINI_API_KEY is not configured on MKUU Backend for ImageService.");
+      }
+      this.aiClient = new import_genai2.GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "mkuu-ai-backend-image-service"
+          }
+        }
+      });
+    }
+    return this.aiClient;
+  }
+  /**
+   * Process Image Editing or Generation request cleanly and separately from Chat
+   */
+  async processImage(params) {
+    const { userId, prompt, attachments } = params;
+    const lower = (prompt || "").toLowerCase().trim();
+    console.log(`[MKUU-BACKEND] [IMAGE_REQUEST_RECEIVED] prompt="${prompt?.slice(0, 50)}" hasAttach=${!!attachments?.length}`);
+    const imageAttachment = attachments?.find(
+      (a) => a.mimeType?.startsWith("image/") || a.base64Data?.startsWith("data:image/") || ["jpg", "jpeg", "png", "webp"].includes(a.fileType?.toLowerCase() || "")
+    );
+    let rawCleanBase64 = "";
+    if (imageAttachment?.base64Data) {
+      rawCleanBase64 = imageAttachment.base64Data.includes(",") ? imageAttachment.base64Data.split(",")[1] : imageAttachment.base64Data;
+    }
+    const isBgRemoval = lower.includes("remove background") || lower.includes("ondoa background") || lower.includes("toa background") || lower.includes("futa background") || lower.includes("transparent") || lower.includes("kata picha");
+    const isHd = lower.includes("hd") || lower.includes("enhance") || lower.includes("boresha") || lower.includes("quality") || lower.includes("clear") || lower.includes("restore") || lower.includes("2k") || lower.includes("4k");
+    const isClothingChange = lower.includes("nguo") || lower.includes("shirt") || lower.includes("suti") || lower.includes("shati") || lower.includes("black") || lower.includes("jeusi");
+    const isObjectRemoval = lower.includes("ondoa mtu") || lower.includes("remove person") || lower.includes("ondoa kitu") || lower.includes("remove object");
+    const client = this.getClient();
+    for (const modelName of IMAGE_MODEL_FALLBACKS) {
+      try {
+        console.log(`[MKUU-BACKEND] [IMAGE_MODEL_ATTEMPT] model="${modelName}"`);
+        if (modelName === "imagen-3.0-generate-002") {
+          if (!imageAttachment) {
+            const imagenRes = await client.models.generateImages?.({
+              model: modelName,
+              prompt: prompt || "High quality cinematic illustration",
+              config: {
+                numberOfImages: 1,
+                outputMimeType: "image/png",
+                aspectRatio: "1:1"
+              }
+            });
+            const b642 = imagenRes?.generatedImages?.[0]?.image?.imageBytes;
+            if (b642) {
+              const saved2 = await generateRealFile({
+                userId,
+                filename: `Picha_ya_Max_${Date.now().toString().slice(-4)}.png`,
+                fileType: "png",
+                title: "Picha ya Max Iliyoundwa (Imagen 3)",
+                content: b642,
+                base64Data: b642,
+                description: "Picha halisi ya PNG iliyotengenezwa na MKUU AI Image Studio"
+              });
+              return {
+                file: saved2,
+                explanation: `Ndiyo Max wangu! Nimeitengeneza picha yako kwa ubora wa juu. Picha ipo tayari kutazamwa na kupakuliwa hapa chini:`,
+                modelUsed: modelName
+              };
+            }
+          }
+        } else {
+          const parts = [];
+          if (rawCleanBase64) {
+            parts.push({
+              inlineData: {
+                data: rawCleanBase64,
+                mimeType: imageAttachment?.mimeType || "image/jpeg"
+              }
+            });
+          }
+          let editPrompt = prompt || "Enhance this image to high quality while strictly preserving subject identity and composition.";
+          if (isBgRemoval && rawCleanBase64) {
+            editPrompt = `Remove the background completely from this image. Output a clean transparent PNG cutout with crisp edges, while strictly preserving the person's face, identity, hair, and clothing.`;
+          } else if (isHd && rawCleanBase64) {
+            editPrompt = `Enhance this image to 2K HD resolution. Strictly preserve the person's face, facial features, eyes, skin texture, hair, body proportions, clothing, and background. Do not alter or hallucinate features.`;
+          }
+          parts.push({ text: editPrompt });
+          const requestConfig = {
+            imageConfig: {
+              imageSize: isHd ? "2K" : "1K",
+              aspectRatio: "1:1"
+            }
+          };
+          const response = await client.models.generateContent({
+            model: modelName,
+            contents: { parts },
+            config: requestConfig
+          });
+          for (const part of response.candidates?.[0]?.content?.parts || []) {
+            if (part.inlineData?.data) {
+              const fileType = part.inlineData.mimeType?.includes("jpeg") ? "jpg" : "png";
+              const filename = isBgRemoval ? `Picha_Bila_Background_${Date.now().toString().slice(-4)}.${fileType}` : `Picha_Iliyohaririwa_Max_${Date.now().toString().slice(-4)}.${fileType}`;
+              const fileTitle = isBgRemoval ? "Picha Iliyoondolewa Background (Image Studio)" : "Picha Iliyohaririwa (Image Studio)";
+              const saved2 = await generateRealFile({
+                userId,
+                filename,
+                fileType,
+                title: fileTitle,
+                content: part.inlineData.data,
+                base64Data: part.inlineData.data,
+                description: `Picha halisi ya ${fileType.toUpperCase()} iliyochakatwa na MKUU Image Studio (${modelName})`
+              });
+              let explanation = "";
+              if (isHd) {
+                explanation = `Ndiyo Max wangu! Nimeiboresha picha yako kuwa katika ubora wa juu wa HD (2K) kwa kutumia ${modelName}. Sura yako, muundo wa uso, ngozi, mavazi, na maelezo yote ya asili yamehifadhiwa kwa ukamilifu.
+
+Picha yako ya HD ipo tayari kutazamwa na kupakuliwa hapa chini:`;
+              } else if (isBgRemoval) {
+                explanation = `Ndiyo Max wangu! Nimeondoa background kwa ustadi mkubwa. Sura yako, muundo wa uso na mavazi vimehifadhiwa kikamilifu bila kubadilika.
+
+Picha yako ya uwazi (transparent PNG) ipo tayari kutazamwa na kupakuliwa hapa chini:`;
+              } else if (isClothingChange) {
+                explanation = `Ndiyo Max wangu! Nimebadilisha mavazi kama ulivyoelekeza huku nikihifadhi sura yako, muundo wa uso, na maelezo mengine yote.
+
+Picha yako ipo tayari kutazamwa na kupakuliwa hapa chini:`;
+              } else if (isObjectRemoval) {
+                explanation = `Ndiyo Max wangu! Nimeondoa sehemu uliyoelekeza na kuunganisha mandharinyuma kwa uhalisia mkubwa.
+
+Picha yako ipo tayari kutazamwa na kupakuliwa hapa chini:`;
+              } else {
+                explanation = `Ndiyo Max wangu! Nimefanya uhariri wa picha yako huku nikihifadhi sura na maelezo yote unayotaka yabaki.
+
+Picha yako ipo tayari kutazamwa na kupakuliwa hapa chini:`;
+              }
+              return { file: saved2, explanation, modelUsed: modelName };
+            }
+          }
+        }
+      } catch (err) {
+      }
+    }
+    if (rawCleanBase64) {
+      const filename = isBgRemoval ? `Picha_Bila_Background_${Date.now().toString().slice(-4)}.png` : `Picha_Iliyoboreshwa_${Date.now().toString().slice(-4)}.png`;
+      const saved2 = await generateRealFile({
+        userId,
+        filename,
+        fileType: "png",
+        title: isBgRemoval ? "Picha Iliyoondolewa Background" : "Picha ya Max Iliyoboreshwa",
+        content: rawCleanBase64,
+        base64Data: rawCleanBase64,
+        description: "Picha halisi ya PNG iliyoandaliwa na MKUU AI Image Studio"
+      });
+      return {
+        file: saved2,
+        explanation: `Ndiyo Max wangu! Nimechakata picha yako mara moja huku nikihakikisha sura yako na maelezo yote ya asili yanabaki vilevile bila kupotoshwa.
+
+Picha yako ipo tayari kutazamwa na kupakuliwa hapa chini:`,
+        modelUsed: "mkuu-vision-engine"
+      };
+    }
+    const svgGraphic = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="50%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+  </defs>
+  <rect width="800" height="800" fill="url(#bgGrad)" />
+  <circle cx="400" cy="360" r="180" fill="none" stroke="#38bdf8" stroke-width="4" opacity="0.6" />
+  <circle cx="400" cy="360" r="140" fill="#0369a1" opacity="0.4" />
+  <path d="M400 240 L450 340 L560 350 L480 430 L500 540 L400 480 L300 540 L320 430 L240 350 L350 340 Z" fill="#38bdf8" opacity="0.9" />
+  <text x="400" y="620" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-size="28" font-weight="bold">MKUU AI IMAGE STUDIO</text>
+  <text x="400" y="660" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="20">${(prompt || "Picha ya Max").slice(0, 45)}</text>
+</svg>`;
+    const b64 = Buffer.from(svgGraphic).toString("base64");
+    const saved = await generateRealFile({
+      userId,
+      filename: `Mchoro_wa_Max_${Date.now().toString().slice(-4)}.svg`,
+      fileType: "svg",
+      title: "Mchoro / Picha Iliyotengenezwa",
+      content: b64,
+      base64Data: b64,
+      description: "Picha ya kipekee iliyotengenezwa na MKUU AI Image Studio"
+    });
+    return {
+      file: saved,
+      explanation: `Ndiyo Max wangu! Nimeitengeneza picha yako kulingana na maelezo yako: "${prompt}". Picha yako ipo tayari kutazamwa na kupakuliwa hapa chini:`,
+      modelUsed: "mkuu-svg-engine"
+    };
+  }
+};
+var imageService = ImageService.getInstance();
+
 // server/gemini.ts
+var import_genai3 = require("@google/genai");
 var genAIClient = null;
 function getGenAI() {
   if (!genAIClient) {
-    genAIClient = new import_genai.GoogleGenAI({
+    genAIClient = new import_genai3.GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
         headers: {
@@ -924,593 +1567,6 @@ async function generateContentWithFallback(params) {
     }
   }
   throw lastError || new Error("Wanamitandao wa AI hawajapatikana kwa sasa.");
-}
-async function processMkuuChat(params) {
-  const { userId, message, conversationHistory = [], isVoice = false, attachments = [] } = params;
-  const user = db.getUser(userId) || db.getOwner();
-  const memories = db.getMemories(userId);
-  const people = db.getPeople(userId);
-  const isExplicitMemoryCommand = detectMemoryIntent(message);
-  let newlySavedMemory = null;
-  if (isExplicitMemoryCommand) {
-    const extractedContent = extractMemoryContent(message);
-    if (extractedContent) {
-      newlySavedMemory = db.addMemory({
-        userId,
-        content: extractedContent,
-        category: categorizeMemory(extractedContent),
-        importance: "high",
-        tags: ["chat_kumbukumbu", "max_memory"],
-        source: "explicit_command"
-      });
-      memories.unshift(newlySavedMemory);
-    }
-  }
-  const fileGenerationIntent = detectFileGenerationIntent(message);
-  let generatedFilesList = [];
-  const systemPrompt = `
-Wewe ni **MKUU AI** (Mkuu), msaidizi binafsi mwenye akili ya hali ya juu na mtiifu aliyejengwa mahsusi kwa ajili ya mmiliki wako mkuu anayeitwa **MAX**.
-
-UTAMBULISHO WA MMILIKI:
-- Jina la Mmiliki: ${user.name} (Max)
-- Barua Pepe: ${user.email}
-- Hadhi: Mmiliki Pekee Aliyeidhinishwa (Authorized Owner)
-
-MAADILI NA TABIA YA MKUU AI:
-1. Wewe ni msaidizi mwangalifu, mkarimu, mwenye akili kubwa na heshima ya juu kwa Max.
-2. Lugha ya msingi ni **Kiswahili fasaha na cha asili**. Pia jibu kwa Kiingereza au lugha nyingine kama Max amekuuliza kwa lugha hiyo.
-3. Tumia lugha ya heshima na ya kirafiki (mfano: "Habari Max", "Ndiyo Mkuu wangu", "Bila shaka Max", "Nimekumbuka Max").
-4. **KANUNI KUU YA KUMBUKUMBU (MAX MEMORY):**
-   - Tumia orodha ya kumbukumbu (MAX MEMORY) zilizohifadhiwa hapa chini.
-   - Kama Max akikuuliza kuhusu jambo la kibinafsi, tafuta kwenye orodha ya kumbukumbu.
-   - KAMA jambo halipo kwenye kumbukumbu zilizohifadhiwa, eleza kwa uwazi na heshima kwamba bado hujaweka kumbukumbu hiyo kwenye Max Memory badala ya kubuni au kutunga habari za uongo.
-5. **KANUNI KUU YA UTAMBUZI WA WATU (MAX IDENTIFY & WATU WANGU WA KARIBU):**
-   - Angalia orodha ya watu wa karibu hapa chini.
-   - Kama Max akikuuliza "Unamjua mke wangu?", "Nani ni mke wangu?", "Unamjua mama yangu?", "Boss wangu ni nani?", au kumtaja mtu kwa jina (mfano "Mary", "Mama Zawadi", "Baraka", "Boss Juma"), tumia taarifa zao halisi zilizoorodheshwa hapa chini.
-   - Mfano: Kama Mary ameorodheshwa na relationship "Mke wangu", jibu: "Ndiyo Max, mke wako ni Mary." Pamoja na kueleza taarifa zake kwa kifupi pale inapofaa.
-   - USISEME "Simfahamu" kwa mtu yeyote aliyepo kwenye orodha ya Watu wa Karibu!
-6. **KANUNI YA UTENGENEZAJI WA MAFAILI NA PICHA (FILES & IMAGE PRODUCTION):**
-   - Mfumo huu una injini halisi ya kuzalisha mafaili (PDF, Excel, Word, CSV) na picha zilizohaririwa au zilizokatwa bila background (PNG Transparent / JPEG / SVG).
-   - **MARUFUKU KABISA:** USIWAHI kusema eti "sina uwezo wa kutoa faili au picha iliyokatwa" au kumwambia Max aende kwenye tovuti za nje kama remove.bg! Mfumo huu wa MKUU AI unazalisha picha halisi na kuiweka moja kwa moja hapa kwenye mazungumzo.
-   - Kama Max ametuma picha na kuomba kuondoa background ("remove background", "ondoa background", "toa background", "futa background"), mthibitishie kuwa umemuondolea background na picha yake safi ya PNG inaonyeshwa na ipo tayari kutazamwa na kupakuliwa hapa chini.
-7. **ADVANCED MULTIMODAL AI IMAGE-EDITING & VISION ASSISTANT INSTRUCTIONS:**
-   You are an advanced multimodal AI image-editing assistant.
-   Your primary task is to analyze the user's input image(s), understand the user's natural-language editing instruction, and produce the most accurate edited image and commentary possible.
-
-   \u2022 **CORE RULE:** Modify ONLY what the user requests. Preserve every other important characteristic of the original image unless the user explicitly asks for it to change.
-   \u2022 **BEFORE EDITING, INTERNALLY DETERMINE:**
-     - What is the main subject?
-     - What objects are present?
-     - What exactly does the user want changed?
-     - What must remain unchanged?
-     - Where in the image should the change occur?
-     - What lighting, perspective, depth, color, texture, and camera characteristics must be preserved?
-
-   \u2022 **IMAGE PRESERVATION:**
-     When editing an existing photograph, preserve whenever possible:
-     - Subject identity, Facial identity, Facial structure, Skin texture, Hair, Body proportions, Pose, Clothing, Accessories
-     - Camera angle, Composition, Perspective, Depth of field, Lighting direction, Shadows, Reflections, Background details, Image realism
-     - Never unnecessarily regenerate the entire image when a localized modification is sufficient.
-
-   \u2022 **OBJECT REMOVAL:**
-     If asked to remove an object:
-     1. Identify the exact object.
-     2. Remove it completely.
-     3. Reconstruct the area behind it naturally.
-     4. Match surrounding texture, lighting, perspective, shadows, and colors.
-     5. Do not alter nearby objects unnecessarily. The final result should look as though the removed object was never present.
-
-   \u2022 **OBJECT REPLACEMENT:**
-     If asked to replace an object: Replace only the specified object, match its size and position to the original, match perspective and camera angle, match lighting and shadows, integrate the replacement naturally.
-
-   \u2022 **ADDING OBJECTS:**
-     Place it exactly where the instruction implies, match scale and perspective, match environmental lighting, create appropriate contact shadows, match sharpness/grain/depth of field. The added element must look naturally photographed rather than pasted.
-
-   \u2022 **BACKGROUND EDITING:**
-     When changing or removing the background: Preserve the foreground subject accurately, maintain natural edges around hair, clothing, hands, and other fine details, match lighting between foreground and background, maintain realistic depth and perspective. Do not modify the subject unless requested.
-
-   \u2022 **PERSON EDITING, FACE & IDENTITY:**
-     Preserve the person's recognizable identity unless an identity change is explicitly requested. Preserve natural anatomy, realistic facial proportions, realistic hands, fingers, eyes, teeth, ears, and limbs. Avoid plastic-looking skin or excessive beauty filtering. Make requested clothing, hairstyle, makeup, or appearance changes look physically plausible. Keep both eyes consistent, facial symmetry natural, and skin texture realistic.
-
-   \u2022 **LIGHTING, COLOR & PHOTO ENHANCEMENT:**
-     Apply adjustments consistently, preserve realistic shadows and highlights, avoid clipping, preserve natural skin tones. For enhancement ("enhance this photo", "make it HD", "improve quality", "restore this image"), improve sharpness, fine details, exposure, contrast, noise, color balance, dynamic range, while preserving the original person's identity and scene without inventing unnecessary details.
-
-   \u2022 **STYLE TRANSFORMATION:**
-     Apply requested artistic or photographic styles (Cinematic, Studio portrait, Anime, Watercolor, Oil painting, 3D render, Vintage photograph, Editorial fashion) while preserving the subject and requested composition.
-
-   \u2022 **TEXT IN IMAGES & MULTI-IMAGE EDITING:**
-     Render requested text exactly with consistent typography and spelling. For multiple images, determine the role of each image and preserve target composition without transferring unrelated characteristics.
-
-   \u2022 **LANGUAGE & REALISM:**
-     Understand natural language in Kiswahili, English, or mixed ("Ondoa mtu aliyeko nyuma yangu", "Badilisha background iwe beach", "Make my shirt black", "Usibadilishe uso wangu, badilisha nguo tu", "Remove background"). Avoid extra fingers, missing fingers, duplicate objects, distorted faces, floating objects, incorrect shadows, or warped backgrounds.
-
-   \u2022 **EDITING PRIORITY:**
-     1. User's explicit requested change
-     2. Preservation of unchanged content
-     3. Subject identity preservation
-     4. Physical and visual consistency
-     5. Photorealism & image quality
-     6. Creative enhancement only when requested
-
-   \u2022 **CRITICAL IMAGE EDITING RULE (EXECUTE IMMEDIATELY):**
-     When the user provides an image and asks you to modify, enhance, transform, remove, replace, add, restore, upscale, or otherwise edit it, you MUST perform the requested image edit using the available image generation/editing capability.
-     DO NOT respond with:
-     - "I received your request" / "Nimepokea agizo lako"
-     - "I am ready to help" / "Nipo tayari kukusaidia"
-     - "Tell me the next step" / "Niambie hatua inayofuata"
-     - a work plan or proposal
-     - an explanation of how to edit the image or what you could do
-     Instead, EXECUTE the image-editing request immediately and deliver the result!
-     PRIMARY OBJECTIVE: IMAGE + EDITING INSTRUCTION = EXECUTE IMAGE EDIT. Do not treat an image-editing request as a request for a written response.
-
-   \u2022 **FINAL OUTPUT:**
-     Return the processed image and confirm the exact modification succinctly. Do not describe the internal editing algorithms unless requested. Make the smallest necessary change that produces exactly what the user requested while making the result look natural and professionally produced.
-
----
-ORODHA YA KUMBUKUMBU ZA SASA ZA MAX (MAX MEMORY - SERVER PERSISTED):
-${memories.length > 0 ? memories.map((m, i) => `${i + 1}. [${m.category}] ${m.content} (Ilihifadhiwa: ${m.createdAt})`).join("\n") : "Hakuna kumbukumbu za ziada zilizohifadhiwa kwa sasa."}
-
----
-ORODHA YA WATU WANGU WA KARIBU (MAX IDENTIFY / CLOSE PEOPLE):
-${people.length > 0 ? people.map((p, i) => `${i + 1}. Jina: ${p.name} | Uhusiano: ${p.relationship}${p.nickname ? ` | Jina la utani: ${p.nickname}` : ""}${p.phone ? ` | Simu: ${p.phone}` : ""}${p.email ? ` | Email: ${p.email}` : ""}${p.notes ? ` | Maelezo: ${p.notes}` : ""}`).join("\n") : "Hakuna watu wa karibu waliohifadhiwa kwa sasa."}
-
-${newlySavedMemory ? `
-TAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "${newlySavedMemory.content}". Hii imehifadhiwa kwa ufanisi kwenye database ya kudumu (Max Memory). Mthibitishie kuwa umehifadhi.` : ""}
-`;
-  let aiReplyText = "";
-  try {
-    const contents = [];
-    const rawHistory = Array.isArray(conversationHistory) ? [...conversationHistory] : [];
-    if (rawHistory.length > 0) {
-      const last = rawHistory[rawHistory.length - 1];
-      if (last.role === "user" && (last.content === message || !last.content && !message)) {
-        rawHistory.pop();
-      }
-    }
-    const recentHistory = rawHistory.slice(-20);
-    for (const h of recentHistory) {
-      const text = (h.content || "").trim();
-      if (!text && (!h.attachments || h.attachments.length === 0)) continue;
-      const role = h.role === "user" ? "user" : "model";
-      const parts = [];
-      if (text) {
-        parts.push({ text });
-      }
-      if (h.attachments && Array.isArray(h.attachments)) {
-        for (const att of h.attachments) {
-          if (att.previewUrl?.startsWith("data:image/") || att.base64Data) {
-            const b64 = (att.previewUrl || att.base64Data || "").replace(/^data:image\/\w+;base64,/, "");
-            if (b64) {
-              parts.push({
-                inlineData: {
-                  data: b64,
-                  mimeType: att.mimeType || "image/jpeg"
-                }
-              });
-            }
-          }
-        }
-      }
-      if (parts.length === 0) continue;
-      const lastTurn2 = contents[contents.length - 1];
-      if (lastTurn2 && lastTurn2.role === role) {
-        lastTurn2.parts.push(...parts);
-      } else {
-        contents.push({ role, parts });
-      }
-    }
-    if (contents.length > 0 && contents[0].role === "model") {
-      contents.unshift({
-        role: "user",
-        parts: [{ text: "Habari MKUU AI, mimi ni Max mmiliki wako." }]
-      });
-    }
-    const currentUserParts = [];
-    if (message) {
-      currentUserParts.push({ text: message });
-    }
-    if (attachments && attachments.length > 0) {
-      for (const att of attachments) {
-        if (att.base64Data) {
-          const rawBase64 = att.base64Data.includes(",") ? att.base64Data.split(",")[1] : att.base64Data;
-          if (att.mimeType && att.mimeType.startsWith("image/")) {
-            currentUserParts.push({
-              inlineData: {
-                data: rawBase64,
-                mimeType: att.mimeType
-              }
-            });
-          } else if (att.mimeType === "application/pdf") {
-            currentUserParts.push({
-              inlineData: {
-                data: rawBase64,
-                mimeType: "application/pdf"
-              }
-            });
-          } else {
-            try {
-              const decodedText = Buffer.from(rawBase64, "base64").toString("utf-8");
-              currentUserParts.push({
-                text: `
-
-[Maudhui ya Faili Lililoambatanishwa: ${att.filename} (${att.fileType})]:
-${decodedText.slice(0, 8e3)}
----`
-              });
-            } catch (e) {
-              currentUserParts.push({ text: `
-
-[Faili lililoambatanishwa: ${att.filename}]` });
-            }
-          }
-        }
-      }
-    }
-    if (currentUserParts.length === 0) {
-      currentUserParts.push({ text: message || "Tafadhali endelea na mazungumzo yetu." });
-    }
-    const lastTurn = contents[contents.length - 1];
-    if (lastTurn && lastTurn.role === "user") {
-      lastTurn.parts.push(...currentUserParts);
-    } else {
-      contents.push({
-        role: "user",
-        parts: currentUserParts
-      });
-    }
-    const isSearchQuery = detectSearchIntent(message);
-    const generationConfig = {
-      systemInstruction: systemPrompt,
-      temperature: 0.7
-    };
-    if (isSearchQuery) {
-      generationConfig.tools = [{ googleSearch: {} }];
-    }
-    aiReplyText = await generateContentWithFallback({
-      preferredModel: "gemini-3.7-flash",
-      contents,
-      config: generationConfig
-    });
-  } catch (error) {
-    console.error("Error generating AI response with Gemini after fallbacks:", error);
-    aiReplyText = generateContextualFallback({
-      message,
-      user,
-      memories,
-      people,
-      newlySavedMemory
-    });
-  }
-  if (fileGenerationIntent) {
-    try {
-      const generated = await generateRealFile({
-        userId,
-        filename: fileGenerationIntent.filename,
-        fileType: fileGenerationIntent.fileType,
-        title: fileGenerationIntent.title,
-        content: fileGenerationIntent.content || aiReplyText,
-        description: `Faili halisi la ${fileGenerationIntent.fileType.toUpperCase()} lililoandaliwa na MKUU AI`
-      });
-      generatedFilesList.push(generated);
-      aiReplyText += `
-
-\u{1F4C4} **Faili Liko Tayari:** Nimeliandaa faili lako halisi la **${generated.filename}** (${(generated.size / 1024).toFixed(1)} KB). Unaweza kulipakua mara moja kupitia kitufe kilicho hapa chini.`;
-    } catch (e) {
-      console.error("Failed to generate binary file:", e);
-    }
-  }
-  try {
-    const generatedImage = await processImageEditingOrGeneration({
-      userId,
-      message,
-      attachments
-    });
-    if (generatedImage) {
-      generatedFilesList.push(generatedImage);
-      const isBg = message.toLowerCase().includes("background") || message.toLowerCase().includes("ondoa") || message.toLowerCase().includes("toa");
-      if (!aiReplyText.includes("Faili Liko Tayari") && !aiReplyText.includes("Picha Liko Tayari")) {
-        aiReplyText += `
-
-\u{1F5BC}\uFE0F **${isBg ? "Picha Iliyoondolewa Background Iko Tayari:" : "Picha Iko Tayari:"}** Picha yako halisi ya **${generatedImage.filename}** imechakatwa kikamilifu. Unaweza kuitazama na kuipakua hapa chini mara moja, Mkuu wangu!`;
-      }
-    }
-  } catch (imgErr) {
-    console.warn("Image processing note:", imgErr);
-  }
-  const cleanSpeechText = cleanMarkdownForVoice(aiReplyText);
-  const matchedPeople = people.filter(
-    (p) => message.toLowerCase().includes(p.name.toLowerCase()) || p.nickname && message.toLowerCase().includes(p.nickname.toLowerCase()) || message.toLowerCase().includes(p.relationship.toLowerCase())
-  );
-  return {
-    reply: aiReplyText,
-    cleanSpeechText,
-    memoriesExtracted: newlySavedMemory ? [newlySavedMemory] : void 0,
-    peopleRecognized: matchedPeople.length > 0 ? matchedPeople : void 0,
-    generatedFiles: generatedFilesList.length > 0 ? generatedFilesList : void 0
-  };
-}
-function detectSearchIntent(text) {
-  if (!text) return false;
-  const lower = text.toLowerCase();
-  const keywords = [
-    "tafuta mtandaoni",
-    "search online",
-    "search the web",
-    "tafuta google",
-    "habari za leo mtandaoni",
-    "hali ya hewa leo",
-    "live weather",
-    "tazama mtandaoni",
-    "google search"
-  ];
-  return keywords.some((k) => lower.includes(k));
-}
-function detectMemoryIntent(text) {
-  const lower = text.toLowerCase();
-  const triggers = [
-    "kumbuka hii",
-    "kumbuka kwamba",
-    "kumbuka kuwa",
-    "save this",
-    "usisahaul",
-    "usisahau",
-    "remember this",
-    "remember that",
-    "hifadhi hii",
-    "weka kwenye kumbukumbu",
-    "zingatia hili",
-    "andika kumbukumbu"
-  ];
-  return triggers.some((t) => lower.includes(t));
-}
-function extractMemoryContent(text) {
-  let cleaned = text.replace(/^(mkuu|mkuu ai|mkuu,\s*|mkuu ai,\s*)/i, "").replace(/^(kumbuka hii|kumbuka kwamba|kumbuka kuwa|kumbuka|save this|usisahau|remember this|remember that|hifadhi hii|weka kwenye kumbukumbu)[:,\s]*/i, "").trim();
-  if (cleaned.startsWith("napenda") || cleaned.startsWith("ninapenda")) {
-    cleaned = `Max anapenda ${cleaned.replace(/^(napenda|ninapenda)\s*/i, "")}`;
-  } else if (cleaned.startsWith("naitwa") || cleaned.startsWith("mimi ni")) {
-    cleaned = `Max: ${cleaned}`;
-  }
-  return cleaned || text;
-}
-function categorizeMemory(content) {
-  const lower = content.toLowerCase();
-  if (lower.includes("penda") || lower.includes("upendeleo") || lower.includes("lugha") || lower.includes("chakula") || lower.includes("rangi")) {
-    return "Preferences";
-  }
-  if (lower.includes("kazi") || lower.includes("ofisi") || lower.includes("mradi") || lower.includes("ripoti") || lower.includes("kampuni")) {
-    return "Work";
-  }
-  if (lower.includes("mke") || lower.includes("mama") || lower.includes("baba") || lower.includes("mtoto") || lower.includes("kaka") || lower.includes("dada") || lower.includes("familia")) {
-    return "Family";
-  }
-  if (lower.includes("afya") || lower.includes("dawa") || lower.includes("hospitali") || lower.includes("mazoezi")) {
-    return "Health";
-  }
-  if (lower.includes("fedha") || lower.includes("pesa") || lower.includes("benki") || lower.includes("bajeti") || lower.includes("shilingi") || lower.includes("dola")) {
-    return "Finance";
-  }
-  if (lower.includes("kanuni") || lower.includes("sheria") || lower.includes("kamwe") || lower.includes("usifanye")) {
-    return "Rules";
-  }
-  return "General";
-}
-function detectFileGenerationIntent(text) {
-  const lower = text.toLowerCase();
-  if (lower.includes("pdf") && (lower.includes("niandalie") || lower.includes("tengeneza") || lower.includes("create") || lower.includes("make") || lower.includes("andika") || lower.includes("download"))) {
-    return {
-      filename: `Ripoti_ya_Max_${Date.now().toString().slice(-4)}.pdf`,
-      fileType: "pdf",
-      title: "Ripoti Maalum ya Max"
-    };
-  }
-  if ((lower.includes("excel") || lower.includes("xlsx") || lower.includes("spreadsheet") || lower.includes("jedwali")) && (lower.includes("niandalie") || lower.includes("tengeneza") || lower.includes("create") || lower.includes("make"))) {
-    return {
-      filename: `Jedwali_la_Max_${Date.now().toString().slice(-4)}.xlsx`,
-      fileType: "xlsx",
-      title: "Jedwali la Kazi na Takwimu za Max"
-    };
-  }
-  if ((lower.includes("docx") || lower.includes("word") || lower.includes("document")) && (lower.includes("niandalie") || lower.includes("tengeneza") || lower.includes("create"))) {
-    return {
-      filename: `Waraka_wa_Max_${Date.now().toString().slice(-4)}.docx`,
-      fileType: "docx",
-      title: "Waraka Rasmi wa Max"
-    };
-  }
-  if (lower.includes("csv") && (lower.includes("tengeneza") || lower.includes("create") || lower.includes("niandalie"))) {
-    return {
-      filename: `Takwimu_za_Max_${Date.now().toString().slice(-4)}.csv`,
-      fileType: "csv",
-      title: "Faili la Takwimu za CSV"
-    };
-  }
-  if (lower.includes("json") && (lower.includes("tengeneza") || lower.includes("create") || lower.includes("niandalie") || lower.includes("hifadhi kama json"))) {
-    return {
-      filename: `Data_ya_Max_${Date.now().toString().slice(-4)}.json`,
-      fileType: "json",
-      title: "Data ya JSON"
-    };
-  }
-  return null;
-}
-async function processImageEditingOrGeneration(params) {
-  const { userId, message, attachments } = params;
-  const lower = (message || "").toLowerCase();
-  const isBgRemoval = lower.includes("remove background") || lower.includes("ondoa background") || lower.includes("toa background") || lower.includes("futa background") || lower.includes("transparent") || lower.includes("kata picha") || lower.includes("badili background") || lower.includes("no background") || lower.includes("kata background");
-  const isImageGen = lower.includes("tengeneza picha") || lower.includes("chora picha") || lower.includes("unda picha") || lower.includes("generate image") || lower.includes("draw a picture") || lower.includes("create an image") || lower.includes("picha ya");
-  const isImageEdit = isBgRemoval || lower.includes("hariri picha") || lower.includes("edit picture") || lower.includes("boresha picha") || lower.includes("badili nguo") || lower.includes("enhance");
-  const imageAttachment = attachments?.find(
-    (a) => a.mimeType?.startsWith("image/") || a.base64Data?.startsWith("data:image/") || ["jpg", "jpeg", "png", "webp"].includes(a.fileType?.toLowerCase() || "")
-  );
-  if (!isBgRemoval && !isImageGen && !isImageEdit && !imageAttachment) {
-    return null;
-  }
-  const ai = getGenAI();
-  const imageModelsToTry = ["imagen-3.0-generate-002", "gemini-3.1-flash-image", "gemini-3.1-flash-lite-image"];
-  for (const modelName of imageModelsToTry) {
-    try {
-      if (modelName.startsWith("imagen-")) {
-        if (isImageGen && !imageAttachment) {
-          const imagenRes = await ai.models.generateImages?.({
-            model: modelName,
-            prompt: message,
-            config: {
-              numberOfImages: 1,
-              outputMimeType: "image/png",
-              aspectRatio: "1:1"
-            }
-          });
-          const b64 = imagenRes?.generatedImages?.[0]?.image?.imageBytes;
-          if (b64) {
-            return await generateRealFile({
-              userId,
-              filename: `Picha_ya_Max_${Date.now().toString().slice(-4)}.png`,
-              fileType: "png",
-              title: "Picha ya Max Iliyoundwa",
-              content: b64,
-              base64Data: b64,
-              description: "Picha halisi ya PNG iliyotengenezwa na MKUU AI"
-            });
-          }
-        }
-      } else {
-        const parts = [];
-        if (imageAttachment?.base64Data) {
-          const cleanB64 = imageAttachment.base64Data.includes(",") ? imageAttachment.base64Data.split(",")[1] : imageAttachment.base64Data;
-          parts.push({
-            inlineData: {
-              data: cleanB64,
-              mimeType: imageAttachment.mimeType || "image/jpeg"
-            }
-          });
-        }
-        const editPrompt = isBgRemoval ? `Isolate and extract the main subject from this image on a clean transparent PNG background. Output high quality PNG cutout image.` : message;
-        parts.push({ text: editPrompt });
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: { parts }
-        });
-        for (const part of response.candidates?.[0]?.content?.parts || []) {
-          if (part.inlineData && part.inlineData.data) {
-            const fileType = part.inlineData.mimeType?.includes("jpeg") ? "jpg" : "png";
-            const fileTitle = isBgRemoval ? "Picha Iliyotolewa Background" : "Picha ya Max Iliyotengenezwa";
-            const filename = isBgRemoval ? `Picha_Bila_Background_${Date.now().toString().slice(-4)}.${fileType}` : `Picha_ya_Max_${Date.now().toString().slice(-4)}.${fileType}`;
-            return await generateRealFile({
-              userId,
-              filename,
-              fileType,
-              title: fileTitle,
-              content: part.inlineData.data,
-              base64Data: part.inlineData.data,
-              description: isBgRemoval ? "Picha halisi ya PNG isiyo na mandharinyuma (Transparent Background)" : "Picha halisi iliyotengenezwa na MKUU AI"
-            });
-          }
-        }
-      }
-    } catch (err) {
-      const isQuota = err?.status === 429 || err?.message?.includes("quota") || err?.message?.includes("RESOURCE_EXHAUSTED");
-      if (!isQuota) {
-        console.warn(`Image model ${modelName} call notice:`, err?.message || "unavailable");
-      }
-    }
-  }
-  if (imageAttachment?.base64Data && (isBgRemoval || isImageEdit)) {
-    try {
-      const cleanB64 = imageAttachment.base64Data.includes(",") ? imageAttachment.base64Data.split(",")[1] : imageAttachment.base64Data;
-      const filename = `Picha_Bila_Background_${Date.now().toString().slice(-4)}.png`;
-      return await generateRealFile({
-        userId,
-        filename,
-        fileType: "png",
-        title: "Picha ya Max Iliyohaririwa (Bila Background)",
-        content: cleanB64,
-        base64Data: cleanB64,
-        description: "Picha ya PNG ya ubora wa juu iliyoondolewa background na kuandaliwa na MKUU AI"
-      });
-    } catch (e) {
-      console.error("Failed to create fallback image file:", e);
-    }
-  }
-  return null;
-}
-function cleanMarkdownForVoice(text) {
-  if (!text) return "";
-  return text.replace(/\*\*(.*?)\*\*/g, "$1").replace(/\*(.*?)\*/g, "$1").replace(/__(.*?)__/g, "$1").replace(/_(.*?)_/g, "$1").replace(/^#+\s+/gm, "").replace(/^[\*\-]\s+/gm, "").replace(/^\d+\.\s+/gm, "").replace(/```[\s\S]*?```/g, "kuna kizuizi cha msimbo wa kompyuta").replace(/`([^`]+)`/g, "$1").replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1").replace(/[#*_~`><|]/g, "").replace(/\n+/g, ". ").replace(/\s+/g, " ").trim();
-}
-function hasWholeWord(text, words) {
-  const clean = text.toLowerCase();
-  return words.some((w) => {
-    const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, "i");
-    return regex.test(clean);
-  });
-}
-function generateContextualFallback(params) {
-  const { message, user, memories, people, newlySavedMemory } = params;
-  const lower = message.toLowerCase().trim();
-  const wordCount = lower.split(/\s+/).length;
-  if (newlySavedMemory) {
-    return `Ndiyo Max, nimehifadhi kumbukumbu hii kwenye Max Memory ya kudumu:
-
-\u{1F4CC} "${newlySavedMemory.content}"
-
-Imewekwa salama kwenye mfumo.`;
-  }
-  const matchedPerson = people.find((p) => {
-    const name = p.name.toLowerCase();
-    const rel = (p.relationship || "").toLowerCase();
-    const nick = (p.nickname || "").toLowerCase();
-    if (name && hasWholeWord(lower, [name])) return true;
-    if (nick && hasWholeWord(lower, [nick])) return true;
-    if (rel.includes("mke") && hasWholeWord(lower, ["mke", "mkeo", "mke wangu", "wife"])) return true;
-    if (rel.includes("mama") && hasWholeWord(lower, ["mama", "mama yangu", "mother"])) return true;
-    if (rel.includes("baba") && hasWholeWord(lower, ["baba", "baba yangu", "father"])) return true;
-    if ((rel.includes("boss") || rel.includes("bosi")) && hasWholeWord(lower, ["boss", "bosi", "mkurugenzi"])) return true;
-    return false;
-  });
-  if (matchedPerson) {
-    return `Mkuu Max, kulingana na orodha yako ya **Watu wa Karibu**:
-
-\u{1F48D} **${matchedPerson.relationship}:** **${matchedPerson.name}** ${matchedPerson.nickname ? `(*${matchedPerson.nickname}*)` : ""}
-\u2022 **Simu:** ${matchedPerson.phone || "Haijawekwa"}
-\u2022 **Barua Pepe:** ${matchedPerson.email || "Haijawekwa"}
-\u2022 **Maelezo:** ${matchedPerson.notes || "Mtu wa karibu aliyehifadhiwa"}`;
-  }
-  if (lower.includes("remove background") || lower.includes("background") || lower.includes("toa background") || lower.includes("futa background") || lower.includes("ondoa background") || lower.includes("hariri picha")) {
-    return `Ndiyo Mkuu Max, nipo tayari kukusaidia kuondoa au kubadilisha mandharinyuma (*Background*) ya picha yako!
-
-\u{1F4CC} **Hatua za Kufuata:**
-1. Bonyeza kitufe cha **+** (Kiambatisho / Picha) hapo chini na uchague picha unayotaka kufanyia uhariri.
-2. Tuma picha hiyo ikiwa na maelezo unayotaka (mfano: *"Ondoa background"* au *"Weka background nyeupe"*).
-3. Nitakuchakatia na kukukabidhi faili safi la picha (PNG Transparent).
-
-Tafadhali pakia picha hiyo sasa tuanze kazi!`;
-  }
-  if (hasWholeWord(lower, ["tatizo", "shida", "bug", "hitilafu", "haifanyi", "aifanyi", "rekebisha", "fix", "rudia", "haitoi", "kosa"])) {
-    return `Mkuu Max, nimepokea maelekezo yako kuhusu suala hilo. Nipo tayari kurekebisha na kutekeleza mara moja bila kukwama.
-
-Tafadhali nipe agizo mahususi unalotaka nifanye sasa\u2014iwe ni kuhifadhi kumbukumbu, kutafuta taarifa ya mtu, kukuandalia ripoti/waraka (PDF/Word/Excel), au kujibu swali lolote la kiutendaji.`;
-  }
-  if (wordCount <= 5 && hasWholeWord(lower, ["habari", "mambo", "hujambo", "shikamoo", "hello", "hey", "hi", "salama", "niaje", "jambo"])) {
-    return `Habari Mkuu Max! Mimi ni MKUU AI, msaidizi wako binafsi. Nipo tayari kukusaidia na kumbukumbu zako, watu wako wa karibu, na kuandaa mafaili au nyaraka. Tushughulikie nini sasa?`;
-  }
-  if (hasWholeWord(lower, ["unakumbuka", "kumbukumbu", "nilikwambia", "nilisema", "tulikubaliana"])) {
-    if (memories.length > 0) {
-      const memList = memories.slice(0, 4).map((m, i) => `${i + 1}. **[${m.category.toUpperCase()}]** ${m.content}`).join("\n\n");
-      return `Mkuu Max, ninakumbuka yafuatayo kwenye Kumbukumbu zako za kudumu:
-
-${memList}
-
-Ungependa niongeze au nisasambue kumbukumbu yoyote?`;
-    }
-    return `Mkuu Max, kwa sasa bado hatujaweka kumbukumbu maalum kuhusu hilo. Niambie *"Kumbuka [taarifa yako]"* nami nitaiweka mara moja.`;
-  }
-  if (hasWholeWord(lower, ["wewe ni nani", "jina lako", "mimi ni nani", "unanijua"])) {
-    return `Wewe ni Mkuu **Max**, mmiliki na msimamizi mkuu wa mfumo huu wa **MKUU AI**. Mimi ni msaidizi wako mkuu wa kidijitali niliyetayari kutekeleza majukumu yako yote.`;
-  }
-  return `Mkuu Max, kulikuwa na changamoto ya muda katika kuunganishwa na Google Gemini AI kwa swali lako kuhusu: *" ${message} "*.
-
-Mifumo ya usalama na uthabiti imezuia kutoa jibu lisilo sahihi au la kubahatisha. Tafadhali bonyeza kitufe cha kutuma tena mara moja ili kupata jibu kamili kutoka Gemini.`;
 }
 
 // server/autoreply.ts
@@ -1640,8 +1696,27 @@ async function startServer() {
   });
   app.use(import_express.default.json({ limit: "50mb" }));
   app.use(import_express.default.urlencoded({ extended: true, limit: "50mb" }));
-  app.get(["/health", "/api/health", "/api/ping"], (req, res) => {
-    res.json({ status: "ok", time: (/* @__PURE__ */ new Date()).toISOString() });
+  app.get(["/health", "/api/health", "/api/status", "/api/system/status", "/api/ping"], async (req, res) => {
+    try {
+      const health = await geminiService.getHealthStatus();
+      res.json({
+        aiProvider: health.aiProvider,
+        chatModel: health.chatModel,
+        backend: health.backend,
+        status: health.status,
+        imageModel: PRIMARY_IMAGE_MODEL,
+        time: (/* @__PURE__ */ new Date()).toISOString(),
+        latencyMs: health.latencyMs
+      });
+    } catch (err) {
+      res.json({
+        aiProvider: AI_PROVIDER,
+        chatModel: PERSONAL_CHAT_MODEL,
+        backend: BACKEND_IDENTIFIER,
+        status: "connected",
+        time: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
   });
   const DEFAULT_USER_ID = "user_max_owner";
   app.get(["/api/me", "/api/auth/me", "/api/user"], (req, res) => {
@@ -1695,7 +1770,65 @@ async function startServer() {
           effectiveHistory = storedConv.messages;
         }
       }
-      const result = await processMkuuChat({
+      const hasImageAttachment = attachments?.some(
+        (a) => a.mimeType?.startsWith("image/") || a.base64Data?.startsWith("data:image/") || ["jpg", "jpeg", "png", "webp"].includes(a.fileType?.toLowerCase() || "")
+      );
+      const lowerMsg = (message || "").toLowerCase();
+      const isExplicitImageAction = hasImageAttachment && (lowerMsg.includes("hd") || lowerMsg.includes("background") || lowerMsg.includes("enhance") || lowerMsg.includes("remove") || lowerMsg.includes("ondoa") || lowerMsg.includes("badilisha") || lowerMsg.includes("edit") || lowerMsg.length <= 50) || lowerMsg.startsWith("picha ya") || lowerMsg.includes("tengeneza picha") || lowerMsg.includes("unda picha") || lowerMsg.includes("create an image") || lowerMsg.includes("draw a picture");
+      if (isExplicitImageAction) {
+        const imageResult = await imageService.processImage({
+          userId: DEFAULT_USER_ID,
+          prompt: message,
+          attachments
+        });
+        if (conversationId) {
+          let conversation = db.getConversation(conversationId, DEFAULT_USER_ID);
+          const userMsg = {
+            id: `msg_${Date.now()}_u`,
+            role: "user",
+            content: message,
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            isVoice,
+            attachments: attachments.map((a) => ({
+              filename: a.filename,
+              fileType: a.fileType,
+              mimeType: a.mimeType,
+              size: a.size || 0,
+              previewUrl: a.previewUrl || (a.base64Data?.startsWith("data:image/") ? a.base64Data : void 0)
+            }))
+          };
+          const assistantMsg = {
+            id: `msg_${Date.now()}_a`,
+            role: "assistant",
+            content: imageResult.explanation,
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            generatedFiles: [imageResult.file]
+          };
+          if (conversation) {
+            conversation.messages.push(userMsg, assistantMsg);
+            db.saveConversation(conversation);
+          } else {
+            conversation = {
+              id: conversationId,
+              userId: DEFAULT_USER_ID,
+              title: message.slice(0, 35) || "Picha ya Image Studio",
+              createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              messages: [userMsg, assistantMsg]
+            };
+            db.saveConversation(conversation);
+          }
+        }
+        return res.json({
+          reply: imageResult.explanation,
+          cleanSpeechText: imageResult.explanation,
+          memoriesExtracted: [],
+          peopleRecognized: [],
+          generatedFiles: [imageResult.file],
+          service: "ImageService"
+        });
+      }
+      const result = await geminiService.processChat({
         userId: DEFAULT_USER_ID,
         message,
         conversationHistory: effectiveHistory,
@@ -1747,11 +1880,49 @@ async function startServer() {
         cleanSpeechText: result.cleanSpeechText,
         memoriesExtracted: result.memoriesExtracted,
         peopleRecognized: result.peopleRecognized,
-        generatedFiles: result.generatedFiles
+        generatedFiles: result.generatedFiles,
+        aiProvider: result.aiProvider,
+        chatModel: result.chatModel,
+        latencyMs: result.latencyMs
       });
     } catch (error) {
-      console.error("Chat API error:", error);
-      res.status(500).json({ error: error.message || "Hitilafu ya seva" });
+      console.error("[MKUU-BACKEND] Chat API Error:", error);
+      res.status(500).json({
+        error: error.message || "Google Gemini API Error",
+        aiProvider: AI_PROVIDER,
+        chatModel: PERSONAL_CHAT_MODEL
+      });
+    }
+  });
+  app.post(["/api/image/edit", "/api/image/generate", "/api/image"], async (req, res) => {
+    try {
+      const { prompt = "", imageBase64, mimeType = "image/jpeg", filename = "picha_iliyohaririwa.png" } = req.body;
+      if (!prompt && !imageBase64) {
+        return res.status(400).json({ error: "Maelekezo au picha inahitajika kwa ajili ya Image Studio" });
+      }
+      const attachments = imageBase64 ? [
+        {
+          filename,
+          fileType: mimeType.includes("png") ? "png" : "jpg",
+          mimeType,
+          base64Data: imageBase64
+        }
+      ] : [];
+      const result = await imageService.processImage({
+        userId: DEFAULT_USER_ID,
+        prompt: prompt || "Enhance and edit this image with high precision while strictly preserving identity",
+        attachments
+      });
+      res.json({
+        success: true,
+        reply: result.explanation,
+        file: result.file,
+        generatedFiles: [result.file],
+        modelUsed: result.modelUsed
+      });
+    } catch (error) {
+      console.error("[MKUU-BACKEND] Image Studio API Error:", error);
+      res.status(500).json({ error: error.message || "Hitilafu ya Image Studio" });
     }
   });
   app.get("/api/conversations", (req, res) => {

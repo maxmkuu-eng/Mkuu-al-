@@ -29,6 +29,7 @@ interface NavigationProps {
   filesCount: number;
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (open: boolean) => void;
+  isOnline?: boolean;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -44,6 +45,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   filesCount,
   mobileMenuOpen,
   setMobileMenuOpen,
+  isOnline = true,
 }) => {
   const navItems = [
     {
@@ -289,10 +291,12 @@ export const Navigation: React.FC<NavigationProps> = ({
             <span className="tracking-wider uppercase text-[11px]">{emergencyStop ? 'REJESHA AUTO REPLY' : 'STOP ALL AUTO REPLIES'}</span>
           </button>
 
-          <div className="flex items-center justify-between px-1 text-[10px] text-[#888888] uppercase tracking-wider">
-            <span className="flex items-center gap-1.5">
-              <span className="status-dot text-green-500 bg-green-500" />
-              Seva: Online
+          <div className="flex items-center justify-between px-1 text-[10px] uppercase tracking-wider">
+            <span className="flex items-center gap-1.5 font-medium">
+              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-amber-500 animate-ping'}`} />
+              <span className={isOnline ? 'text-emerald-400' : 'text-amber-400'}>
+                {isOnline ? 'Mtandao: Umeunganishwa' : 'Mtandao: Nje ya Mtandao'}
+              </span>
             </span>
             <span className="font-mono text-[#888888]">v2.5</span>
           </div>

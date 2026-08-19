@@ -4,9 +4,19 @@
   "webDir": "dist",
   "server": {
     "androidScheme": "https",
-    "cleartext": true
+    "cleartext": true,
+    "allowNavigation": [
+      "*.run.app",
+      "*.googleapis.com",
+      "*.google.com",
+      "*.cloudfunctions.net",
+      "localhost",
+      "10.0.2.2"
+    ]
   },
   "android": {
-    "allowMixedContent": true
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
   }
 }

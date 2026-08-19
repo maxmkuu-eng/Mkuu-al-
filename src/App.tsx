@@ -373,13 +373,15 @@ export const App: React.FC = () => {
         cleanSpeechText: chatResult.cleanSpeechText || chatResult.reply,
       };
     } catch (e: any) {
-      console.warn('Chat execution note:', e);
-      const fallbackReply = `Habari Max, nimepokea ujumbe wako. Ujumbe wako umehifadhiwa salama kwenye kumbukumbu ya ndani ya kifaa chako.`;
+      console.error('Chat execution error:', e);
+      const errorMessageText = e?.message && !e.message.includes('object')
+        ? e.message
+        : 'Imeshindwa kuunganishwa na huduma ya AI (Google Gemini). Tafadhali hakikisha kifaa chako kimeunganishwa kwenye intaneti kisha ujaribu tena.';
       
       const errorMsg: ChatMessage = {
         id: `msg_err_${Date.now()}`,
         role: 'assistant',
-        content: fallbackReply,
+        content: `⚠️ **Hitilafu ya Muunganisho:**\n\n${errorMessageText}`,
         timestamp: new Date().toISOString(),
         savedOffline: true,
       };
@@ -866,10 +868,28 @@ export const App: React.FC = () => {
         filesCount={files.length}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
+        isOnline={isOnline}
       />
 
       {/* Main View Area */}
       <main className="flex-1 flex flex-col h-full min-w-0 w-full overflow-hidden relative">
+        {!isOnline && (
+          <div className="w-full bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 flex items-center justify-between text-xs text-amber-300 z-20">
+            <span className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span>Muunganisho wa intaneti umekatika au uko chini. Unatumia hifadhi ya ndani.</span>
+            </span>
+            <button
+              onClick={() => {
+                setIsOnline(navigator.onLine);
+                fetchAllData();
+              }}
+              className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[11px] font-semibold text-amber-200 transition cursor-pointer"
+            >
+              Jaribu Kuunganisha
+            </button>
+          </div>
+        )}
         {activeTab === 'chat' && (
           <ChatView
             messages={messages}

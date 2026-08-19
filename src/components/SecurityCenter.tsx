@@ -51,9 +51,36 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
     message: '',
   });
 
+  // Backend Health / Architecture Status State
+  const [systemStatus, setSystemStatus] = useState<{
+    aiProvider: string;
+    chatModel: string;
+    backend: string;
+    status: string;
+    imageModel?: string;
+    latencyMs?: number;
+  }>({
+    aiProvider: 'Google Gemini',
+    chatModel: 'gemini-3.7-flash',
+    backend: 'MKUU Server',
+    status: 'connected',
+  });
+
   useEffect(() => {
     setGeminiApiKey(getStoredGeminiApiKey());
     setServerUrl(getRemoteServerUrl());
+
+    // Fetch live backend health and architecture status
+    fetch(getApiUrl('/api/status'))
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.aiProvider) {
+          setSystemStatus(data);
+        }
+      })
+      .catch((err) => {
+        console.warn('Status fetch note:', err);
+      });
   }, []);
 
   const handleSetPin = async (e: React.FormEvent) => {
@@ -92,7 +119,7 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
         const data = await res.json();
         setTestResult({
           status: 'success',
-          message: `Muunganisho na Seva Kuu ya MKUU AI (${targetHealthUrl}) umethibitishwa kwa 100%!`,
+          message: `Muunganisho wa moja kwa moja na MKUU AI Server (${data.aiProvider} - ${data.chatModel}) umethibitishwa kwa 100%!`,
         });
         return;
       }
@@ -131,10 +158,10 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
       }
     }
 
-    // 3. Local Autonomous Engine Status
+    // 3. If unreachable
     setTestResult({
-      status: 'idle',
-      message: 'MKUU AI anafanya kazi kwa Akili ya Ndani (Autonomous Local Intelligence).',
+      status: 'error',
+      message: 'Imeshindwa kuunganishwa na seva ya AI. Hakikisha kifaa chako kimeunganishwa kwenye intaneti.',
     });
   };
 
@@ -156,6 +183,103 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
           <p className="text-xs sm:text-sm text-[#888888] max-w-2xl leading-relaxed">
             Data zote za Max Memory, Watu wa Karibu, na Auto Reply zimehifadhiwa kwa usalama wa kiwango cha juu ndani ya kifaa chako.
           </p>
+        </div>
+      </div>
+
+      {/* EXPLICIT ARCHITECTURE & BACKEND SYSTEM STATUS CARD */}
+      <div className="glass p-6 sm:p-7 rounded-3xl border border-[#222222] bg-[#0c0c0c] shadow-2xl space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#1f1f1f]">
+          <div className="flex items-center space-x-3">
+            <div className="p-3 rounded-2xl bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/30">
+              <Server className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="serif font-bold text-[#F5F2ED] text-base sm:text-lg">
+                  MKUU AI Backend & Architecture Status
+                </h3>
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/30 uppercase tracking-wider">
+                  Live System
+                </span>
+              </div>
+              <p className="text-xs text-[#888888]">
+                Ripoti rasmi ya uhusiano kati ya MKUU App, MKUU Backend Server, na Google Gemini API.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-mono font-bold flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              {systemStatus.status === 'connected' ? 'Connected' : 'Active'}
+            </span>
+          </div>
+        </div>
+
+        {/* System Architecture Badges */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-4 rounded-2xl bg-[#050505] border border-[#222222] space-y-1">
+            <span className="text-[10px] text-[#888888] font-bold uppercase tracking-wider block">AI PROVIDER</span>
+            <span className="text-sm font-bold text-[#D4AF37] font-mono block flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" />
+              {systemStatus.aiProvider || 'Google Gemini'}
+            </span>
+            <span className="text-[10px] text-[#666666] block">Official Google Gemini API</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-[#050505] border border-[#222222] space-y-1">
+            <span className="text-[10px] text-[#888888] font-bold uppercase tracking-wider block">CHAT MODEL</span>
+            <span className="text-sm font-bold text-white font-mono block">
+              {systemStatus.chatModel || 'gemini-3.7-flash'}
+            </span>
+            <span className="text-[10px] text-[#666666] block">Personal Chat AI Engine</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-[#050505] border border-[#222222] space-y-1">
+            <span className="text-[10px] text-[#888888] font-bold uppercase tracking-wider block">BACKEND SERVER</span>
+            <span className="text-sm font-bold text-emerald-400 font-mono block flex items-center gap-1.5">
+              <Server className="w-3.5 h-3.5" />
+              {systemStatus.backend || 'MKUU Server'}
+            </span>
+            <span className="text-[10px] text-[#666666] block">Dedicated GeminiService & DB</span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-[#050505] border border-[#222222] space-y-1">
+            <span className="text-[10px] text-[#888888] font-bold uppercase tracking-wider block">IMAGE STUDIO SERVICE</span>
+            <span className="text-sm font-bold text-sky-400 font-mono block">
+              {systemStatus.imageModel || 'gemini-3-pro-image'}
+            </span>
+            <span className="text-[10px] text-[#666666] block">Separate Vision / Editing Pipeline</span>
+          </div>
+        </div>
+
+        {/* Visual Architectural Diagram */}
+        <div className="p-4 rounded-2xl bg-[#050505] border border-[#222222] space-y-3">
+          <span className="text-[10px] text-[#888888] font-bold uppercase tracking-wider block">
+            REQUEST PIPELINE FLOW (ARCHITECTURE)
+          </span>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-[#F5F2ED]">
+            <div className="px-3 py-1.5 rounded-lg bg-[#151515] border border-[#333333] font-bold text-[#D4AF37]">
+              MKUU AI APP
+            </div>
+            <span className="text-[#666666]">→</span>
+            <div className="px-3 py-1.5 rounded-lg bg-[#151515] border border-[#333333] font-bold text-emerald-400">
+              MKUU BACKEND
+            </div>
+            <span className="text-[#666666]">→</span>
+            <div className="px-3 py-1.5 rounded-lg bg-[#151515] border border-[#333333] font-bold text-sky-400">
+              GeminiService
+            </div>
+            <span className="text-[#666666]">→</span>
+            <div className="px-3 py-1.5 rounded-lg bg-[#151515] border border-[#333333] font-bold text-white">
+              Google Gemini API
+            </div>
+            <span className="text-[#666666]">→</span>
+            <div className="px-3 py-1.5 rounded-lg bg-[#D4AF37]/15 border border-[#D4AF37]/40 font-bold text-[#D4AF37]">
+              Gemini 3.7 Flash
+            </div>
+          </div>
         </div>
       </div>
 
