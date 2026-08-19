@@ -43,7 +43,15 @@ app.post(['/api/chat', '/api/chat/'], async (req, res) => {
       if (conversation?.messages) history = conversation.messages;
     }
 
-    const result = await geminiService.processChat({ userId: DEFAULT_USER_ID, message, conversationHistory: history, isVoice, attachments, people });
+    // The APK keeps People locally in IndexedDB. Pass that trusted local context to the
+    // server so Gemini can answer questions about saved people even when Vercel's
+    // serverless filesystem has no persistent database record for them.
+    if (Array.isArray(people) && people.length > 0) {
+      const peopleContext = people.slice(0, 30).map((p: any) => `- ${p.name}${p.nickname ? ` (${p.nickname})` : ''}: ${p.relationship}; Simu: ${p.phone || 'N/A'}; Maelezo: ${p.notes || 'N/A'}`).join('\n');
+      history = [{ role: 'system', content: `TAARIFA ZA WATU WA KARIBU WALIOHIFADHIWA KWENYE APP YA MAX:\n${peopleContext}` }, ...history];
+    }
+
+    const result = await geminiService.processChat({ userId: DEFAULT_USER_ID, message, conversationHistory: history, isVoice, attachments });
     res.json({ reply: result.reply, cleanSpeechText: result.cleanSpeechText, memoriesExtracted: result.memoriesExtracted, peopleRecognized: result.peopleRecognized, generatedFiles: result.generatedFiles, aiProvider: result.aiProvider, chatModel: result.chatModel, latencyMs: result.latencyMs });
   } catch (error: any) {
     console.error('[MKUU-VERCEL] Chat API Error:', error);
@@ -70,7 +78,14 @@ app.post('/api/autoreply/remove-phone', async (_req, res) => {
 
 app.get('/api/conversations', (_req, res) => res.json(db.getConversations(DEFAULT_USER_ID)));
 app.get('/api/memories', (_req, res) => res.json(db.getMemories(DEFAULT_USER_ID)));
-app.get('/api/people', (_req, res) => res.json(db.getPeople(DEFAULT_USER_ID)));
+// On Vercel the filesystem is ephemeral. Do not return an empty server list because
+// the APK would overwrite its durable local People list with []. Local People are
+// sent with each chat request instead.
+app.get('/api/people', (_req, res) => {
+  const people = db.getPeople(DEFAULT_USER_ID);
+  if (people.length === 0) return res.json({ source: 'local', people: [] });
+  res.json(people);
+});
 app.get('/api/files', (_req, res) => res.json(db.getFiles(DEFAULT_USER_ID)));
 
 export default app;
