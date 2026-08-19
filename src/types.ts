@@ -58,6 +58,14 @@ export interface ChatMessage {
   personRecognized?: string[];
   savedOffline?: boolean;
   status?: 'sent' | 'pending' | 'failed_offline';
+  isError?: boolean;
+  errorCode?: string;
+  technicalDetails?: string;
+  retryPayload?: {
+    text: string;
+    isVoice?: boolean;
+    attachments?: AttachmentItem[];
+  };
 }
 
 export interface Conversation {

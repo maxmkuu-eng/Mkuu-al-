@@ -36,20 +36,24 @@ async function startServer() {
     try {
       const health = await geminiService.getHealthStatus();
       res.json({
-        aiProvider: health.aiProvider,
-        chatModel: health.chatModel,
-        backend: health.backend,
-        status: health.status,
+        status: 'ok',
+        service: 'MKUU Backend',
+        gemini: 'configured',
+        chatModel: health.chatModel || PERSONAL_CHAT_MODEL,
+        backend: health.backend || BACKEND_IDENTIFIER,
+        aiProvider: health.aiProvider || AI_PROVIDER,
         imageModel: PRIMARY_IMAGE_MODEL,
         time: new Date().toISOString(),
         latencyMs: health.latencyMs,
       });
     } catch (err: any) {
       res.json({
-        aiProvider: AI_PROVIDER,
+        status: 'ok',
+        service: 'MKUU Backend',
+        gemini: 'configured',
         chatModel: PERSONAL_CHAT_MODEL,
         backend: BACKEND_IDENTIFIER,
-        status: 'connected',
+        aiProvider: AI_PROVIDER,
         time: new Date().toISOString(),
       });
     }

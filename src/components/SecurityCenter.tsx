@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, Memory, Person, AutoReplySettings } from '../types';
 import { getStoredGeminiApiKey, setStoredGeminiApiKey } from '../services/aiEngine';
-import { getRemoteServerUrl, setRemoteServerUrl, isCapacitorNative, getApiUrl, PRODUCTION_API_BASE_URL } from '../services/apiConfig';
+import { getRemoteServerUrl, setRemoteServerUrl, isCapacitorNative, getApiUrl, PRODUCTION_API_BASE_URL, checkServerReachability } from '../services/apiConfig';
 
 interface SecurityCenterProps {
   user: UserProfile | null;
@@ -109,17 +109,13 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
   const handleTestConnection = async () => {
     setTestResult({ status: 'testing', message: 'Inajaribu muunganisho wa AI...' });
 
-    // 1. Test Live Production Backend Server (/api/health)
-    const targetHealthUrl = getApiUrl('/api/health');
+    // 1. Test Live Production Backend Server (/health)
     try {
-      const res = await fetch(targetHealthUrl, {
-        headers: { 'Accept': 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const healthCheck = await checkServerReachability();
+      if (healthCheck.reachable) {
         setTestResult({
           status: 'success',
-          message: `Muunganisho wa moja kwa moja na MKUU AI Server (${data.aiProvider} - ${data.chatModel}) umethibitishwa kwa 100%!`,
+          message: `Muunganisho wa MKUU Production Server umethibitishwa (${healthCheck.latencyMs}ms)!`,
         });
         return;
       }
@@ -161,7 +157,7 @@ export const SecurityCenter: React.FC<SecurityCenterProps> = ({
     // 3. If unreachable
     setTestResult({
       status: 'error',
-      message: 'Imeshindwa kuunganishwa na seva ya AI. Hakikisha kifaa chako kimeunganishwa kwenye intaneti.',
+      message: 'Seva ya MKUU haipatikani kwa sasa. Tafadhali hakikisha kifaa chako kimeunganishwa kwenye intaneti kisha ujaribu tena.',
     });
   };
 

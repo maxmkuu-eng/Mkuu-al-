@@ -38,6 +38,7 @@ interface ChatViewProps {
   messages: ChatMessage[];
   conversationTitle?: string;
   onSendMessage: (text: string, isVoice?: boolean, attachments?: AttachmentItem[]) => Promise<any>;
+  onRetryMessage?: (message: ChatMessage) => Promise<any>;
   isLoading: boolean;
   onOpenVoice: () => void;
   onNewChat: () => void;
@@ -55,6 +56,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   messages,
   conversationTitle = 'Mkuu Chat',
   onSendMessage,
+  onRetryMessage,
   isLoading,
   onOpenVoice,
   onNewChat,
@@ -415,6 +417,60 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           <button
                             onClick={() => onDeleteMessage(msg.id)}
                             className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition p-0.5 cursor-pointer"
+                            title="Futa Ujumbe Huu"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : msg.isError ? (
+                    /* Error Message Bubble */
+                    <div className="flex flex-col items-start space-y-1.5 max-w-[95%] sm:max-w-[85%] w-full">
+                      <div className="glass p-4 sm:p-5 rounded-2xl rounded-tl-none border-l-2 border-red-500 bg-red-950/20 text-xs sm:text-[14px] leading-relaxed text-[#F5F2ED] border-t border-r border-b border-red-500/30 shadow-2xl w-full space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-red-400 font-bold uppercase tracking-wider text-xs">
+                            <AlertCircle className="w-4 h-4" />
+                            <span>Seva ya MKUU Haipatikani</span>
+                          </div>
+                          {msg.errorCode && (
+                            <span className="px-2 py-0.5 rounded-md bg-red-900/40 text-red-300 font-mono text-[10px] border border-red-500/30 font-bold">
+                              {msg.errorCode}
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs sm:text-sm text-[#F5F2ED] leading-relaxed font-sans">
+                          {msg.content || 'Seva ya MKUU haipatikani kwa sasa. Tafadhali jaribu tena.'}
+                        </p>
+
+                        {msg.technicalDetails && (
+                          <div className="p-2.5 rounded-xl bg-black/50 border border-[#222222] font-mono text-[10px] text-[#888888] break-all">
+                            <span className="text-[#666666] block font-sans uppercase font-bold text-[9px] mb-0.5">Uchunguzi wa Kiufundi:</span>
+                            {msg.technicalDetails}
+                          </div>
+                        )}
+
+                        {onRetryMessage && msg.retryPayload && (
+                          <div className="pt-1">
+                            <button
+                              type="button"
+                              onClick={() => onRetryMessage(msg)}
+                              className="px-4 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#c59f2e] text-black font-bold text-xs uppercase tracking-wider flex items-center gap-2 shadow-lg transition cursor-pointer"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>JARIBU TENA</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-2 px-2 text-[10px] text-[#888888]">
+                        <span>Hitilafu ya Mtandao • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        {onDeleteMessage && (
+                          <button
+                            onClick={() => onDeleteMessage(msg.id)}
+                            className="hover:text-red-400 transition cursor-pointer ml-1"
                             title="Futa Ujumbe Huu"
                           >
                             <Trash2 className="w-3 h-3" />

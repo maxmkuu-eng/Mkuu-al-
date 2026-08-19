@@ -24,7 +24,7 @@ import { RightSidebar } from './components/RightSidebar';
 import { FileGeneratorModal } from './components/FileGeneratorModal';
 import { DocumentPreviewModal } from './components/DocumentPreviewModal';
 import { localChatStorage } from './services/localChatStorage';
-import { apiFetch, getApiUrl } from './services/apiConfig';
+import { apiFetch, getApiUrl, MkuuApiError } from './services/apiConfig';
 import { executeMkuuChat } from './services/aiEngine';
 import { clientGenerateFile } from './services/clientFileGenerator';
 
@@ -374,16 +374,25 @@ export const App: React.FC = () => {
       };
     } catch (e: any) {
       console.error('Chat execution error:', e);
-      const errorMessageText = e?.message && !e.message.includes('object')
-        ? e.message
-        : 'Imeshindwa kuunganishwa na huduma ya AI (Google Gemini). Tafadhali hakikisha kifaa chako kimeunganishwa kwenye intaneti kisha ujaribu tena.';
+      const isMkuuError = e instanceof MkuuApiError;
+      const errorCode = isMkuuError ? e.code : 'NETWORK_FAILURE';
+      const userMessage = isMkuuError ? e.userMessage : (e?.message || 'Seva ya MKUU haipatikani kwa sasa. Tafadhali jaribu tena.');
+      const technicalDetails = isMkuuError ? e.technicalDetails : (e?.message || 'Failed to connect to backend');
       
       const errorMsg: ChatMessage = {
         id: `msg_err_${Date.now()}`,
         role: 'assistant',
-        content: `⚠️ **Hitilafu ya Muunganisho:**\n\n${errorMessageText}`,
+        content: userMessage,
         timestamp: new Date().toISOString(),
         savedOffline: true,
+        isError: true,
+        errorCode,
+        technicalDetails,
+        retryPayload: {
+          text,
+          isVoice,
+          attachments,
+        },
       };
 
       const finalConv = await localChatStorage.addMessage(conversationId, errorMsg);
@@ -398,6 +407,22 @@ export const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Retry Failed Message with fresh network execution (NO local mock)
+  const handleRetryMessage = async (failedMsg: ChatMessage) => {
+    if (!failedMsg.retryPayload) return;
+    const { text, isVoice, attachments } = failedMsg.retryPayload;
+    
+    // Remove the error message from conversation history before retrying
+    await localChatStorage.deleteMessage(conversationId, failedMsg.id);
+    const activeConv = await localChatStorage.getConversation(conversationId);
+    if (activeConv) {
+      setMessages(activeConv.messages);
+    }
+
+    // Trigger fresh network request
+    await handleSendMessage(text, isVoice, attachments);
   };
 
   // Start New Conversation
@@ -897,6 +922,7 @@ export const App: React.FC = () => {
               conversations.find((c) => c.id === conversationId)?.title || 'Mkuu Chat'
             }
             onSendMessage={handleSendMessage}
+            onRetryMessage={handleRetryMessage}
             isLoading={isLoading}
             onOpenVoice={() => setIsVoiceModalOpen(true)}
             onNewChat={handleNewChat}
