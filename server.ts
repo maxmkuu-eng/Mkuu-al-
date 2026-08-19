@@ -269,8 +269,9 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error('[MKUU-BACKEND] Chat API Error:', error);
-      res.status(500).json({
-        error: error.message || 'Google Gemini API Error',
+      res.status(503).json({
+        error: 'GEMINI_UNAVAILABLE',
+        message: error.message || 'Google Gemini API Error',
         aiProvider: AI_PROVIDER,
         chatModel: PERSONAL_CHAT_MODEL,
       });

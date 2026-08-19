@@ -8,7 +8,7 @@
  */
 
 import { ChatMessage, Memory, Person, GeneratedFileSummary, UserProfile } from '../types';
-import { apiFetch, isCapacitorNative, getApiUrl } from './apiConfig';
+import { apiFetch, isCapacitorNative, getApiUrl, MkuuApiError } from './apiConfig';
 
 const GEMINI_API_KEY_STORAGE = 'mkuu_gemini_api_key_v1';
 
@@ -209,7 +209,13 @@ async function callDirectGemini(
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || `Gemini API error (${response.status})`);
+        throw new MkuuApiError({
+          code: 'GEMINI_UNAVAILABLE',
+          status: response.status,
+          userMessage: 'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.',
+          technicalDetails: errJson.error?.message || `Gemini API error (${response.status})`,
+          targetUrl: url,
+        });
       }
 
       const data = await response.json();
@@ -230,12 +236,27 @@ async function callDirectGemini(
         };
       }
     } catch (err: any) {
-      lastError = err;
+      if (err instanceof MkuuApiError) {
+        lastError = err;
+      } else {
+        const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+        lastError = new MkuuApiError({
+          code: isOffline ? 'NO_INTERNET' : 'GEMINI_UNAVAILABLE',
+          userMessage: isOffline ? 'HAKUNA INTANETI\nTafadhali washa Wi-Fi au Mobile Data.' : 'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.',
+          technicalDetails: err.message || 'Direct Gemini API Call Failed',
+          targetUrl: 'https://generativelanguage.googleapis.com',
+        });
+      }
       continue;
     }
   }
 
-  throw lastError || new Error('Imeshindwa kuunganishwa na Google Gemini API.');
+  throw lastError || new MkuuApiError({
+    code: 'GEMINI_UNAVAILABLE',
+    userMessage: 'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.',
+    technicalDetails: 'Imeshindwa kupokea majibu kutoka kwa Google Gemini API.',
+    targetUrl: 'https://generativelanguage.googleapis.com',
+  });
 }
 
 /**
@@ -285,5 +306,10 @@ export async function executeMkuuChat(params: ChatEngineParams): Promise<ChatEng
     };
   }
 
-  throw new Error('Imeshindwa kuunganishwa na huduma ya AI. Tafadhali angalia muunganisho wako wa intaneti kisha ujaribu tena.');
+  throw new MkuuApiError({
+    code: 'BACKEND_UNREACHABLE',
+    userMessage: 'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',
+    technicalDetails: 'Empty response payload received from MKUU Backend',
+    targetUrl: '/api/chat',
+  });
 }

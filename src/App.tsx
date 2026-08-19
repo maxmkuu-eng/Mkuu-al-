@@ -148,13 +148,34 @@ export const App: React.FC = () => {
   const [previewingFile, setPreviewingFile] = useState<GeneratedFileSummary | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Monitor network online / offline status
+  // Monitor network online / offline and interface transitions (Wi-Fi ↔ Mobile Data)
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      console.log('[NETWORK] Connection established / online');
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      console.log('[NETWORK] Connection lost / offline');
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+
+    // Support dynamic Network Information API if available on mobile
+    const navConn = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+    if (navConn && typeof navConn.addEventListener === 'function') {
+      const handleConnChange = () => {
+        setIsOnline(navigator.onLine);
+        console.log(`[NETWORK] Interface changed: type=${navConn.type || 'unknown'}, effectiveType=${navConn.effectiveType || 'unknown'}`);
+      };
+      navConn.addEventListener('change', handleConnChange);
+      return () => {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+        navConn.removeEventListener('change', handleConnChange);
+      };
+    }
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -375,8 +396,9 @@ export const App: React.FC = () => {
     } catch (e: any) {
       console.error('Chat execution error:', e);
       const isMkuuError = e instanceof MkuuApiError;
-      const errorCode = isMkuuError ? e.code : 'NETWORK_FAILURE';
-      const userMessage = isMkuuError ? e.userMessage : (e?.message || 'Seva ya MKUU haipatikani kwa sasa. Tafadhali jaribu tena.');
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      const errorCode = isMkuuError ? e.code : (isOffline ? 'NO_INTERNET' : 'BACKEND_UNREACHABLE');
+      const userMessage = isMkuuError ? e.userMessage : (isOffline ? 'HAKUNA INTANETI\nTafadhali washa Wi-Fi au Mobile Data.' : 'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.');
       const technicalDetails = isMkuuError ? e.technicalDetails : (e?.message || 'Failed to connect to backend');
       
       const errorMsg: ChatMessage = {

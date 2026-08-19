@@ -7,11 +7,15 @@
     "cleartext": true,
     "allowNavigation": [
       "*.run.app",
+      "*.onrender.com",
+      "*.vercel.app",
+      "*.railway.app",
+      "*.up.railway.app",
+      "*.fly.dev",
       "*.googleapis.com",
       "*.google.com",
       "*.cloudfunctions.net",
-      "localhost",
-      "10.0.2.2"
+      "*"
     ]
   },
   "android": {

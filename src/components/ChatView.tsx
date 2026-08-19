@@ -430,8 +430,22 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       <div className="glass p-4 sm:p-5 rounded-2xl rounded-tl-none border-l-2 border-red-500 bg-red-950/20 text-xs sm:text-[14px] leading-relaxed text-[#F5F2ED] border-t border-r border-b border-red-500/30 shadow-2xl w-full space-y-3">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5 text-red-400 font-bold uppercase tracking-wider text-xs">
-                            <AlertCircle className="w-4 h-4" />
-                            <span>Seva ya MKUU Haipatikani</span>
+                            {msg.errorCode === 'NO_INTERNET' ? (
+                              <>
+                                <WifiOff className="w-4 h-4 text-amber-400" />
+                                <span className="text-amber-400">HAKUNA INTANETI</span>
+                              </>
+                            ) : msg.errorCode === 'GEMINI_UNAVAILABLE' ? (
+                              <>
+                                <AlertCircle className="w-4 h-4 text-orange-400" />
+                                <span className="text-orange-400">GEMINI HAIPATIKANI</span>
+                              </>
+                            ) : (
+                              <>
+                                <AlertCircle className="w-4 h-4 text-red-400" />
+                                <span>SEVA YA MKUU HAIPATIKANI</span>
+                              </>
+                            )}
                           </div>
                           {msg.errorCode && (
                             <span className="px-2 py-0.5 rounded-md bg-red-900/40 text-red-300 font-mono text-[10px] border border-red-500/30 font-bold">
@@ -440,9 +454,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           )}
                         </div>
 
-                        <p className="text-xs sm:text-sm text-[#F5F2ED] leading-relaxed font-sans">
-                          {msg.content || 'Seva ya MKUU haipatikani kwa sasa. Tafadhali jaribu tena.'}
-                        </p>
+                        <div className="text-xs sm:text-sm text-[#F5F2ED] leading-relaxed font-sans whitespace-pre-line font-medium">
+                          {msg.content}
+                        </div>
 
                         {msg.technicalDetails && (
                           <div className="p-2.5 rounded-xl bg-black/50 border border-[#222222] font-mono text-[10px] text-[#888888] break-all">
