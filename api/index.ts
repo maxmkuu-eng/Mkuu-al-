@@ -1,7 +1,7 @@
 import express from 'express';
-import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from '../server/geminiService';
-import { imageService, PRIMARY_IMAGE_MODEL } from '../server/imageService';
-import { db } from '../server/db';
+import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from '../server/geminiService.js';
+import { imageService, PRIMARY_IMAGE_MODEL } from '../server/imageService.js';
+import { db } from '../server/db.js';
 
 const app = express();
 const DEFAULT_USER_ID = 'user_max_owner';
