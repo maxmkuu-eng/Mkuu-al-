@@ -2,54 +2,85 @@
 
 @layer base {
   :root {
-    --bg: #050505;
-    --card: #111111;
-    --accent: #D4AF37;
-    --text: #F5F2ED;
-    --muted: #888888;
-    --border: #222222;
+    --bg: #ffffff;
+    --card: #ffffff;
+    --accent: #b88a00;
+    --text: #111111;
+    --muted: #5f6368;
+    --border: #e5e7eb;
+  }
+
+  html {
+    background: #ffffff;
+    font-size: 16px;
   }
 
   body {
-    background-color: var(--bg);
-    color: var(--text);
+    background-color: #ffffff;
+    color: #111111;
     font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    font-style: normal;
+    font-weight: 400;
     overflow-x: hidden;
     margin: 0;
     padding: 0;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    font-style: normal;
+  }
+
+  strong,
+  b,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-style: normal;
   }
 }
 
 .serif {
-  font-family: 'Georgia', Cambria, 'Times New Roman', Times, serif;
+  font-family: Georgia, Cambria, 'Times New Roman', Times, serif;
+  font-style: normal;
 }
 
-/* Sophisticated Dark Glass & Card Utilities */
+/* Light, clean surfaces while preserving MKUU gold identity. */
 .glass {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
 }
 
 .card-3d {
-  background: linear-gradient(135deg, #121212 0%, #0a0a0a 100%);
-  border: 1px solid #222222;
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 30px -12px rgba(15, 23, 42, 0.16);
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .card-3d:hover {
   transform: translateY(-2px);
-  border-color: rgba(212, 175, 55, 0.35);
-  box-shadow: 0 14px 36px -8px rgba(0, 0, 0, 0.85);
+  border-color: rgba(184, 138, 0, 0.35);
+  box-shadow: 0 14px 36px -10px rgba(15, 23, 42, 0.2);
 }
 
 .active-nav {
-  background: rgba(212, 175, 55, 0.08);
-  color: #D4AF37;
-  border-right: 2px solid #D4AF37;
+  background: rgba(184, 138, 0, 0.09);
+  color: #8a6500;
+  border-right: 2px solid #b88a00;
 }
 
 .status-dot {
@@ -61,25 +92,64 @@
 }
 
 .gold-badge {
-  background: rgba(212, 175, 55, 0.1);
-  border: 1px solid rgba(212, 175, 55, 0.3);
-  color: #D4AF37;
+  background: rgba(184, 138, 0, 0.1);
+  border: 1px solid rgba(184, 138, 0, 0.3);
+  color: #8a6500;
+}
+
+/* Keep existing dark Tailwind utility classes from forcing the old theme. */
+[class*="bg-[#080808]"],
+[class*="bg-[#050505]"],
+[class*="bg-[#111111]"],
+[class*="bg-[#121212]"],
+[class*="bg-[#0a0a0a]"] {
+  background-color: #ffffff !important;
+}
+
+[class*="text-[#F5F2ED]"] {
+  color: #111111 !important;
+}
+
+[class*="text-[#888888]"],
+[class*="text-[#666666]"] {
+  color: #5f6368 !important;
+}
+
+[class*="border-[#222222]"] {
+  border-color: #e5e7eb !important;
+}
+
+[class*="border-[#D4AF37]"] {
+  border-color: #b88a00 !important;
+}
+
+/* Make normal UI copy slightly larger and never slanted. */
+main,
+section,
+article,
+p,
+li,
+label,
+textarea,
+input,
+button {
+  font-style: normal;
 }
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #050505;
+  background: #f1f3f5;
 }
 ::-webkit-scrollbar-thumb {
-  background: #262626;
-  border-radius: 4px;
+  background: #c7cbd1;
+  border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+  background: #aeb4bc;
 }
 
 /* Sound Wave Animation for Voice State */
