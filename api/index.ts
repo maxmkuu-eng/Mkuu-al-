@@ -2,6 +2,9 @@ import express from 'express';
 import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from '../server/geminiService.js';
 import { imageService, PRIMARY_IMAGE_MODEL } from '../server/imageService.js';
 import { db } from '../server/db.js';
+import { universalAgent } from '../server/agentEngine.js';
+import { streamGemini } from '../server/streaming.js';
+import { runDiagnostics } from '../server/diagnostics.js';
 
 const app = express();
 const DEFAULT_USER_ID = 'user_max_owner';
@@ -24,6 +27,64 @@ app.get(['/health', '/api/health'], async (_req, res) => {
   }
 });
 
+// Universal Agent: one entry point for chat, image, documents, spreadsheets and analysis.
+app.post(['/api/agent', '/api/agent/'], async (req, res) => {
+  try {
+    const { message = '', conversationHistory = [], isVoice = false, attachments = [], people = [] } = req.body || {};
+    if (!message && (!attachments || attachments.length === 0)) return res.status(400).json({ error: 'Ujumbe au kiambatisho kinahitajika' });
+    const plan = universalAgent.plan(message, attachments);
+    const result = await universalAgent.execute({
+      userId: DEFAULT_USER_ID,
+      message,
+      conversationHistory: Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [],
+      isVoice,
+      attachments,
+      people,
+    });
+    res.json({ ...result, plan });
+  } catch (error: any) {
+    console.error('[MKUU-VERCEL] Agent API Error:', error);
+    res.status(503).json({ error: 'AGENT_UNAVAILABLE', message: error?.message || 'MKUU Agent haipatikani kwa sasa.', aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL });
+  }
+});
+
+app.post('/api/agent/plan', (req, res) => {
+  try {
+    const { message = '', attachments = [] } = req.body || {};
+    if (!message && (!attachments || attachments.length === 0)) return res.status(400).json({ error: 'Ujumbe au kiambatisho kinahitajika' });
+    res.json({ success: true, ...universalAgent.plan(message, attachments) });
+  } catch (error: any) {
+    res.status(400).json({ error: 'PLAN_FAILED', message: error?.message || String(error) });
+  }
+});
+
+// True server-sent streaming endpoint. Existing /api/chat remains JSON-compatible.
+app.post('/api/chat/stream', async (req, res) => {
+  const { message = '', conversationHistory = [], people = [], attachments = [] } = req.body || {};
+  if (!message && (!attachments || attachments.length === 0)) return res.status(400).json({ error: 'Ujumbe au kiambatisho kinahitajika' });
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  try {
+    for await (const chunk of streamGemini({ userId: DEFAULT_USER_ID, message, conversationHistory, people, attachments })) {
+      res.write(`data: ${JSON.stringify({ type: 'delta', text: chunk })}\n\n`);
+    }
+    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+    res.end();
+  } catch (error: any) {
+    console.error('[MKUU-VERCEL] Streaming API Error:', error);
+    res.write(`data: ${JSON.stringify({ type: 'error', message: error?.message || 'Streaming haikupatikana.' })}\n\n`);
+    res.end();
+  }
+});
+
+app.get('/api/system/diagnostics', async (_req, res) => {
+  try { res.json(await runDiagnostics()); }
+  catch (error: any) { res.status(503).json({ status: 'degraded', error: error?.message || String(error) }); }
+});
+
 app.post(['/api/chat', '/api/chat/'], async (req, res) => {
   try {
     const { message = '', conversationId, conversationHistory = [], isVoice = false, attachments = [], people = [] } = req.body || {};
@@ -42,13 +103,8 @@ app.post(['/api/chat', '/api/chat/'], async (req, res) => {
       const conversation = db.getConversation(conversationId, DEFAULT_USER_ID);
       if (conversation?.messages) history = conversation.messages;
     }
-
-    // Keep the context bounded so Gemini starts generating sooner and requests stay small.
     history = history.slice(-10);
 
-    // The APK keeps People locally in IndexedDB. Pass that trusted local context to the
-    // server so Gemini can answer questions about saved people even when Vercel's
-    // serverless filesystem has no persistent database record for them.
     if (Array.isArray(people) && people.length > 0) {
       const peopleContext = people.slice(0, 30).map((p: any) => `- ${p.name}${p.nickname ? ` (${p.nickname})` : ''}: ${p.relationship}; Simu: ${p.phone || 'N/A'}; Maelezo: ${p.notes || 'N/A'}`).join('\n');
       history = [{ role: 'system', content: `TAARIFA ZA WATU WA KARIBU WALIOHIFADHIWA KWENYE APP YA MAX:\n${peopleContext}` }, ...history];
@@ -62,13 +118,10 @@ app.post(['/api/chat', '/api/chat/'], async (req, res) => {
   }
 });
 
-// Dedicated image endpoint for APK/web clients that call /api/image directly.
 app.post(['/api/image', '/api/image/'], async (req, res) => {
   try {
     const { prompt = '', attachments = [] } = req.body || {};
-    if (!prompt && (!attachments || attachments.length === 0)) {
-      return res.status(400).json({ error: 'IMAGE_REQUIRED', message: 'Picha au maelezo ya picha yanahitajika.' });
-    }
+    if (!prompt && (!attachments || attachments.length === 0)) return res.status(400).json({ error: 'IMAGE_REQUIRED', message: 'Picha au maelezo ya picha yanahitajika.' });
     const result = await imageService.processImage({ userId: DEFAULT_USER_ID, prompt, attachments });
     return res.json({ reply: result.explanation, cleanSpeechText: result.explanation, generatedFiles: [result.file], modelUsed: result.modelUsed, service: 'ImageService' });
   } catch (error: any) {
@@ -77,8 +130,6 @@ app.post(['/api/image', '/api/image/'], async (req, res) => {
   }
 });
 
-// Auto Reply phone verification. The OTP is generated and checked in the client;
-// this endpoint confirms the verified number and keeps the verification step reachable on Vercel/APK.
 app.post('/api/autoreply/verify-phone', async (req, res) => {
   try {
     const phoneNumber = String(req.body?.phoneNumber || '').trim();
@@ -96,9 +147,6 @@ app.post('/api/autoreply/remove-phone', async (_req, res) => {
 
 app.get('/api/conversations', (_req, res) => res.json(db.getConversations(DEFAULT_USER_ID)));
 app.get('/api/memories', (_req, res) => res.json(db.getMemories(DEFAULT_USER_ID)));
-// On Vercel the filesystem is ephemeral. Do not return an empty server list because
-// the APK would overwrite its durable local People list with []. Local People are
-// sent with each chat request instead.
 app.get('/api/people', (_req, res) => {
   const people = db.getPeople(DEFAULT_USER_ID);
   if (people.length === 0) return res.json({ source: 'local', people: [] });
