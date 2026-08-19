@@ -43,6 +43,9 @@ app.post(['/api/chat', '/api/chat/'], async (req, res) => {
       if (conversation?.messages) history = conversation.messages;
     }
 
+    // Keep the context bounded so Gemini starts generating sooner and requests stay small.
+    history = history.slice(-10);
+
     // The APK keeps People locally in IndexedDB. Pass that trusted local context to the
     // server so Gemini can answer questions about saved people even when Vercel's
     // serverless filesystem has no persistent database record for them.
@@ -56,6 +59,21 @@ app.post(['/api/chat', '/api/chat/'], async (req, res) => {
   } catch (error: any) {
     console.error('[MKUU-VERCEL] Chat API Error:', error);
     res.status(503).json({ error: 'GEMINI_UNAVAILABLE', message: error?.message || 'Google Gemini API Error', aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL });
+  }
+});
+
+// Dedicated image endpoint for APK/web clients that call /api/image directly.
+app.post(['/api/image', '/api/image/'], async (req, res) => {
+  try {
+    const { prompt = '', attachments = [] } = req.body || {};
+    if (!prompt && (!attachments || attachments.length === 0)) {
+      return res.status(400).json({ error: 'IMAGE_REQUIRED', message: 'Picha au maelezo ya picha yanahitajika.' });
+    }
+    const result = await imageService.processImage({ userId: DEFAULT_USER_ID, prompt, attachments });
+    return res.json({ reply: result.explanation, cleanSpeechText: result.explanation, generatedFiles: [result.file], modelUsed: result.modelUsed, service: 'ImageService' });
+  } catch (error: any) {
+    console.error('[MKUU-VERCEL] Image API Error:', error);
+    return res.status(503).json({ error: 'IMAGE_UNAVAILABLE', message: error?.message || 'Huduma ya picha haipatikani kwa sasa.' });
   }
 });
 
