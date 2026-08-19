@@ -26,7 +26,7 @@ app.get(['/health', '/api/health'], async (_req, res) => {
 
 app.post(['/api/chat', '/api/chat/'], async (req, res) => {
   try {
-    const { message = '', conversationId, conversationHistory = [], isVoice = false, attachments = [] } = req.body || {};
+    const { message = '', conversationId, conversationHistory = [], isVoice = false, attachments = [], people = [] } = req.body || {};
     if (!message && (!attachments || attachments.length === 0)) return res.status(400).json({ error: 'Ujumbe au kiambatisho kinahitajika' });
 
     const hasImage = attachments?.some((a: any) => a.mimeType?.startsWith('image/') || a.base64Data?.startsWith('data:image/'));
@@ -43,12 +43,29 @@ app.post(['/api/chat', '/api/chat/'], async (req, res) => {
       if (conversation?.messages) history = conversation.messages;
     }
 
-    const result = await geminiService.processChat({ userId: DEFAULT_USER_ID, message, conversationHistory: history, isVoice, attachments });
+    const result = await geminiService.processChat({ userId: DEFAULT_USER_ID, message, conversationHistory: history, isVoice, attachments, people });
     res.json({ reply: result.reply, cleanSpeechText: result.cleanSpeechText, memoriesExtracted: result.memoriesExtracted, peopleRecognized: result.peopleRecognized, generatedFiles: result.generatedFiles, aiProvider: result.aiProvider, chatModel: result.chatModel, latencyMs: result.latencyMs });
   } catch (error: any) {
     console.error('[MKUU-VERCEL] Chat API Error:', error);
     res.status(503).json({ error: 'GEMINI_UNAVAILABLE', message: error?.message || 'Google Gemini API Error', aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL });
   }
+});
+
+// Auto Reply phone verification. The OTP is generated and checked in the client;
+// this endpoint confirms the verified number and keeps the verification step reachable on Vercel/APK.
+app.post('/api/autoreply/verify-phone', async (req, res) => {
+  try {
+    const phoneNumber = String(req.body?.phoneNumber || '').trim();
+    if (!phoneNumber) return res.status(400).json({ error: 'PHONE_REQUIRED', message: 'Nambari ya simu inahitajika.' });
+    res.json({ success: true, phoneNumber, phoneVerified: true, phoneVerifiedAt: new Date().toISOString() });
+  } catch (error: any) {
+    console.error('[MKUU-VERCEL] Auto Reply Verify Error:', error);
+    res.status(500).json({ error: 'VERIFY_FAILED', message: error?.message || 'Uthibitishaji haukufanikiwa.' });
+  }
+});
+
+app.post('/api/autoreply/remove-phone', async (_req, res) => {
+  res.json({ success: true, phoneNumber: '', phoneVerified: false });
 });
 
 app.get('/api/conversations', (_req, res) => res.json(db.getConversations(DEFAULT_USER_ID)));
