@@ -5,11 +5,7 @@
   "rewrites": [
     {
       "source": "/health",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index"
+      "destination": "/api/health"
     }
   ]
 }
