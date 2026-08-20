@@ -45,31 +45,71 @@ async function startServer() {
   });
   app.post('/api/system/reset', (req, res) => { try { db.resetSystem(); res.json({ success: true, message: 'Mfumo umerejeshwa katika hali ya msingi.' }); } catch (e: any) { res.status(500).json({ error: e.message }); } });
 
+  const processChatRequest = async (req: any) => {
+    const { message = '', conversationId, conversationHistory = [], isVoice = false, attachments = [] } = req.body || {};
+    if (!message && (!attachments || attachments.length === 0)) throw new Error('Ujumbe au kiambatisho kinahitajika');
+    let effectiveHistory = Array.isArray(conversationHistory) && conversationHistory.length > 0 ? conversationHistory : [];
+    if (effectiveHistory.length === 0 && conversationId) {
+      const storedConv = db.getConversation(conversationId, DEFAULT_USER_ID);
+      if (storedConv && Array.isArray(storedConv.messages)) effectiveHistory = storedConv.messages;
+    }
+    const hasImageAttachment = attachments?.some((a: any) => a.mimeType?.startsWith('image/') || a.base64Data?.startsWith('data:image/') || ['jpg','jpeg','png','webp'].includes(a.fileType?.toLowerCase() || ''));
+    const lowerMsg = (message || '').toLowerCase();
+    const isExplicitImageAction = (hasImageAttachment && (lowerMsg.includes('hd') || lowerMsg.includes('background') || lowerMsg.includes('enhance') || lowerMsg.includes('remove') || lowerMsg.includes('ondoa') || lowerMsg.includes('badilisha') || lowerMsg.includes('edit') || lowerMsg.length <= 50)) || lowerMsg.startsWith('picha ya') || lowerMsg.includes('tengeneza picha') || lowerMsg.includes('unda picha') || lowerMsg.includes('create an image') || lowerMsg.includes('draw a picture');
+    if (isExplicitImageAction) {
+      const imageResult = await imageService.processImage({ userId: DEFAULT_USER_ID, prompt: message, attachments });
+      return { reply: imageResult.explanation, cleanSpeechText: imageResult.explanation, memoriesExtracted: [], peopleRecognized: [], generatedFiles: [imageResult.file], service: 'ImageService' };
+    }
+    const result = await geminiService.processChat({ userId: DEFAULT_USER_ID, message, conversationHistory: effectiveHistory, isVoice, attachments });
+    if (conversationId) {
+      let conversation = db.getConversation(conversationId, DEFAULT_USER_ID);
+      const userMsg = { id: `msg_${Date.now()}_u`, role: 'user' as const, content: message, timestamp: new Date().toISOString(), isVoice, attachments: attachments.map((a: any) => ({ filename: a.filename, fileType: a.fileType, mimeType: a.mimeType, size: a.size || 0, previewUrl: a.previewUrl || (a.base64Data?.startsWith('data:image/') ? a.base64Data : undefined) })) };
+      const assistantMsg = { id: `msg_${Date.now()}_a`, role: 'assistant' as const, content: result.reply, timestamp: new Date().toISOString(), generatedFiles: result.generatedFiles, memoryExtracted: result.memoriesExtracted?.map((m) => m.content), personRecognized: result.peopleRecognized?.map((p) => p.name) };
+      if (conversation) { conversation.messages.push(userMsg, assistantMsg); db.saveConversation(conversation); }
+      else { conversation = { id: conversationId, userId: DEFAULT_USER_ID, title: message.slice(0, 35) || 'Mazungumzo Mapya', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [userMsg, assistantMsg] }; db.saveConversation(conversation); }
+    }
+    return { reply: result.reply, cleanSpeechText: result.cleanSpeechText, memoriesExtracted: result.memoriesExtracted, peopleRecognized: result.peopleRecognized, generatedFiles: result.generatedFiles, aiProvider: result.aiProvider, chatModel: result.chatModel, latencyMs: result.latencyMs };
+  };
+
   app.post(['/api/chat', '/api/chat/'], async (req, res) => {
     try {
-      const { message = '', conversationId, conversationHistory = [], isVoice = false, attachments = [] } = req.body;
-      if (!message && (!attachments || attachments.length === 0)) return res.status(400).json({ error: 'Ujumbe au kiambatisho kinahitajika' });
-      let effectiveHistory = Array.isArray(conversationHistory) && conversationHistory.length > 0 ? conversationHistory : [];
-      if (effectiveHistory.length === 0 && conversationId) { const storedConv = db.getConversation(conversationId, DEFAULT_USER_ID); if (storedConv && Array.isArray(storedConv.messages)) effectiveHistory = storedConv.messages; }
-      const hasImageAttachment = attachments?.some((a: any) => a.mimeType?.startsWith('image/') || a.base64Data?.startsWith('data:image/') || ['jpg','jpeg','png','webp'].includes(a.fileType?.toLowerCase() || ''));
-      const lowerMsg = (message || '').toLowerCase();
-      const isExplicitImageAction = (hasImageAttachment && (lowerMsg.includes('hd') || lowerMsg.includes('background') || lowerMsg.includes('enhance') || lowerMsg.includes('remove') || lowerMsg.includes('ondoa') || lowerMsg.includes('badilisha') || lowerMsg.includes('edit') || lowerMsg.length <= 50)) || lowerMsg.startsWith('picha ya') || lowerMsg.includes('tengeneza picha') || lowerMsg.includes('unda picha') || lowerMsg.includes('create an image') || lowerMsg.includes('draw a picture');
-      if (isExplicitImageAction) {
-        const imageResult = await imageService.processImage({ userId: DEFAULT_USER_ID, prompt: message, attachments });
-        return res.json({ reply: imageResult.explanation, cleanSpeechText: imageResult.explanation, memoriesExtracted: [], peopleRecognized: [], generatedFiles: [imageResult.file], service: 'ImageService' });
-      }
-      const result = await geminiService.processChat({ userId: DEFAULT_USER_ID, message, conversationHistory: effectiveHistory, isVoice, attachments });
-      if (conversationId) {
-        let conversation = db.getConversation(conversationId, DEFAULT_USER_ID);
-        const userMsg = { id: `msg_${Date.now()}_u`, role: 'user' as const, content: message, timestamp: new Date().toISOString(), isVoice, attachments: attachments.map((a: any) => ({ filename: a.filename, fileType: a.fileType, mimeType: a.mimeType, size: a.size || 0, previewUrl: a.previewUrl || (a.base64Data?.startsWith('data:image/') ? a.base64Data : undefined) })) };
-        const assistantMsg = { id: `msg_${Date.now()}_a`, role: 'assistant' as const, content: result.reply, timestamp: new Date().toISOString(), generatedFiles: result.generatedFiles, memoryExtracted: result.memoriesExtracted?.map((m) => m.content), personRecognized: result.peopleRecognized?.map((p) => p.name) };
-        if (conversation) { conversation.messages.push(userMsg, assistantMsg); db.saveConversation(conversation); }
-        else { conversation = { id: conversationId, userId: DEFAULT_USER_ID, title: message.slice(0, 35) || 'Mazungumzo Mapya', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [userMsg, assistantMsg] }; db.saveConversation(conversation); }
-      }
-      res.json({ reply: result.reply, cleanSpeechText: result.cleanSpeechText, memoriesExtracted: result.memoriesExtracted, peopleRecognized: result.peopleRecognized, generatedFiles: result.generatedFiles, aiProvider: result.aiProvider, chatModel: result.chatModel, latencyMs: result.latencyMs });
+      const result = await processChatRequest(req);
+      res.json(result);
     } catch (error: any) {
       console.error('[MKUU-BACKEND] Chat API Error:', error);
       res.status(503).json({ error: 'GEMINI_UNAVAILABLE', message: error.message || 'Google Gemini API Error', aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL });
+    }
+  });
+
+  // Streaming-compatible endpoint expected by the MKUU web client.
+  // The backend currently processes Gemini as a complete response, then emits it
+  // as one SSE delta so the client receives the same streaming protocol without 404.
+  app.post('/api/chat/stream', async (req, res) => {
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    try {
+      const result = await processChatRequest(req);
+      res.write(`data: ${JSON.stringify({ type: 'delta', text: result.reply })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'done', ...result })}\n\n`);
+      res.end();
+    } catch (error: any) {
+      console.error('[MKUU-BACKEND] Chat Stream Error:', error);
+      res.write(`data: ${JSON.stringify({ type: 'error', message: error.message || 'Google Gemini API Error' })}\n\n`);
+      res.end();
+    }
+  });
+
+  // Universal agent endpoint used by artifact/document/image-capable client flows.
+  app.post('/api/agent', async (req, res) => {
+    try {
+      const result = await processChatRequest(req);
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error('[MKUU-BACKEND] Agent API Error:', error);
+      res.status(503).json({ success: false, error: 'GEMINI_UNAVAILABLE', message: error.message || 'Google Gemini API Error', aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL });
     }
   });
 
