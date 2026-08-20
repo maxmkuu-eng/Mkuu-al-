@@ -49,9 +49,9 @@
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px currentColor; }
 .gold-badge { background: rgba(184, 138, 0, 0.1); border: 1px solid rgba(184, 138, 0, 0.3); color: #8a6500; }
 
-[class*="bg-[#080808]"], [class*="bg-[#050505]"], [class*="bg-[#111111]"], [class*="bg-[#121212]"], [class*="bg-[#0a0a0a"] { background-color: #ffffff !important; }
+[class*="bg-[#080808]"], [class*="bg-[#050505]"], [class*="bg-[#111111]"], [class*="bg-[#121212]"], [class*="bg-[#0a0a0a]"] { background-color: #ffffff !important; }
 [class*="text-[#F5F2ED]"] { color: #111111 !important; }
-[class*="text-[#888888]"], [class*="text-[#666666"]"] { color: #5f6368 !important; }
+[class*="text-[#888888]"], [class*="text-[#666666]"] { color: #5f6368 !important; }
 [class*="border-[#222222]"] { border-color: #e5e7eb !important; }
 [class*="border-[#D4AF37]"] { border-color: #b88a00 !important; }
 
