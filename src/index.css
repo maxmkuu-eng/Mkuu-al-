@@ -55,7 +55,11 @@
 [class*="border-[#222222]"] { border-color: #e5e7eb !important; }
 [class*="border-[#D4AF37]"] { border-color: #b88a00 !important; }
 
-/* Composer: white typing box with dark, upright text. */
+/* Composer: keep the chat input/send controls above the Assistant Manager overlay. */
+form:has(#mkuu-chat-input) {
+  position: relative !important;
+  z-index: 200 !important;
+}
 form:has(#mkuu-chat-input) > div {
   background: #ffffff !important;
   border-color: #d9dde3 !important;
