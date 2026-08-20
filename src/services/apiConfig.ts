@@ -16,12 +16,12 @@ export function isCapacitorNative(): boolean {
   return !!(cap?.isNativePlatform?.() || window.location.protocol==='capacitor:' || window.location.protocol==='file:' || (window.location.hostname==='localhost'&&!window.location.port));
 }
 export function getApiBaseUrl(): string {
-  if (typeof window==='undefined') return DEFAULT_PUBLIC_BACKEND_URL;
+  if (typeof window === 'undefined') return DEFAULT_PUBLIC_BACKEND_URL;
   const custom=localStorage.getItem(STORAGE_SERVER_URL_KEY);
   if(custom?.trim().startsWith('http')) return custom.trim().replace(/\/+$/,'');
   const env=(import.meta as any).env?.VITE_PUBLIC_API_URL;
   if(typeof env==='string'&&env.trim().startsWith('http')) return env.trim().replace(/\/+$/,'');
-  return isCapacitorNative()?DEFAULT_PUBLIC_BACKEND_URL:'';
+  return DEFAULT_PUBLIC_BACKEND_URL;
 }
 export const PRODUCTION_API_BASE_URL=DEFAULT_PUBLIC_BACKEND_URL;
 export function getRemoteServerUrl(){return getApiBaseUrl();}
