@@ -216,7 +216,7 @@ export class GeminiService {
       generationConfig.tools = [{ googleSearch: {} }];
     }
 
-    console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider="${AI_PROVIDER}" model="${PERSONAL_CHAT_MODEL}"`);
+    console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider="${AI_PROVIDER}" model="${PERSONAL_CHAT_MODEL}" searchGrounding=${isSearchQuery}`);
 
     let aiReplyText = '';
     let usedModel = PERSONAL_CHAT_MODEL;
@@ -227,6 +227,27 @@ export class GeminiService {
         config: generationConfig,
         preferredModel: PERSONAL_CHAT_MODEL,
       });
+
+      // If search was not triggered upfront, check if response reveals insufficient knowledge/recency, then fallback to Google Search
+      if (!isSearchQuery && this.isInsufficientKnowledgeResponse(aiReplyText)) {
+        console.log(`[MKUU-BACKEND] Insufficient knowledge detected in reply. Retrying with Google Search grounding...`);
+        try {
+          const searchGenerationConfig = {
+            ...generationConfig,
+            tools: [{ googleSearch: {} }],
+          };
+          const searchReplyText = await this.executeGeminiCallWithFallback({
+            contents,
+            config: searchGenerationConfig,
+            preferredModel: PERSONAL_CHAT_MODEL,
+          });
+          if (searchReplyText && searchReplyText.trim().length > 0) {
+            aiReplyText = searchReplyText;
+          }
+        } catch (searchRetryErr) {
+          console.warn('[MKUU-BACKEND] Google Search retry warning:', searchRetryErr);
+        }
+      }
 
       const latencyMs = Date.now() - startTime;
       console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED] model="${usedModel}" latency=${latencyMs}ms status=200`);
@@ -358,6 +379,10 @@ MAADILI NA TABIA YA MKUU AI:
 6. **KANUNI YA MAFAILI NA NYARAKA:**
    - Mfumo huu una injini halisi ya kuzalisha mafaili (PDF, Excel, Word, CSV).
    - Ikiwa Max anaomba faili, mpe maudhui kamili yaliyopangwa vizuri.
+7. **KANUNI YA TAFUTIO LA MTANDAONI (GOOGLE SEARCH GROUNDING):**
+   - Kama swali linahitaji taarifa za sasa, matukio ya hivi karibuni, takwimu za ulimwengu, bei, hali ya hewa, habari, au jambo lolote ambalo huna uhakika nalo kwenye maarifa yako, tumia Google Search kupata majibu sahihi na halisi kutoka mtandaoni.
+   - Kamwe usiseme "sijui", "sina taarifa", "sina access", au "sina uwezo wa kuona taarifa za sasa" kabla ya kutafuta mtandaoni.
+   - Tumia taarifa halisi zilizopatikana kwenye search kujibu bila kubuni. Kama baada ya search taarifa haikupatikana mtandaoni, ndipo ueleze kwa heshima kuwa taarifa hiyo haikupatikana.
 
 ---
 ORODHA YA KUMBUKUMBU ZA SASA ZA MAX (MAX MEMORY - SERVER PERSISTED):
@@ -554,17 +579,88 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
   }
 
   private detectSearchIntent(message: string): boolean {
-    const lower = (message || '').toLowerCase();
-    return (
-      lower.includes('habari za leo') ||
-      lower.includes('bei ya') ||
-      lower.includes('hali ya hewa') ||
-      lower.includes('matokeo ya') ||
-      lower.includes('leo hii') ||
-      lower.includes('tafuta mtandaoni') ||
-      lower.includes('search google') ||
-      lower.includes('search online')
-    );
+    if (!message) return false;
+    const lower = message.toLowerCase().trim();
+
+    // Specific queries that require real-time web search
+    const searchKeywords = [
+      'habari za leo',
+      'habari za sasa',
+      'habari za hivi punde',
+      'habari mpya',
+      'nini kimetokea',
+      'nani kashinda',
+      'matokeo ya',
+      'hali ya hewa',
+      'bei ya',
+      'thamani ya',
+      'dola ya marekani',
+      'hisa za',
+      'leo hii',
+      'tafuta mtandaoni',
+      'tafuta google',
+      'search google',
+      'search online',
+      'google search',
+      'nani ni rais wa',
+      'kiongozi wa sasa',
+      'waziri mkuu wa',
+      'nani ameshinda',
+      'mechi ya leo',
+      'mchezo wa leo',
+      'ligi kuu',
+      'tuzo za',
+      'mwaka 2025',
+      'mwaka 2026',
+      'current news',
+      'latest news',
+      'who won',
+      'weather today',
+      'stock price',
+      'exchange rate',
+    ];
+
+    if (searchKeywords.some((kw) => lower.includes(kw))) {
+      return true;
+    }
+
+    // Direct search phrases
+    if (lower.startsWith('tafuta ') || lower.startsWith('search ')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private isInsufficientKnowledgeResponse(reply: string): boolean {
+    if (!reply) return false;
+    const lower = reply.toLowerCase();
+    const insufficientIndicators = [
+      'sina taarifa',
+      'sina uwezo wa kufikia mtandao',
+      'sina uwezo wa kuperuzi',
+      'sina access ya mtandao',
+      'sina uwezo wa kuona matukio ya sasa',
+      'kama modeli ya lugha',
+      'kama mfumo wa ai',
+      'kama akili bandia',
+      'siwezi kujua matukio ya hivi karibuni',
+      'siwezi kufikia taarifa za moja kwa moja',
+      'maarifa yangu yaliishia',
+      'knowledge cutoff',
+      'muda wa mafunzo yangu',
+      'i do not have access to real-time',
+      'i don\'t have access to real-time',
+      'i cannot browse the live web',
+      'as an ai language model',
+      'my knowledge cutoff',
+      'sina taarifa za hivi punde',
+      'sina taarifa za hivi karibuni',
+      'siwezi kutoa taarifa za sasa hivi',
+      'sina uwezo wa kupata taarifa za sasa',
+    ];
+
+    return insufficientIndicators.some((indicator) => lower.includes(indicator));
   }
 
   private detectFileGenerationIntent(message: string): {
