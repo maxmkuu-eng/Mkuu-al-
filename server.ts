@@ -7,6 +7,7 @@ import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } f
 import { imageService, PRIMARY_IMAGE_MODEL } from './server/imageService.js';
 import { universalAgent } from './server/agentEngine.js';
 import { generateRealFile, ensureInitialSeedFiles } from './server/files.js';
+import { getManagerSnapshot, addTask, updateTask, deleteTask, addEvent, updateEvent, deleteEvent, addReminder, updateReminder, deleteReminder, updateSettings, addAction, markReminderDelivered } from './server/assistantManager.js';
 
 async function startServer() {
   const app = express();
@@ -22,6 +23,25 @@ async function startServer() {
   app.put(['/api/auth/profile','/api/me','/api/user/profile'],(req,res)=>{try{const updated=db.updateUser(DEFAULT_USER_ID,req.body);res.json({success:true,user:updated,...updated});}catch(e:any){res.status(400).json({error:e.message});}});
   app.post('/api/user/pin',(req,res)=>{try{const {pin}=req.body;const updated=db.updateUser(DEFAULT_USER_ID,{securityPinSet:!!pin,securityPin:pin});res.json({success:true,user:updated});}catch(e:any){res.status(400).json({error:e.message});}});
   app.post('/api/system/reset',(_req,res)=>{try{db.resetSystem();res.json({success:true,message:'Mfumo umerejeshwa katika hali ya msingi.'});}catch(e:any){res.status(500).json({error:e.message});}});
+
+  // AI Assistant Manager: tasks, calendar, reminders, proactive status, Android action intents and settings.
+  app.get('/api/manager',(_req,res)=>res.json(getManagerSnapshot(DEFAULT_USER_ID)));
+  app.get('/api/manager/tasks',(_req,res)=>res.json(getManagerSnapshot(DEFAULT_USER_ID).tasks));
+  app.post('/api/manager/tasks',(req,res)=>{try{res.status(201).json(addTask(DEFAULT_USER_ID,req.body));}catch(e:any){res.status(400).json({error:e.message});}});
+  app.patch('/api/manager/tasks/:id',(req,res)=>{const item=updateTask(DEFAULT_USER_ID,req.params.id,req.body);if(!item)return res.status(404).json({error:'Kazi haijapatikana'});res.json(item);});
+  app.delete('/api/manager/tasks/:id',(req,res)=>res.json({success:deleteTask(DEFAULT_USER_ID,req.params.id)}));
+  app.get('/api/manager/calendar',(_req,res)=>res.json(getManagerSnapshot(DEFAULT_USER_ID).events));
+  app.post('/api/manager/calendar',(req,res)=>{try{res.status(201).json(addEvent(DEFAULT_USER_ID,req.body));}catch(e:any){res.status(400).json({error:e.message});}});
+  app.patch('/api/manager/calendar/:id',(req,res)=>{const item=updateEvent(DEFAULT_USER_ID,req.params.id,req.body);if(!item)return res.status(404).json({error:'Tukio halijapatikana'});res.json(item);});
+  app.delete('/api/manager/calendar/:id',(req,res)=>res.json({success:deleteEvent(DEFAULT_USER_ID,req.params.id)}));
+  app.get('/api/manager/reminders',(_req,res)=>res.json(getManagerSnapshot(DEFAULT_USER_ID).reminders));
+  app.post('/api/manager/reminders',(req,res)=>{try{res.status(201).json(addReminder(DEFAULT_USER_ID,req.body));}catch(e:any){res.status(400).json({error:e.message});}});
+  app.patch('/api/manager/reminders/:id',(req,res)=>{const item=updateReminder(DEFAULT_USER_ID,req.params.id,req.body);if(!item)return res.status(404).json({error:'Reminder haijapatikana'});res.json(item);});
+  app.delete('/api/manager/reminders/:id',(req,res)=>res.json({success:deleteReminder(DEFAULT_USER_ID,req.params.id)}));
+  app.post('/api/manager/reminders/:id/deliver',(req,res)=>{const item=markReminderDelivered(DEFAULT_USER_ID,req.params.id);if(!item)return res.status(404).json({error:'Reminder haijapatikana'});res.json(item);});
+  app.get('/api/manager/settings',(_req,res)=>res.json(getManagerSnapshot(DEFAULT_USER_ID).settings));
+  app.put('/api/manager/settings',(req,res)=>res.json(updateSettings(DEFAULT_USER_ID,req.body)));
+  app.post('/api/manager/actions',(req,res)=>{try{const {type,label,payload={}}=req.body||{};if(!type||!label)return res.status(400).json({error:'Action type na label vinahitajika'});res.status(201).json(addAction(DEFAULT_USER_ID,{type,label,payload}));}catch(e:any){res.status(400).json({error:e.message});}});
 
   const processChatRequest = async (req:any) => {
     const {message='',conversationId,conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};
@@ -39,7 +59,8 @@ async function startServer() {
 
   app.get('/api/conversations',(_req,res)=>res.json(db.getConversations(DEFAULT_USER_ID)));
   app.get('/api/conversations/:id',(req,res)=>{const c=db.getConversation(req.params.id,DEFAULT_USER_ID);res.json(c||{id:req.params.id,userId:DEFAULT_USER_ID,title:'Mazungumzo Mapya',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages:[]});});
-  app.post('/api/conversations',(req,res)=>{const {title='Mazungumzo Mapya',messages=[]}=req.body;res.json(db.saveConversation({id:`conv_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,userId:DEFAULT_USER_ID,title,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages}));});
+  app.post('/api/conversations',(req,res)=>{const {title='Mazungumzo Mapya',messages=[]}=req.body;res.json(db.saveConversation({id:`conv_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,userId:DEFAULT_USER_ID,title,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages}));
+  });
   app.delete('/api/conversations/:id',(req,res)=>res.json({success:db.deleteConversation(req.params.id,DEFAULT_USER_ID)}));
   app.get('/api/memories',(_req,res)=>res.json(db.getMemories(DEFAULT_USER_ID)));
   app.post('/api/memories',(req,res)=>{const {content,category='General',importance='medium',tags=[],source='manual'}=req.body;if(!content)return res.status(400).json({error:'Kumbukumbu inahitaji maelezo'});res.json(db.addMemory({userId:DEFAULT_USER_ID,content,category,importance,tags,source}));});
