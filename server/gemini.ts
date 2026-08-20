@@ -21,9 +21,8 @@ export function getGenAI(): GoogleGenAI {
 // Resilient multi-model fallback list in order of preference for high availability & speed
 const MODEL_FALLBACK_CANDIDATES = [
   'gemini-3.7-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-3.1-pro-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-3.6-flash',
 ];
 
 export async function generateContentWithFallback(params: {
@@ -56,8 +55,8 @@ export async function generateContentWithFallback(params: {
       lastError = err;
       const errMsg = String(err?.message || err);
 
-      // If failure was tool-related (e.g. googleSearch), retry immediately without tools
-      if (params.config?.tools && (errMsg.includes('tool') || errMsg.includes('googleSearch') || errMsg.includes('INVALID_ARGUMENT'))) {
+      // If failure was tool-related (e.g. googleSearch) or 429 quota with tools, retry immediately without tools
+      if (params.config?.tools) {
         try {
           const configWithoutTools = { ...params.config };
           delete configWithoutTools.tools;
@@ -70,13 +69,16 @@ export async function generateContentWithFallback(params: {
           if (textNoTools && textNoTools.trim().length > 0) {
             return textNoTools;
           }
-        } catch {
-          // Proceed with next model
+        } catch (noToolsErr) {
+          lastError = noToolsErr;
         }
       }
 
-      // If this model is experiencing high demand (503) or rate limit, smoothly switch to the next fallback candidate
-      continue;
+      // Quick brief wait before next model
+      const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota');
+      if (isRateLimit) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
     }
   }
 

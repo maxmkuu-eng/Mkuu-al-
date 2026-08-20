@@ -9,7 +9,7 @@ export interface StreamRequest {
   attachments?: any[];
 }
 
-const MODELS = ['gemini-3.7-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash'];
+const MODELS = ['gemini-3.7-flash', 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
 
 function cleanHistory(history: any[]) {
   const turns = Array.isArray(history) ? history.slice(-10) : [];

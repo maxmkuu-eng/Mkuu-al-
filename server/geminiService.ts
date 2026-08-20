@@ -13,13 +13,28 @@ export const AI_PROVIDER = 'Google Gemini';
 export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';
 export const BACKEND_IDENTIFIER = 'MKUU Server';
 
-// Multi-candidate fallback list for enterprise resilience if the primary model is momentarily overloaded
+// Multi-candidate fallback list for resilience (using models available on standard tier)
 export const CHAT_MODEL_FALLBACKS = [
   'gemini-3.7-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-3.1-pro-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-3.6-flash',
 ];
+
+function extractRetryDelayMs(err: any): number {
+  try {
+    const errMsg = typeof err === 'string' ? err : err?.message || JSON.stringify(err);
+    const match = errMsg.match(/retry in ([0-9.]+)s/i) || errMsg.match(/"retryDelay":\s*"([0-9.]+)s"/i);
+    if (match && match[1]) {
+      const sec = parseFloat(match[1]);
+      if (!isNaN(sec) && sec > 0) {
+        return Math.min(Math.ceil(sec * 1000) + 300, 3500);
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return 1500;
+}
 
 /**
  * Helper: Pata tarehe, siku na saa halisi ya sasa ya Tanzania (Africa/Dar_es_Salaam, UTC+3)
@@ -253,8 +268,23 @@ export class GeminiService {
       console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED] model="${usedModel}" latency=${latencyMs}ms status=200`);
     } catch (err: any) {
       const latencyMs = Date.now() - startTime;
-      console.error(`[MKUU-BACKEND] [GEMINI_REQUEST_FAILED] error="${err?.message || err}" latency=${latencyMs}ms`);
-      throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);
+      const errMsg = String(err?.message || err);
+      console.error(`[MKUU-BACKEND] [GEMINI_REQUEST_FAILED] error="${errMsg}" latency=${latencyMs}ms`);
+
+      const isRateLimit =
+        errMsg.includes('429') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('quota') ||
+        errMsg.includes('Rate limit') ||
+        errMsg.includes('exceeded your current quota');
+
+      if (isRateLimit) {
+        aiReplyText = `Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). 
+
+Tafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'** au unitumie ujumbe tena, nitaendelea kukuhudumia mara moja.`;
+      } else {
+        throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);
+      }
     }
 
     // Process document generation if requested
@@ -316,9 +346,10 @@ export class GeminiService {
         lastError = err;
         const errMsg = String(err?.message || err);
 
-        // If tools caused issue, retry without tools
-        if (params.config?.tools && (errMsg.includes('tool') || errMsg.includes('googleSearch') || errMsg.includes('INVALID_ARGUMENT'))) {
+        // If tools (search grounding) caused quota limit (429) or invalid argument, immediately try this model without tools
+        if (params.config?.tools) {
           try {
+            console.log(`[MKUU-BACKEND] Retrying ${model} without search tools due to tool limit...`);
             const configWithoutTools = { ...params.config };
             delete configWithoutTools.tools;
             const retryRes = await client.models.generateContent({
@@ -329,11 +360,16 @@ export class GeminiService {
             if (retryRes.text && retryRes.text.trim().length > 0) {
               return retryRes.text;
             }
-          } catch {
-            // continue
+          } catch (noToolErr) {
+            lastError = noToolErr;
           }
         }
-        continue;
+
+        // Quick single wait of max 800ms if rate limited before checking fallback model
+        const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota');
+        if (isRateLimit) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
       }
     }
 
@@ -380,9 +416,11 @@ MAADILI NA TABIA YA MKUU AI:
    - Mfumo huu una injini halisi ya kuzalisha mafaili (PDF, Excel, Word, CSV).
    - Ikiwa Max anaomba faili, mpe maudhui kamili yaliyopangwa vizuri.
 7. **KANUNI YA TAFUTIO LA MTANDAONI (GOOGLE SEARCH GROUNDING):**
-   - Kama swali linahitaji taarifa za sasa, matukio ya hivi karibuni, takwimu za ulimwengu, bei, hali ya hewa, habari, au jambo lolote ambalo huna uhakika nalo kwenye maarifa yako, tumia Google Search kupata majibu sahihi na halisi kutoka mtandaoni.
-   - Kamwe usiseme "sijui", "sina taarifa", "sina access", au "sina uwezo wa kuona taarifa za sasa" kabla ya kutafuta mtandaoni.
-   - Tumia taarifa halisi zilizopatikana kwenye search kujibu bila kubuni. Kama baada ya search taarifa haikupatikana mtandaoni, ndipo ueleze kwa heshima kuwa taarifa hiyo haikupatikana.
+   - Kama swali linahusu michezo/mechi (mfano: Yanga SC, Simba SC, Azam FC, NBC Premier League, Ligi Kuu Tanzania Bara, CAF Champions League, CAF Confederation Cup, EPL, n.k.), habari mpya, matokeo, bei, au jambo lolote la sasa au lisilo na uhakika, tumia Google Search kutafuta taarifa halisi mtandaoni.
+   - Wakati wa kutafuta mechi za mpira wa miguu au matukio, tafuta ratiba kamili na ya sasa (fixtures, live scores, ratiba ya msimu huu, mechi ya leo, mechi inayofuata, mashindano, uwanja na muda).
+   - Ikiwa Max anauliza kuhusu mechi ya leo ya timu kama Yanga au Simba, thibitisha ratiba ya mechi na mpe maelezo kamili ya mechi (mpinzani, uwanja, muda, mashindano). Kama leo hawana mechi, mtajie mechi yao inayofuata ya karibuni kabisa ili apate taarifa kamili.
+   - Kamwe usiseme "sijui", "sina taarifa", "sina access", au kukataa kabla ya kutafuta mtandaoni.
+   - Tumia taarifa halisi zilizopatikana kwenye search kujibu kwa usahihi bila kubuni.
 
 ---
 ORODHA YA KUMBUKUMBU ZA SASA ZA MAX (MAX MEMORY - SERVER PERSISTED):
@@ -584,12 +622,14 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
 
     // Specific queries that require real-time web search
     const searchKeywords = [
+      // Habari na Matukio
       'habari za leo',
       'habari za sasa',
       'habari za hivi punde',
       'habari mpya',
       'nini kimetokea',
       'nani kashinda',
+      'nani ameshinda',
       'matokeo ya',
       'hali ya hewa',
       'bei ya',
@@ -605,10 +645,6 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
       'nani ni rais wa',
       'kiongozi wa sasa',
       'waziri mkuu wa',
-      'nani ameshinda',
-      'mechi ya leo',
-      'mchezo wa leo',
-      'ligi kuu',
       'tuzo za',
       'mwaka 2025',
       'mwaka 2026',
@@ -618,6 +654,56 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
       'weather today',
       'stock price',
       'exchange rate',
+
+      // Michezo, Mechi na Vilabu vya Ndani na Nje
+      'yanga',
+      'yangu', // common typo for yanga
+      'young africans',
+      'simba',
+      'simba sc',
+      'azam fc',
+      'singida',
+      'mashujaa',
+      'geita gold',
+      'jkt tanzania',
+      'namungo',
+      'coastal union',
+      'dodoma jiji',
+      'kagera sugar',
+      'tabora united',
+      'mechi',
+      'mchezo',
+      'ratiba',
+      'matokeo',
+      'msimamo',
+      'kikosi',
+      'magoli',
+      'tff',
+      'nbc premier league',
+      'ligi kuu',
+      'caf champions league',
+      'caf confederation',
+      'shirikisho',
+      'ngao ya jamii',
+      'kombe la mapinduzi',
+      'crdb federation cup',
+      'kuna mechi',
+      'nani anacheza',
+      'arsenal',
+      'manchester',
+      'man utd',
+      'man city',
+      'chelsea',
+      'liverpool',
+      'real madrid',
+      'barcelona',
+      'bayern',
+      'psg',
+      'epl',
+      'uefa',
+      'champions league',
+      'la liga',
+      'serie a',
     ];
 
     if (searchKeywords.some((kw) => lower.includes(kw))) {
@@ -625,7 +711,7 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
     }
 
     // Direct search phrases
-    if (lower.startsWith('tafuta ') || lower.startsWith('search ')) {
+    if (lower.startsWith('tafuta ') || lower.startsWith('search ') || lower.includes('google ')) {
       return true;
     }
 
@@ -658,6 +744,8 @@ ${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "$
       'sina taarifa za hivi karibuni',
       'siwezi kutoa taarifa za sasa hivi',
       'sina uwezo wa kupata taarifa za sasa',
+      'hakuna taarifa za kuaminika',
+      'sijui',
     ];
 
     return insufficientIndicators.some((indicator) => lower.includes(indicator));
