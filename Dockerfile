@@ -1,34 +1,27 @@
-FROM node:22-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
-# The lockfile is currently out of sync with package.json, so use npm install
-# to resolve the declared dependency graph during the container build.
-RUN npm install --no-audit --no-fund
 
+# Install dependencies
+RUN npm install
+
+# Copy project files
 COPY . .
+
+# Build application (Vite + esbuild backend)
 RUN npm run build
-RUN npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.cjs
 
-FROM node:22-alpine AS runner
-
-WORKDIR /app
-
+# Production configuration
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# The runtime image only needs package.json. Avoid the stale lockfile and
-# skip install scripts so nested development-tool binaries cannot break the
-# production image.
-COPY package.json ./
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
-
-COPY --from=builder /app/dist ./dist
-
-# Create storage directories for files and database
+# Create data and file storage directory
 RUN mkdir -p /app/data/files
 
 EXPOSE 3000
 
+# Start production server
 CMD ["node", "dist/server.cjs"]

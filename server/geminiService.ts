@@ -21,6 +21,55 @@ export const CHAT_MODEL_FALLBACKS = [
   'gemini-3.1-pro-preview',
 ];
 
+/**
+ * Helper: Pata tarehe, siku na saa halisi ya sasa ya Tanzania (Africa/Dar_es_Salaam, UTC+3)
+ */
+export function getCurrentTanzaniaTimeContext(): {
+  formattedString: string;
+  dayOfWeek: string;
+  dateString: string;
+  timeString: string;
+  timeZone: string;
+  iso: string;
+} {
+  const now = new Date();
+  const timeZone = 'Africa/Dar_es_Salaam';
+
+  const fullFormatter = new Intl.DateTimeFormat('sw-TZ', {
+    timeZone,
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+
+  const parts = fullFormatter.formatToParts(now);
+  const getPart = (type: string) => parts.find((p) => p.type === type)?.value || '';
+
+  const weekday = getPart('weekday');
+  const day = getPart('day');
+  const month = getPart('month');
+  const year = getPart('year');
+  const hour = getPart('hour');
+  const minute = getPart('minute');
+  const second = getPart('second');
+
+  const formattedString = `${weekday}, ${day} ${month} ${year}, saa ${hour}:${minute}:${second}, Africa/Dar_es_Salaam (UTC+3)`;
+
+  return {
+    formattedString,
+    dayOfWeek: weekday,
+    dateString: `${day} ${month} ${year}`,
+    timeString: `${hour}:${minute}:${second}`,
+    timeZone,
+    iso: now.toISOString(),
+  };
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'model' | string;
   content: string;
@@ -277,6 +326,7 @@ export class GeminiService {
     newlySavedMemory: any;
   }): string {
     const { user, memories, people, newlySavedMemory } = context;
+    const timeContext = getCurrentTanzaniaTimeContext();
 
     return `
 Wewe ni **MKUU AI** (Mkuu), msaidizi binafsi mwenye akili ya hali ya juu aliyejengwa mahsusi kwa ajili ya mmiliki wako anayeitwa **MAX**.
@@ -286,6 +336,13 @@ UTAMBULISHO WA MMILIKI:
 - Jina la Mmiliki: ${user.name} (Max)
 - Barua Pepe: ${user.email}
 - Hadhi: Mmiliki Pekee Aliyeidhinishwa (Authorized Owner)
+
+MUDA, TAREHE NA SIKU YA SASA YA TANZANIA (SERVER REAL-TIME CLOCK):
+- Muda Kamili wa Sasa: ${timeContext.formattedString}
+- Siku ya Leo: ${timeContext.dayOfWeek}
+- Tarehe ya Leo: ${timeContext.dateString}
+- Saa ya Sasa: ${timeContext.timeString} (${timeContext.timeZone}, UTC+3)
+- MAAGIZO MAHUSUSI YA MUDA: Akiuliza "Saa ngapi?", "Ni saa ngapi sasa?", "Leo ni siku gani?", "Leo tarehe ngapi?", au swali lolote la wakati/tarehe, jibu moja kwa moja kwa usahihi ukitumia muda na tarehe halisi ya sasa iliyoonyeshwa hapa juu. Kamwe usiseme kwamba huwezi kuona saa au huna access ya location.
 
 MAADILI NA TABIA YA MKUU AI:
 1. Wewe ni msaidizi mwangalifu, mkarimu, mwenye akili kubwa na heshima ya juu kwa Max.
