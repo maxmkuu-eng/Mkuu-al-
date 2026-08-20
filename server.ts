@@ -5,6 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import { db, FILES_DIR } from './server/db.js';
 import { geminiService, GeminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from './server/geminiService.js';
 import { imageService, ImageService, PRIMARY_IMAGE_MODEL } from './server/imageService.js';
+import { universalAgent } from './server/agentEngine.js';
 import { generateRealFile, ensureInitialSeedFiles } from './server/files.js';
 import { processInboundAutoReply } from './server/autoreply.js';
 
@@ -102,10 +103,20 @@ async function startServer() {
     }
   });
 
-  // Universal agent endpoint used by artifact/document/image-capable client flows.
+  // Universal Agent endpoint: route artifact/multi-capability requests through the
+  // dedicated agent engine instead of treating them as ordinary chat requests.
   app.post('/api/agent', async (req, res) => {
     try {
-      const result = await processChatRequest(req);
+      const { message = '', conversationHistory = [], isVoice = false, attachments = [], people = [] } = req.body || {};
+      if (!message && (!attachments || attachments.length === 0)) throw new Error('Ujumbe au kiambatisho kinahitajika');
+      const result = await universalAgent.execute({
+        userId: DEFAULT_USER_ID,
+        message,
+        conversationHistory,
+        isVoice,
+        attachments,
+        people,
+      });
       res.json({ success: true, ...result });
     } catch (error: any) {
       console.error('[MKUU-BACKEND] Agent API Error:', error);
