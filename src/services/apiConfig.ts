@@ -1,5 +1,5 @@
 /** MKUU AI production API configuration. */
-export const DEFAULT_PUBLIC_BACKEND_URL = 'https://mkuu-al-y98p.vercel.app';
+export const DEFAULT_PUBLIC_BACKEND_URL = 'https://mkuu-al-3.onrender.com';
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
 export const STORAGE_SERVER_KEY_CUSTOM = 'mkuu_backend_api_url_v1';
 
