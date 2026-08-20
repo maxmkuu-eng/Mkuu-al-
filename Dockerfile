@@ -18,8 +18,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-COPY package*.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+# The runtime image only needs package.json. Avoid the stale lockfile and
+# skip install scripts so nested development-tool binaries cannot break the
+# production image.
+COPY package.json ./
+RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
 
 COPY --from=builder /app/dist ./dist
 
