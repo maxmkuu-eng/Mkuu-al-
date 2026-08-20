@@ -17,6 +17,9 @@ export function isCapacitorNative(): boolean {
 }
 export function getApiBaseUrl(): string {
   if (typeof window === 'undefined') return DEFAULT_PUBLIC_BACKEND_URL;
+  // Native APK builds always use the production HTTPS backend so an older saved
+  // server URL cannot make the APK fail with "Failed to fetch".
+  if (isCapacitorNative()) return DEFAULT_PUBLIC_BACKEND_URL;
   const custom=localStorage.getItem(STORAGE_SERVER_URL_KEY);
   if(custom?.trim().startsWith('http')) return custom.trim().replace(/\/+$/,'');
   const env=(import.meta as any).env?.VITE_PUBLIC_API_URL;
