@@ -65,11 +65,10 @@ jobs:
           echo "=========================================="
           ./gradlew clean :app:assembleRelease --no-daemon --stacktrace
 
-      - name: 10. Align and Sign Production Release APK (v1 + v2 Signature Scheme)
+      - name: 10. Align and Sign Production Release APK (v1 + v2 + v3)
         run: |
           mkdir -p release-output
-          
-          # Locate built release APK
+
           RAW_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
           if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
             echo "ERROR: Release APK binary was not generated at android/app/build/outputs/apk/release/!"
@@ -77,19 +76,16 @@ jobs:
           fi
           echo "Located generated release APK at: $RAW_APK"
 
-          # Find Android SDK build-tools directory with zipalign and apksigner
           BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           echo "Using Android Build-Tools from: $BUILD_TOOLS_DIR"
           export PATH="$BUILD_TOOLS_DIR:$PATH"
-          
-          # Step A: Zipalign the unaligned APK
+
           ALIGNED_APK="release-output/aligned_unsigned.apk"
           zipalign -v -p 4 "$RAW_APK" "$ALIGNED_APK"
           echo "✓ zipalign completed successfully"
 
-          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.3_Signed.apk"
 
-          # Step B: Keystore Preparation
           if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
             echo "Using repository secret keystore..."
             echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
@@ -107,7 +103,6 @@ jobs:
             KS_ALIAS="mkuu_ai_master_key"
           fi
 
-          # Step C: Sign using official apksigner (enables full v1 + v2 + v3 signing schemes required by modern Android)
           apksigner sign \
             --ks release.keystore \
             --ks-pass "pass:$KS_PASS" \
@@ -123,10 +118,10 @@ jobs:
 
       - name: 11. Strict APK Inspection and Verification
         run: |
-          TARGET_APK="release-output/MkuuAI_Master_v1.0.0_Signed.apk"
+          TARGET_APK="release-output/MkuuAI_Master_v1.0.3_Signed.apk"
           BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           export PATH="$BUILD_TOOLS_DIR:$PATH"
-          
+
           echo "=========================================="
           echo "1. Size and Existence Check"
           echo "=========================================="
@@ -152,14 +147,12 @@ jobs:
           echo "=========================================="
           zipalign -c -v 4 "$TARGET_APK"
 
-          echo "=========================================="
           echo "ALL INSTALLABILITY VALIDATIONS PASSED!"
-          echo "=========================================="
 
       - name: 12. Upload Verified Production APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MkuuAI_Master_v1.0.0_Signed.apk
-          path: release-output/MkuuAI_Master_v1.0.0_Signed.apk
+          name: MkuuAI_Master_v1.0.3_Signed.apk
+          path: release-output/MkuuAI_Master_v1.0.3_Signed.apk
           retention-days: 30
           if-no-files-found: error
