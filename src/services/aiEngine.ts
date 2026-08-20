@@ -1,5 +1,5 @@
 import { ChatMessage, Memory, Person, GeneratedFileSummary, UserProfile } from '../types';
-import { apiFetch, getApiUrl, MkuuApiError } from './apiConfig';
+import { apiFetch, getApiUrl, isCapacitorNative, MkuuApiError } from './apiConfig';
 
 const GEMINI_API_KEY_STORAGE = 'mkuu_gemini_api_key_v1';
 
@@ -85,6 +85,32 @@ async function callDirectGemini(apiKey: string, params: ChatEngineParams): Promi
   return { reply: rawText, cleanSpeechText: rawText.replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(), engineUsed: 'direct_gemini', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash' };
 }
 
+async function callNativeServerChat(params: ChatEngineParams): Promise<ChatEngineResult> {
+  const serverRes = await apiFetch<any>('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      conversationId: params.conversationId,
+      message: params.message,
+      isVoice: params.isVoice,
+      attachments: params.attachments || [],
+      conversationHistory: (params.conversationHistory || []).slice(-10),
+      people: params.people || [],
+    }),
+  });
+  if (!serverRes?.reply) throw new MkuuApiError({ code: 'BACKEND_UNREACHABLE', userMessage: 'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.', technicalDetails: 'Native Android chat returned an empty response payload', targetUrl: getApiUrl('/api/chat') });
+  return {
+    reply: serverRes.reply,
+    cleanSpeechText: serverRes.cleanSpeechText || serverRes.reply,
+    memoriesExtracted: serverRes.memoriesExtracted,
+    peopleRecognized: serverRes.peopleRecognized,
+    generatedFiles: serverRes.generatedFiles,
+    engineUsed: 'server',
+    aiProvider: serverRes.aiProvider || 'Google Gemini',
+    chatModel: serverRes.chatModel || 'gemini-3.7-flash',
+    intent: serverRes.intent || 'chat',
+  };
+}
+
 async function streamServerChat(params: ChatEngineParams): Promise<ChatEngineResult> {
   const url = getApiUrl('/api/chat/stream');
   const response = await fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }, body: JSON.stringify({ message: params.message, conversationHistory: (params.conversationHistory || []).slice(-10), people: params.people || [], attachments: params.attachments || [] }) });
@@ -122,6 +148,8 @@ async function streamServerChat(params: ChatEngineParams): Promise<ChatEngineRes
 export async function executeMkuuChat(params: ChatEngineParams): Promise<ChatEngineResult> {
   const directApiKey = getStoredGeminiApiKey();
   if (directApiKey && directApiKey.trim().length > 10) return callDirectGemini(directApiKey.trim(), params);
+
+  if (isCapacitorNative()) return callNativeServerChat(params);
 
   if (needsArtifactRoute(params)) {
     const serverRes = await apiFetch<any>('/api/agent', { method: 'POST', body: JSON.stringify({ conversationId: params.conversationId, message: params.message, isVoice: params.isVoice, attachments: params.attachments, conversationHistory: (params.conversationHistory || []).slice(-10), people: params.people || [] }) });
