@@ -17,7 +17,9 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+# package.json and package-lock.json are currently out of sync; use npm install
+# in the runtime image so Render can resolve the declared production deps.
+RUN npm install --omit=dev --no-audit --no-fund
 
 COPY --from=builder /app/dist ./dist
 
