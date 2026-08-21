@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 
 const geminiFile = 'server/geminiService.ts';
-const geminiSource = fs.readFileSync(geminiFile, 'utf8');
+let geminiSource = fs.readFileSync(geminiFile, 'utf8');
 
 const oldMethod = /  private detectSearchIntent\(message: string\): boolean \{[\s\S]*?\n  \}\n\n  private isInsufficientKnowledgeResponse/;
 const newMethod = `  // MKUU_GLOBAL_LIVE_WEB_V2
@@ -21,20 +21,44 @@ const newMethod = `  // MKUU_GLOBAL_LIVE_WEB_V2
     const dynamicDomains = /\\b(serikali|rais|waziri|wizara|kiongozi|uchaguzi|siasa|habari|news|michezo|mpira|football|soccer|basketball|tennis|cricket|mechi|mchezo|ratiba|matokeo|score|standings|msimamo|biashara|kampuni|uchumi|economy|market|hisa|stock|bei|price|dola|exchange rate|sarafu|crypto|bitcoin|ethereum|msanii|wasanii|artist|celebrity|music|album|wimbo|concert|movie|filamu|technology|teknolojia|ai|artificial intelligence|iphone|android|product|launch|event|weather|hali ya hewa|trafiki|flight|ndege|visa|sheria|law|court|mahakama|scientist|sayansi|space|science|transfer|injury|election|president|minister|prime minister|company|business|finance|stock price)\\b/i.test(lower);
 
     if (explicitSearch || currentSignals || (factualQuestion && dynamicDomains)) return true;
-    if (factualQuestion && lower.length >= 8 && lower.length <= 300) return true;
+    if (factualQuestion && lower.length >= 8 && lower.length <= 500) return true;
     return false;
   }
 
   private isInsufficientKnowledgeResponse`;
 
 if (oldMethod.test(geminiSource)) {
-  fs.writeFileSync(geminiFile, geminiSource.replace(oldMethod, newMethod), 'utf8');
+  geminiSource = geminiSource.replace(oldMethod, newMethod);
   console.log('MKUU: Global live factual-question routing V2 applied.');
 } else if (geminiSource.includes('MKUU_GLOBAL_LIVE_WEB_V2')) {
   console.log('MKUU: Global live factual-question routing V2 already applied.');
 } else {
   throw new Error('MKUU: global live web detectSearchIntent insertion point not found.');
 }
+
+// Critical fix: previous assistant messages can contain stale/wrong answers.
+// For a live-web turn, do not let those answers compete with fresh evidence.
+if (!geminiSource.includes('MKUU_LIVE_HISTORY_ISOLATION_V1')) {
+  const historyMarker = '        const groundedContents = this.buildConversationHistory(\n          conversationHistory,';
+  if (!geminiSource.includes(historyMarker)) throw new Error('MKUU: live-history isolation insertion point not found.');
+  const historyReplacement = `        // MKUU_LIVE_HISTORY_ISOLATION_V1\n        // Preserve user context, but remove prior assistant answers so stale claims cannot override fresh web evidence.\n        const liveConversationHistory = conversationHistory.filter((item) => item?.role === 'user');\n        const groundedContents = this.buildConversationHistory(\n          liveConversationHistory,`;
+  geminiSource = geminiSource.replace(historyMarker, historyReplacement);
+  console.log('MKUU: live-search history isolation applied; stale assistant answers cannot override fresh evidence.');
+}
+
+// Add an explicit evidence-priority instruction to the live-search prompt.
+if (!geminiSource.includes('MKUU_LIVE_EVIDENCE_PRIORITY_V1')) {
+  const promptMarker = '          const groundedSystemPrompt = `${systemPrompt}\\n\\nLIVE WEB SEARCH RESULTS (Tavily):';
+  if (!geminiSource.includes(promptMarker)) throw new Error('MKUU: live-evidence prompt insertion point not found.');
+  const promptReplacement = '          const groundedSystemPrompt = `${systemPrompt}\\n\\n// MKUU_LIVE_EVIDENCE_PRIORITY_V1\\nLIVE WEB SEARCH RESULTS (Tavily):';
+  geminiSource = geminiSource.replace(promptMarker, promptReplacement);
+  geminiSource = geminiSource.replace(
+    '- Never invent a name, score, date, or event that is not supported by the supplied results.\\n- You may include source names/URLs when useful.',
+    '- Never invent a name, score, date, or event that is not supported by the supplied results.\\n- If one or more recent search results explicitly confirm an event, do not deny that event merely because older conversation history or model memory says otherwise.\\n- Treat recent search evidence as authoritative for current factual questions.\\n- You may include source names/URLs when useful.'
+  );
+  console.log('MKUU: live evidence priority rules applied.');
+}
+fs.writeFileSync(geminiFile, geminiSource, 'utf8');
 
 const tavilyFile = 'server/tavilySearch.ts';
 let tavilySource = fs.readFileSync(tavilyFile, 'utf8');
