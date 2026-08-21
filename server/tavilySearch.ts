@@ -26,6 +26,7 @@ async function getOfficialCabinetSnapshot(): Promise<string> {
  const html = await response.text();
  const text = html.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/\s+/g,' ').trim();
  if (!/Baraza la Mawaziri/i.test(text)) throw new Error('Ikulu Cabinet page did not contain Cabinet data.');
+
  const wanted: Array<[string,string]> = [
    ['Waziri wa Habari, Utamaduni, Sanaa na Michezo','Waziri wa Habari, Utamaduni, Sanaa na Michezo'],
    ['Waziri wa Mawasiliano na Teknolojia ya Habari','Waziri wa Mawasiliano na Teknolojia ya Habari'],
@@ -33,9 +34,12 @@ async function getOfficialCabinetSnapshot(): Promise<string> {
  ];
  const extracted:string[]=[];
  for(const [label,title] of wanted){
-   const escaped=title.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-   const match=text.match(new RegExp('MHE\\.\\s+([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý .\\'-]{3,120}?)\\s+'+escaped,'i'));
-   if(match?.[1]) extracted.push(`${label}: MHE. ${match[1].trim()}`);
+   const titleIndex=text.toLowerCase().indexOf(title.toLowerCase());
+   if(titleIndex<0) continue;
+   const before=text.slice(Math.max(0,titleIndex-500),titleIndex);
+   const names=before.match(/MHE\.\s+[A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý .'-]{3,120}/gi);
+   const name=names?.at(-1)?.trim();
+   if(name) extracted.push(`${label}: ${name}`);
  }
  if(!extracted.length) throw new Error('Ikulu Cabinet page did not expose a recognized current office holder.');
  return `[LIVE OFFICIAL IKULU CABINET SNAPSHOT — FETCHED ${new Date().toISOString()}]\nSource: https://www.ikulu.go.tz/index.php/cabinet\n${extracted.join('\n')}\nIMPORTANT: This snapshot is authoritative current-government evidence. Ignore all older cabinet information.`;
