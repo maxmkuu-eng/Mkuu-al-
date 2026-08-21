@@ -21,7 +21,6 @@ const replacement = `  // Text-To-Speech Playback\n  const speakText = async (te
 
 source = source.slice(0, start) + replacement + source.slice(end);
 
-// Ensure native speech is stopped by mute/close/speaking-toggle actions.
 source = source.replace(
   "  const toggleMute = () => {\n    if (synthRef.current) synthRef.current.cancel();",
   "  const toggleMute = () => {\n    if (synthRef.current) synthRef.current.cancel();\n    if (Capacitor.getPlatform() === 'android') TextToSpeech.stop().catch(() => {});"
@@ -37,3 +36,21 @@ source = source.replace(
 
 fs.writeFileSync(file, source);
 console.log('MKUU: native Android TTS enabled; Web Speech remains the browser fallback.');
+
+const chatFile = path.join(process.cwd(), 'src/components/ChatView.tsx');
+let chat = fs.readFileSync(chatFile, 'utf8');
+const chatImport = "import { Capacitor } from '@capacitor/core';\nimport { TextToSpeech, QueueStrategy } from '@capacitor-community/text-to-speech';\n";
+if (!chat.includes("@capacitor-community/text-to-speech")) {
+  chat = chat.replace("import { getApiUrl } from '../services/apiConfig';", "import { getApiUrl } from '../services/apiConfig';\n" + chatImport.trimEnd());
+}
+const chatStartMarker = "  const playSpeech = (msgId: string, text: string) => {";
+const chatEndMarker = "\n\n  const quickActions = [";
+const chatStart = chat.indexOf(chatStartMarker);
+const chatEnd = chat.indexOf(chatEndMarker, chatStart);
+if (chatStart === -1 || chatEnd === -1) {
+  throw new Error('MKUU: chat message TTS insertion point not found.');
+}
+const chatReplacement = `  const playSpeech = async (msgId: string, text: string) => {\n    if (playingMessageId === msgId) {\n      try { await TextToSpeech.stop(); } catch {}\n      if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();\n      setPlayingMessageId(null);\n      return;\n    }\n\n    const cleanText = text\n      .replace(/#{1,6}\\s+/g, '')\n      .replace(/\\*\\*(.*?)\\*\\*/g, '$1')\n      .replace(/\\*(.*?)\\*/g, '$1')\n      .replace(/\`(.*?)\`/g, '$1')\n      .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')\n      .trim();\n    if (!cleanText) return;\n\n    setPlayingMessageId(msgId);\n    if (Capacitor.getPlatform() === 'android') {\n      try {\n        if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();\n        await TextToSpeech.stop();\n        const supported = await TextToSpeech.isLanguageSupported({ lang: 'sw-TZ' });\n        await TextToSpeech.speak({\n          text: cleanText,\n          lang: supported.supported ? 'sw-TZ' : 'en-US',\n          rate: 0.95,\n          pitch: 1.0,\n          volume: 1.0,\n          queueStrategy: QueueStrategy.Flush,\n        });\n        setPlayingMessageId(null);\n        return;\n      } catch (err) {\n        console.warn('Chat message native TTS failed; falling back to Web Speech:', err);\n      }\n    }\n\n    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {\n      setPlayingMessageId(null);\n      return;\n    }\n    window.speechSynthesis.cancel();\n    const utterance = new SpeechSynthesisUtterance(cleanText);\n    utterance.lang = 'sw-TZ';\n    utterance.rate = 0.95;\n    utterance.onend = () => setPlayingMessageId(null);\n    utterance.onerror = () => setPlayingMessageId(null);\n    window.speechSynthesis.speak(utterance);\n  };`;
+chat = chat.slice(0, chatStart) + chatReplacement + chat.slice(chatEnd);
+fs.writeFileSync(chatFile, chat);
+console.log('MKUU: chat message speaker buttons now use native Android TTS.');
