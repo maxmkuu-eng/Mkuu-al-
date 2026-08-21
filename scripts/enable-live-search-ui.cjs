@@ -120,14 +120,14 @@ ensure(chatView, 'clickable right-aligned source footer', (source) => {
                             <div className="flex flex-wrap justify-end gap-1.5">
                               {msg.webSources.slice(0, 5).map((source, idx) => (
                                 <a
-                                  key={\`${source.url}-${idx}\`}
+                                  key={source.url + '-' + idx}
                                   href={source.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 border border-[#333333] text-[10px] text-[#D4AF37] hover:text-white hover:border-[#D4AF37]/60 transition"
-                                  title={\`Fungua chanzo: ${source.title || source.url}\`}
+                                  title={'Fungua chanzo: ' + (source.title || source.url)}
                                 >
-                                  <span>{source.title || \`Chanzo ${idx + 1}\`}</span>
+                                  <span>{source.title || ('Chanzo ' + (idx + 1))}</span>
                                 </a>
                               ))}
                             </div>
