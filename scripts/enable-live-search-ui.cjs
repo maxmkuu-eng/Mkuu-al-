@@ -31,11 +31,19 @@ const app = path.join(root, 'src/App.tsx');
 const chatView = path.join(root, 'src/components/ChatView.tsx');
 
 ensure(server, 'Tavily source metadata', (source) => {
+  // The current server owns Tavily through geminiService, so add the source
+  // helper import explicitly. Never leave a bare getLastTavilySources() call.
   if (!source.includes('getLastTavilySources')) {
-    source = source.replace(
-      "import { searchWithTavily } from './server/tavilySearch.js';",
-      "import { searchWithTavily, getLastTavilySources } from './server/tavilySearch.js';"
-    );
+    const geminiImport = "import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from './server/geminiService.js';";
+    const tavilyImport = "import { getLastTavilySources } from './server/tavilySearch.js';";
+    if (source.includes(geminiImport)) {
+      source = source.replace(geminiImport, `${geminiImport}\n${tavilyImport}`);
+    } else if (source.includes("import { searchWithTavily } from './server/tavilySearch.js';")) {
+      source = source.replace(
+        "import { searchWithTavily } from './server/tavilySearch.js';",
+        "import { searchWithTavily, getLastTavilySources } from './server/tavilySearch.js';"
+      );
+    }
   }
 
   if (!source.includes('webSources:getLastTavilySources()')) {
@@ -90,7 +98,7 @@ ensure(aiEngine, 'server-only chat routing and source propagation', (source) => 
     );
   }
 
-  if (!source.includes('intent: \'chat\', webSources };')) {
+  if (!source.includes("intent: 'chat', webSources };")) {
     source = source.replace(
       "return { reply, cleanSpeechText: reply.replace(/[#*`_~[\\]()]/g, ' ').replace(/\\s+/g, ' ').trim(), engineUsed: 'server', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', intent: 'chat' };",
       "return { reply, cleanSpeechText: reply.replace(/[#*`_~[\\]()]/g, ' ').replace(/\\s+/g, ' ').trim(), engineUsed: 'server', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', intent: 'chat', webSources };"
