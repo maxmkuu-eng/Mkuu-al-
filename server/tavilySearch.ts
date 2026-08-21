@@ -19,9 +19,9 @@ export async function searchWithTavily(query: string): Promise<string> {
     body: JSON.stringify({
       api_key: apiKey,
       query,
-      search_depth: 'basic',
+      search_depth: 'advanced',
       topic: 'general',
-      max_results: 5,
+      max_results: 8,
       include_answer: false,
       include_raw_content: false,
     }),
