@@ -89,16 +89,10 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
   }
 
   try {
-    // Do not use puter.auth.signIn() here: Puter documents that it opens a
-    // separate popup. Use the in-page Puter authentication dialog instead.
-    if (!puter.auth?.isSignedIn?.()) {
-      if (typeof puter.ui?.authenticateWithPuter === 'function') {
-        await puter.ui.authenticateWithPuter();
-      } else {
-        throw new Error('PUTER_AUTH_REQUIRED: Fungua Image Studio ndani ya MKUU na ukamilishe login ya Puter.');
-      }
-    }
-
+    // Image Studio must not force a Puter sign-in/sign-up popup.
+    // Call the Puter AI API directly and let the SDK use the current session.
+    // If Puter cannot authorize the request, surface that failure instead of
+    // opening an authentication window that can end with auth_window_closed.
     const image = await puter.ai.txt2img(prompt, options);
     const dataUrl = image?.src || (typeof image === 'string' ? image : '');
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
