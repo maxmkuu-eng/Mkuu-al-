@@ -35,7 +35,7 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
     throw new MkuuApiError({
       code: 'PUTER_UNAVAILABLE',
       status: 503,
-      userMessage: 'IMAGE STUDIO HAIJAPATIKANA\nTafadhali subiri sekunde chache kisha jaribu tena.',
+      userMessage: 'IMAGE STUDIO HAIJAPATIKANA\\nTafadhali subiri sekunde chache kisha jaribu tena.',
       technicalDetails: 'Puter.js Image Studio is not loaded.',
     });
   }
@@ -58,20 +58,20 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
       'Preserve the exact person, face, hair, clothing, body proportions and important details.',
       'Do not return a text explanation and do not return the original image unchanged.',
       prompt,
-    ].join('\n');
+    ].join('\\n');
   } else if (hasImage) {
     prompt = [
       'EDIT THE PROVIDED IMAGE according to the user instruction.',
       'Return the edited image itself, not a prompt or text-only answer.',
       'Preserve identity and important details unless the user explicitly asks to change them.',
       prompt,
-    ].join('\n');
+    ].join('\\n');
   } else {
     prompt = [
       'GENERATE THE IMAGE ITSELF.',
       'Do not return a prompt, SVG, JSON, or text-only answer.',
       prompt,
-    ].join('\n');
+    ].join('\\n');
   }
 
   const options: any = {
@@ -83,7 +83,7 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
   if (hasImage) {
     const dataUri = imageBase64.startsWith('data:')
       ? imageBase64
-      : `data:${mimeType};base64,${imageBase64}`;
+      : 'data:' + mimeType + ';base64,' + imageBase64;
     options.input_images = [dataUri];
     options.input_image_mime_type = mimeType;
   }
@@ -99,16 +99,17 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
     }
 
     const b64 = dataUrl.split(',')[1] || '';
+    const suffix = Date.now().toString().slice(-6);
     const filename = isBgRemoval
-      ? `Picha_Bila_Background_${Date.now().toString().slice(-6)}.png`
+      ? 'Picha_Bila_Background_' + suffix + '.png'
       : hasImage
-        ? `Picha_Iliyohaririwa_Mkuu_${Date.now().toString().slice(-6)}.png`
+        ? 'Picha_Iliyohaririwa_Mkuu_' + suffix + '.png'
         : lower.includes('logo')
-          ? `Logo_ya_Mkuu_${Date.now().toString().slice(-6)}.png`
-          : `Picha_ya_Mkuu_${Date.now().toString().slice(-6)}.png`;
+          ? 'Logo_ya_Mkuu_' + suffix + '.png'
+          : 'Picha_ya_Mkuu_' + suffix + '.png';
 
     const file: GeneratedFileSummary = {
-      id: `puter_image_${Date.now()}`,
+      id: 'puter_image_' + Date.now(),
       filename,
       fileType: 'png',
       size: Math.floor((b64.length * 3) / 4),
@@ -138,8 +139,8 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
     throw new MkuuApiError({
       code: 'PUTER_IMAGE_FAILED',
       status: 502,
-      userMessage: 'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA\nTafadhali jaribu tena.',
-      technicalDetails: `Puter Image Studio: ${details}`,
+      userMessage: 'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA\\nTafadhali jaribu tena.',
+      technicalDetails: 'Puter Image Studio: ' + details,
     });
   }
 }`;
