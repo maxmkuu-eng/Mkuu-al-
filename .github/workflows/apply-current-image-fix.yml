@@ -2,7 +2,7 @@ name: Apply verified MKUU fixes
 
 on:
   push:
-    branches: [fix/latest-search-free]
+    branches: [fix/latest-search-free, main]
 
 permissions:
   contents: write
@@ -15,92 +15,53 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: fix/latest-search-free
+          ref: ${{ github.ref_name }}
 
       - name: Apply fixes
         run: |
           python3 <<'PY'
           from pathlib import Path
 
-          # ---- Gemini latest/current-search fix ----
           p = Path('server/geminiService.ts')
           s = p.read_text()
-          s = s.replace(
-              "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';\nexport const BACKEND_IDENTIFIER = 'MKUU Server';",
-              "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';\nexport const LIVE_SEARCH_MODEL = 'gemini-2.5-flash';\nexport const BACKEND_IDENTIFIER = 'MKUU Server';"
-          )
-          s = s.replace(
-              "    let aiReplyText = '';\n    let usedModel = PERSONAL_CHAT_MODEL;",
-              "    let aiReplyText = '';\n    const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;"
-          )
-          s = s.replace(
-              "        preferredModel: PERSONAL_CHAT_MODEL,",
-              "        preferredModel: usedModel,",
-              1
-          )
-          s = s.replace(
-              "console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider=\"${AI_PROVIDER}\" model=\"${PERSONAL_CHAT_MODEL}\" searchGrounding=${isSearchQuery}`);",
-              "console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider=\"${AI_PROVIDER}\" model=\"${usedModel}\" searchGrounding=${isSearchQuery}`);"
-          )
-          # Search failures must never silently fall back to stale model knowledge.
+          s = s.replace("export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';\nexport const BACKEND_IDENTIFIER = 'MKUU Server';", "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';\nexport const LIVE_SEARCH_MODEL = 'gemini-2.5-flash';\nexport const BACKEND_IDENTIFIER = 'MKUU Server';")
+          s = s.replace("    let aiReplyText = '';\n    let usedModel = PERSONAL_CHAT_MODEL;", "    let aiReplyText = '';\n    const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;")
+          s = s.replace("        preferredModel: PERSONAL_CHAT_MODEL,", "        preferredModel: usedModel,", 1)
+          s = s.replace("console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider=\"${AI_PROVIDER}\" model=\"${PERSONAL_CHAT_MODEL}\" searchGrounding=${isSearchQuery}`);", "console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider=\"${AI_PROVIDER}\" model=\"${usedModel}\" searchGrounding=${isSearchQuery}`);")
           old = """      if (isRateLimit) {\n        aiReplyText = `Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). \n\nTafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'** au unitumie ujumbe tena, nitaendelea kukuhudumia mara moja.`;\n      } else {\n        throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);\n      }"""
           new = """      if (isSearchQuery) {\n        throw new Error(`GOOGLE_SEARCH_REQUIRED: Live Google Search failed (${LIVE_SEARCH_MODEL}). MKUU will not answer this current-information question from stale model memory. ${errMsg}`);\n      }\n      if (isRateLimit) {\n        aiReplyText = `Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). \n\nTafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'**.`;\n      } else {\n        throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);\n      }"""
-          if old not in s:
-              raise SystemExit('Expected Gemini rate-limit block not found')
+          if old not in s: raise SystemExit('Expected Gemini rate-limit block not found')
           s = s.replace(old, new, 1)
           old2 = """    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;\n    const modelsToTry = [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];"""
-          new2 = """    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;\n    // Current-information requests must stay on the Search-grounded model.\n    // Never retry a Search request without the Search tool or with a stale model.\n    const modelsToTry = params.config?.tools\n      ? [preferred]\n      : [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];"""
-          if old2 not in s:
-              raise SystemExit('Expected model fallback block not found')
+          new2 = """    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;\n    // Search requests must never fall back to a non-search request or stale model.\n    const modelsToTry = params.config?.tools\n      ? [preferred]\n      : [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];"""
+          if old2 not in s: raise SystemExit('Expected model fallback block not found')
           s = s.replace(old2, new2, 1)
           old3 = """        // If tools (search grounding) caused quota limit (429) or invalid argument, immediately try this model without tools\n        if (params.config?.tools) {\n          try {\n            console.log(`[MKUU-BACKEND] Retrying ${model} without search tools due to tool limit...`);\n            const configWithoutTools = { ...params.config };\n            delete configWithoutTools.tools;\n            const retryRes = await client.models.generateContent({\n              model,\n              contents: params.contents,\n              config: configWithoutTools,\n            });\n            if (retryRes.text && retryRes.text.trim().length > 0) {\n              return retryRes.text;\n            }\n          } catch (noToolErr) {\n            lastError = noToolErr;\n          }\n        }\n\n"""
-          if old3 not in s:
-              raise SystemExit('Expected no-tool fallback block not found')
+          if old3 not in s: raise SystemExit('Expected no-tool fallback block not found')
           s = s.replace(old3, '', 1)
-          s = s.replace(
-              "chatModel: PERSONAL_CHAT_MODEL,\n      latencyMs,",
-              "chatModel: usedModel,\n      latencyMs,",
-              1
-          )
-          s = s.replace(
-              "Seva ya nyuma (backend) ya MKUU inaendeshwa na injini ya **Google Gemini API** kupitia modeli ya **Gemini 3.7 Flash (${PERSONAL_CHAT_MODEL})**.",
-              "Seva ya nyuma (backend) ya MKUU inaendeshwa na **Google Gemini API**. Chat ya kawaida hutumia **Gemini 3.7 Flash**; maswali ya taarifa zinazobadilika hutumia **Gemini 2.5 Flash + Google Search grounding**."
-          )
+          s = s.replace("chatModel: PERSONAL_CHAT_MODEL,\n      latencyMs,", "chatModel: usedModel,\n      latencyMs,", 1)
+          s = s.replace("Seva ya nyuma (backend) ya MKUU inaendeshwa na injini ya **Google Gemini API** kupitia modeli ya **Gemini 3.7 Flash (${PERSONAL_CHAT_MODEL})**.", "Seva ya nyuma (backend) ya MKUU inaendeshwa na **Google Gemini API**. Chat ya kawaida hutumia Gemini 3.7 Flash; maswali ya taarifa zinazobadilika hutumia Gemini 2.5 Flash + Google Search grounding.")
           p.write_text(s)
 
-          # ---- Puter client image fix ----
           p = Path('src/services/puterImageStudio.ts')
           s = p.read_text()
-          s = s.replace(
-              "async function ensurePuterAuth(puter: any): Promise<void> {\n  try {\n    if (puter.auth?.isSignedIn?.()) return;\n    if (puter.auth?.signIn) await puter.auth.signIn({ attempt_temp_user_creation: true });\n  } catch (error: any) {\n    throw new Error(`PUTER_AUTH_REQUIRED: ${error?.msg || error?.message || 'Puter authentication failed.'}`);\n  }\n}\n\n",
-              "async function ensurePuterAuth(puter: any): Promise<void> {\n  if (puter.auth?.isSignedIn?.()) return;\n  throw new Error('PUTER_AUTH_REQUIRED: Image Studio inahitaji Puter authentication. Fungua Image Studio na ingia Puter mara moja, kisha ujaribu tena. MKUU hatafungua login link yenyewe wakati wa kutuma command.');\n}\n\n"
-          )
+          s = s.replace("async function ensurePuterAuth(puter: any): Promise<void> {\n  try {\n    if (puter.auth?.isSignedIn?.()) return;\n    if (puter.auth?.signIn) await puter.auth.signIn({ attempt_temp_user_creation: true });\n  } catch (error: any) {\n    throw new Error(`PUTER_AUTH_REQUIRED: ${error?.msg || error?.message || 'Puter authentication failed.'}`);\n  }\n}\n\n", "async function ensurePuterAuth(puter: any): Promise<void> {\n  if (puter.auth?.isSignedIn?.()) return;\n  throw new Error('PUTER_AUTH_REQUIRED: Image Studio inahitaji Puter authentication. Ingia Puter mara moja kwenye Image Studio, kisha ujaribu tena. MKUU hatafungua login link yenyewe wakati wa kutuma command.');\n}\n\n")
           old_extract = """function extractImage(result: any): string {\n  const image = result?.message?.images?.[0]?.image_url?.url || result?.images?.[0]?.image_url?.url || result?.image?.image_url?.url;\n  if (typeof image === 'string' && image.startsWith('data:image/')) return image;\n  if (typeof result?.src === 'string' && result.src.startsWith('data:image/')) return result.src;\n  throw new Error('PUTER_IMAGE_EMPTY: Puter returned no generated image data.');\n}"""
-          new_extract = """function extractImage(result: any): string {\n  // Puter txt2img() returns an HTMLImageElement. Do not expect an OpenAI-style JSON payload.\n  if (result && typeof result.src === 'string') {\n    if (result.src.startsWith('data:image/')) return result.src;\n    if (/^https?:\\/\\//i.test(result.src)) return result.src;\n  }\n  const image = result?.message?.images?.[0]?.image_url?.url || result?.images?.[0]?.image_url?.url || result?.image?.image_url?.url;\n  if (typeof image === 'string' && (image.startsWith('data:image/') || /^https?:\\/\\//i.test(image))) return image;\n  throw new Error('PUTER_IMAGE_EMPTY: Puter returned no generated image data.');\n}"""
-          if old_extract not in s:
-              raise SystemExit('Expected Puter image extractor not found')
+          new_extract = """function extractImage(result: any): string {\n  // Puter txt2img() returns an HTMLImageElement, not an OpenAI-style JSON response.\n  if (result && typeof result.src === 'string') {\n    if (result.src.startsWith('data:image/')) return result.src;\n    if (/^https?:\\/\\//i.test(result.src)) return result.src;\n  }\n  const image = result?.message?.images?.[0]?.image_url?.url || result?.images?.[0]?.image_url?.url || result?.image?.image_url?.url;\n  if (typeof image === 'string' && (image.startsWith('data:image/') || /^https?:\\/\\//i.test(image))) return image;\n  throw new Error('PUTER_IMAGE_EMPTY: Puter returned no generated image data.');\n}"""
+          if old_extract not in s: raise SystemExit('Expected Puter image extractor not found')
           s = s.replace(old_extract, new_extract, 1)
-          s = s.replace(
-              "    const fileType = 'png';",
-              "    const fileType = 'png';",
-              1
-          )
           p.write_text(s)
 
-          # ---- Route Image Studio through the corrected client Puter implementation ----
           p = Path('src/services/aiEngine.ts')
           s = p.read_text()
           import_line = "import { runPuterImageStudio } from './puterImageStudio';"
           if import_line not in s:
               marker = "import { clientGenerateFile } from './services/clientFileGenerator';"
-              if marker in s:
-                  s = s.replace(marker, marker + "\n" + import_line, 1)
-              else:
-                  raise SystemExit('aiEngine import marker not found')
+              if marker not in s: raise SystemExit('aiEngine import marker not found')
+              s = s.replace(marker, marker + "\n" + import_line, 1)
           start = s.find('async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResult> {')
           end = s.find('\nasync function callDirectGemini', start)
-          if start < 0 or end < 0:
-              raise SystemExit('aiEngine callImageStudio boundaries not found')
+          if start < 0 or end < 0: raise SystemExit('aiEngine callImageStudio boundaries not found')
           new_fn = r'''async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResult> {
   const attachments = params.attachments || [];
   const imageAttachment = attachments.find((a: any) => String(a?.mimeType || '').startsWith('image/'));
@@ -113,23 +74,23 @@ jobs:
         ? 'Picha_Iliyohaririwa_Mkuu.png'
         : (String(params.message || '').toLowerCase().includes('logo') ? 'Logo_ya_Mkuu.png' : 'Picha_ya_Mkuu.png'),
     });
-    const file = result.file;
     return {
       reply: 'Picha halisi imetengenezwa/kuhaririwa na MKUU Image Studio na iko tayari hapa chini.',
       cleanSpeechText: 'Picha halisi imetengenezwa au kuhaririwa na MKUU Image Studio na iko tayari hapa chini.',
-      generatedFiles: [file],
+      generatedFiles: [result.file],
       engineUsed: 'server',
       aiProvider: 'Puter Image Studio',
       chatModel: result.model || 'gemini-3.1-flash-image-preview',
       intent: imageAttachment ? 'image_edit' : 'image_generation',
     };
   } catch (error: any) {
+    const needsLogin = String(error?.message || '').startsWith('PUTER_AUTH_REQUIRED');
     throw new MkuuApiError({
-      code: String(error?.message || '').startsWith('PUTER_AUTH_REQUIRED') ? 'PUTER_AUTH_REQUIRED' : 'IMAGE_GENERATION_FAILED',
+      code: needsLogin ? 'PUTER_AUTH_REQUIRED' : 'IMAGE_GENERATION_FAILED',
       status: 503,
-      userMessage: String(error?.message || '').startsWith('PUTER_AUTH_REQUIRED')
+      userMessage: needsLogin
         ? 'IMAGE STUDIO INAHITAJI PUTER LOGIN\nIngia Puter mara moja kwenye Image Studio, kisha ujaribu tena.'
-        : 'IMAGE STUDIO IMESHINDWA KUTENGENEZA/ KUHARIRI PICHA\nTafadhali jaribu tena.',
+        : 'IMAGE STUDIO IMESHINDWA KUTENGENEZA/KUHARIRI PICHA\nTafadhali jaribu tena.',
       technicalDetails: String(error?.message || error),
       targetUrl: 'Puter Image Studio',
     });
@@ -142,13 +103,13 @@ jobs:
 
       - name: Verify changed code
         run: |
-          grep -n "LIVE_SEARCH_MODEL\|const modelsToTry = params.config?.tools\|PUTER_AUTH_REQUIRED" server/geminiService.ts src/services/puterImageStudio.ts
+          grep -n "LIVE_SEARCH_MODEL\|modelsToTry = params.config?.tools\|PUTER_AUTH_REQUIRED" server/geminiService.ts src/services/puterImageStudio.ts
           npx tsc --noEmit --pretty false || true
 
-      - name: Commit fixes and remove one-shot workflow
+      - name: Commit fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add server/geminiService.ts src/services/puterImageStudio.ts src/services/aiEngine.ts .github/workflows/apply-current-image-fix.yml
-          git commit -m "fix: prevent stale search fallback and correct Puter image handling"
-          git push origin fix/latest-search-free
+          git add server/geminiService.ts src/services/puterImageStudio.ts src/services/aiEngine.ts
+          git diff --cached --quiet || git commit -m "fix: prevent stale search fallback and correct Puter image handling"
+          git push origin "${GITHUB_REF_NAME}"
