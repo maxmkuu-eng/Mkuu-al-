@@ -16,23 +16,14 @@ const aiEngine = path.join(root, 'src/services/aiEngine.ts');
 const app = path.join(root, 'src/App.tsx');
 const chatView = path.join(root, 'src/components/ChatView.tsx');
 
-ensure(server, 'Tavily source metadata', (source) => {
-  if (!source.includes('getLastTavilySources')) {
-    const geminiImport = "import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from './server/geminiService.js';";
-    const tavilyImport = "import { getLastTavilySources } from './server/tavilySearch.js';";
-    if (source.includes(geminiImport)) source = source.replace(geminiImport, `${geminiImport}\n${tavilyImport}`);
-    else if (source.includes("import { searchWithTavily } from './server/tavilySearch.js';")) source = source.replace("import { searchWithTavily } from './server/tavilySearch.js';", "import { searchWithTavily, getLastTavilySources } from './server/tavilySearch.js';");
-  }
-  if (!source.includes('webSources:getLastTavilySources()')) {
+ensure(server, 'Tavily request-scoped source lifecycle', (source) => {
+  const oldImport = "import { getLastTavilySources } from './server/tavilySearch.js';";
+  const newImport = "import { getLastTavilySources, clearLastTavilySources } from './server/tavilySearch.js';";
+  if (source.includes(oldImport) && !source.includes(newImport)) source = source.replace(oldImport, newImport);
+  if (!source.includes('clearLastTavilySources(); // MKUU request-scoped source reset')) {
     source = source.replace(
-      'return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};',
-      'return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,webSources:getLastTavilySources(),aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};'
-    );
-  }
-  if (!source.includes("webSources:getLastTavilySources()})")) {
-    source = source.replace(
-      "res.write(`data: ${JSON.stringify({type:'done',...result})}\\n\\n`);",
-      "res.write(`data: ${JSON.stringify({type:'done',...result,webSources:getLastTavilySources()})}\\n\\n`);"
+      "  const processChatRequest = async (req:any) => {\n    const {message='',conversationId,conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};",
+      "  const processChatRequest = async (req:any) => {\n    // Sources belong to the current request only. Memory/history may persist, but web sources must never leak from a previous search.\n    clearLastTavilySources(); // MKUU request-scoped source reset\n    const {message='',conversationId,conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};"
     );
   }
   return source;
@@ -53,7 +44,6 @@ ensure(app, 'web-source message persistence', (source) => {
   return source;
 });
 
-// Source rendering belongs to enable-source-display.cjs. This script must never add a second footer.
 ensure(chatView, 'prevent duplicate source footer', (source) => source);
 
-console.log('MKUU: live-search/source build patch is idempotent.');
+console.log('MKUU: live-search/source build patch is idempotent and request-scoped.');
