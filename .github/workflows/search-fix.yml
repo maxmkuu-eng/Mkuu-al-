@@ -20,3 +20,4 @@ jobs:
           git rm .github/workflows/search-fix.yml .github/scripts/search_fix.py
           git commit -m "fix: live search"
           git push
+# trigger live-search patch
