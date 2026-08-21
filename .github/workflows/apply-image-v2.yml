@@ -1,0 +1,34 @@
+name: Apply MKUU image v2 fix
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch image authentication and response handling
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('src/services/puterImageStudio.ts')
+          s=p.read_text()
+          old="""async function ensurePuterAuth(puter: any): Promise<void> {\n  try {\n    if (puter.auth?.isSignedIn?.()) return;\n    if (puter.auth?.signIn) await puter.auth.signIn({ attempt_temp_user_creation: true });\n  } catch (error: any) {\n    throw new Error(`PUTER_AUTH_REQUIRED: ${error?.msg || error?.message || 'Puter authentication failed.'}`);\n  }\n}\n\n"""
+          new="""async function ensurePuterAuth(puter: any): Promise<void> {\n  if (puter.auth?.isSignedIn?.()) return;\n  throw new Error('PUTER_AUTH_REQUIRED: Image Studio inahitaji Puter authentication. Ingia Puter mara moja kwenye Image Studio, kisha ujaribu tena. MKUU hatafungua login link yenyewe wakati wa kutuma command.');\n}\n\n"""
+          if old in s: s=s.replace(old,new,1)
+          old="""function extractImage(result: any): string {\n  const image = result?.message?.images?.[0]?.image_url?.url || result?.images?.[0]?.image_url?.url || result?.image?.image_url?.url;\n  if (typeof image === 'string' && image.startsWith('data:image/')) return image;\n  if (typeof result?.src === 'string' && result.src.startsWith('data:image/')) return result.src;\n  throw new Error('PUTER_IMAGE_EMPTY: Puter returned no generated image data.');\n}"""
+          new="""function extractImage(result: any): string {\n  if (result && typeof result.src === 'string') {\n    if (result.src.startsWith('data:image/')) return result.src;\n    if (/^https?:\\/\\//i.test(result.src)) return result.src;\n  }\n  const image = result?.message?.images?.[0]?.image_url?.url || result?.images?.[0]?.image_url?.url || result?.image?.image_url?.url;\n  if (typeof image === 'string' && (image.startsWith('data:image/') || /^https?:\\/\\//i.test(image))) return image;\n  throw new Error('PUTER_IMAGE_EMPTY: Puter returned no generated image data.');\n}"""
+          if old in s: s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Commit image patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/services/puterImageStudio.ts
+          if ! git diff --cached --quiet; then git commit -m "fix: prevent automatic Puter login and parse real image output"; git push; fi
