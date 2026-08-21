@@ -142,7 +142,13 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
       intent: isGeneration ? 'image_generation' : 'image_edit',
     };
   } catch (error: any) {
-    const details = String(error?.message || error || 'Unknown Puter Image Studio error');
+    const raw = error?.message ?? error?.error ?? error?.details ?? error;
+    let details = '';
+    if (typeof raw === 'string') details = raw;
+    else {
+      try { details = JSON.stringify(raw); } catch { details = String(raw); }
+    }
+    if (!details || details === '[object Object]') details = 'Unknown Puter Image Studio error';
     throw new MkuuApiError({
       code: 'PUTER_IMAGE_FAILED',
       status: 502,
