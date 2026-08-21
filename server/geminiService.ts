@@ -11,7 +11,7 @@ import { generateRealFile } from './files.js';
 
 export const AI_PROVIDER = 'Google Gemini';
 export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';
-export const LIVE_SEARCH_MODEL = 'gemini-2.5-flash';
+export const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';
 export const BACKEND_IDENTIFIER = 'MKUU Server';
 
 // Multi-candidate fallback list for resilience (using models available on standard tier)
