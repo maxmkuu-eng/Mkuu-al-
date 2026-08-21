@@ -3,8 +3,21 @@ const fs = require('node:fs');
 const file = 'server/geminiService.ts';
 let source = fs.readFileSync(file, 'utf8');
 
-// fix-source-request-scope.cjs runs before this script, so target the current
-// Tavily call rather than the pre-patch source text.
+// The sports patch must be build-order safe and must never inject literal
+// backslash-n sequences between TypeScript statements.
+source = source
+  .replace(/\\\\n        const nextMatchIntent/g, '\n        const nextMatchIntent')
+  .replace(/\\\\n        const opponentIntent/g, '\n        const opponentIntent')
+  .replace(/\\\\n        const timeIntent/g, '\n        const timeIntent')
+  .replace(/\\\\n        const broadScheduleIntent/g, '\n        const broadScheduleIntent')
+  .replace(/\\\\n        const sportsFocus/g, '\n        const sportsFocus')
+  .replace(/\\\\n        const originalTavilyQuery/g, '\n        const originalTavilyQuery')
+  .replace(/\\\\n        const tavilyQuery/g, '\n        const tavilyQuery')
+  .replace(/\\\\n        const tavilyResults = await searchWithTavily\(tavilyQuery\);/g, '\n        const tavilyResults = await searchWithTavily(tavilyQuery);');
+
+// Also repair the exact malformed sequence produced by the previous version.
+source = source.replace('message.toLowerCase().trim();\\n        const nextMatchIntent', 'message.toLowerCase().trim();\n        const nextMatchIntent');
+
 if (!source.includes('const nextMatchIntent =')) {
   const searchCall = /const tavilyResults = await searchWithTavily\(([\s\S]*?)\);/;
   const match = source.match(searchCall);
@@ -20,7 +33,7 @@ if (!source.includes('const nextMatchIntent =')) {
     'const originalTavilyQuery = ' + match[1] + ';',
     "const tavilyQuery = nextMatchIntent && !broadScheduleIntent ? `${message}\\nFind the NEXT upcoming match only for the specifically named team. Do not return a general schedule.\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}` : originalTavilyQuery;",
     'const tavilyResults = await searchWithTavily(tavilyQuery);',
-  ].join('\\n        ');
+  ].join('\n        ');
 
   source = source.replace(searchCall, newBlock);
 }
@@ -30,9 +43,9 @@ if (!source.includes('If sportsFocus is non-empty')) {
   if (!source.includes(promptAnchor)) throw new Error('MKUU: live search prompt anchor not found.');
   source = source.replace(
     promptAnchor,
-    '${sportsFocus}\\n- If sportsFocus is non-empty, follow it strictly and answer only the requested next-match detail.\\nSTRICT LIVE-DATA RULES:'
+    '${sportsFocus}\n- If sportsFocus is non-empty, follow it strictly and answer only the requested next-match detail.\nSTRICT LIVE-DATA RULES:'
   );
 }
 
 fs.writeFileSync(file, source, 'utf8');
-console.log('MKUU: sports intent patch now targets the post-source-scope Tavily call and is build-order safe.');
+console.log('MKUU: sports intent patch is build-order safe and free of malformed literal statement separators.');
