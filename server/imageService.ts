@@ -79,10 +79,33 @@ async function waitForGeneration(generationId: string): Promise<string> {
     const data = await pixelRequest(`/v1/image/${encodeURIComponent(generationId)}`, { method: 'GET' });
     if (data.status === 'completed' && data.output_url) return String(data.output_url);
     if (data.status === 'failed' || data.status === 'blocked') {
-      throw new Error(`PIXELAPI_IMAGE_PROCESSING_ERROR: ${data.status}`);
+      throw new Error(`PIXELAPI_IMAGE_PROCESSING_ERROR: ${data.status}${data.error ? ` - ${String(data.error).slice(0, 300)}` : ''}`);
     }
   }
   throw new Error('PIXELAPI_IMAGE_TIMEOUT: image processing did not complete within 120 seconds.');
+}
+
+function getGenerationId(data: any): string | null {
+  const id = data?.generation_id ?? data?.job_id ?? data?.id ?? data?.result?.generation_id ?? data?.result?.job_id ?? data?.result?.id;
+  return id ? String(id) : null;
+}
+
+async function resolveImageResponse(data: any, operation: string): Promise<string> {
+  const directUrl = data?.output_url ?? data?.result?.output_url ?? data?.url ?? data?.result?.url;
+  if (directUrl) return downloadAsBase64(String(directUrl));
+
+  const base64 = data?.result_b64 ?? data?.output_b64 ?? data?.result?.result_b64 ?? data?.result?.output_b64;
+  if (typeof base64 === 'string' && base64.length > 0) return stripDataUrl(base64);
+
+  const inlineOutput = data?.output ?? data?.result?.output;
+  if (typeof inlineOutput === 'string' && inlineOutput.length > 0) {
+    return inlineOutput.startsWith('data:') ? stripDataUrl(inlineOutput) : inlineOutput;
+  }
+
+  const generationId = getGenerationId(data);
+  if (generationId) return downloadAsBase64(await waitForGeneration(generationId));
+
+  throw new Error(`PIXELAPI_IMAGE_API_EMPTY: ${operation} response contained no image output. Response: ${JSON.stringify(data).slice(0, 800)}`);
 }
 
 async function downloadAsBase64(url: string): Promise<string> {
@@ -101,11 +124,7 @@ async function editImage(imageBase64: string, mimeType: string, instruction: str
       prompt: instruction,
     }),
   });
-
-  if (data.output_url) return downloadAsBase64(String(data.output_url));
-  if (data.output && typeof data.output === 'string') return stripDataUrl(data.output);
-  if (data.generation_id) return downloadAsBase64(await waitForGeneration(String(data.generation_id)));
-  throw new Error('PIXELAPI_IMAGE_API_EMPTY: edit response contained no image output.');
+  return resolveImageResponse(data, 'edit');
 }
 
 async function generateImage(prompt: string): Promise<string> {
@@ -113,30 +132,27 @@ async function generateImage(prompt: string): Promise<string> {
     method: 'POST',
     body: JSON.stringify({ model: 'fast-image', prompt, width: 1024, height: 1024 }),
   });
-  if (data.output_url) return downloadAsBase64(String(data.output_url));
-  if (data.generation_id) return downloadAsBase64(await waitForGeneration(String(data.generation_id)));
-  throw new Error('PIXELAPI_IMAGE_API_EMPTY: generation response contained no image output.');
+  return resolveImageResponse(data, 'generation');
 }
 
 async function removeBackground(imageBase64: string, mimeType: string): Promise<string> {
   const form = new FormData();
-  const bytes = Buffer.from(imageBase64, 'base64');
-  form.append('image', new Blob([bytes], { type: mimeType }), 'image.png');
+  const bytes = Buffer.from(stripDataUrl(imageBase64), 'base64');
+  const extension = (mimeType || 'image/png').split('/')[1] || 'png';
+  form.append('image', new Blob([bytes], { type: mimeType || 'image/png' }), `source.${extension}`);
+
   const data = await pixelRequest('/v1/image/remove-background', { method: 'POST', body: form });
-  if (data.output_url) return downloadAsBase64(String(data.output_url));
-  if (data.generation_id) return downloadAsBase64(await waitForGeneration(String(data.generation_id)));
-  throw new Error('PIXELAPI_IMAGE_API_EMPTY: background-removal response contained no image output.');
+  return resolveImageResponse(data, 'background-removal');
 }
 
 async function removeObject(imageBase64: string, mimeType: string, prompt: string): Promise<string> {
   const form = new FormData();
-  const bytes = Buffer.from(imageBase64, 'base64');
-  form.append('image', new Blob([bytes], { type: mimeType }), 'image.png');
+  const bytes = Buffer.from(stripDataUrl(imageBase64), 'base64');
+  const extension = (mimeType || 'image/png').split('/')[1] || 'png';
+  form.append('image', new Blob([bytes], { type: mimeType || 'image/png' }), `source.${extension}`);
   form.append('prompt', prompt);
   const data = await pixelRequest('/v1/image/remove-object', { method: 'POST', body: form });
-  if (data.output_url) return downloadAsBase64(String(data.output_url));
-  if (data.generation_id) return downloadAsBase64(await waitForGeneration(String(data.generation_id)));
-  throw new Error('PIXELAPI_IMAGE_API_EMPTY: object-removal response contained no image output.');
+  return resolveImageResponse(data, 'object-removal');
 }
 
 export class ImageService {
