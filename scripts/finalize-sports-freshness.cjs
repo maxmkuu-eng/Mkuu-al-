@@ -13,11 +13,9 @@ function patch(file, label, fn) {
 
 patch('server/tavilySearch.ts', 'authoritative TFF sports search', (source) => {
   if (source.includes('MKUU_TFF_SPORTS_FRESHNESS')) return source;
-
   const marker = 'const settled=await Promise.allSettled(searches);';
   if (!source.includes(marker)) throw new Error('MKUU: sports freshness search insertion point not found.');
-
-  const injected = `// MKUU_TFF_SPORTS_FRESHNESS\nif(sports){\n  const relativeDate = containsRelativeDay(query,'kesho') ? getTanzaniaDate(1) : containsRelativeDay(query,'jana') ? getTanzaniaDate(-1) : getTanzaniaDate(0);\n  searches.unshift(runTavilySearch(\`${query} Tanzania Football Federation official fixture kickoff ${relativeDate}\`,'general',['tff-tickets.com']));\n  searches.unshift(runTavilySearch(\`${query} official TFF fixture kickoff time Tanzania ${relativeDate}\`,'general',['tff-tickets.com']));\n}\n`;
+  const injected = `// MKUU_TFF_SPORTS_FRESHNESS\nif(sports){\n  const relativeDate = containsRelativeDay(query,'kesho') ? getTanzaniaDate(1) : containsRelativeDay(query,'jana') ? getTanzaniaDate(-1) : getTanzaniaDate(0);\n  searches.unshift(runTavilySearch(\`${query} Tanzania Football Federation official fixture kickoff \${relativeDate}\`,'general',['tff-tickets.com']));\n  searches.unshift(runTavilySearch(\`${query} official TFF fixture kickoff time Tanzania \${relativeDate}\`,'general',['tff-tickets.com']));\n}\n`;
   return source.replace(marker, injected + marker);
 });
 
