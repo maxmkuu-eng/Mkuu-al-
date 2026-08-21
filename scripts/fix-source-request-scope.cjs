@@ -23,27 +23,14 @@ export function getTavilySourcesForQuery(query: string): TavilySource[] {
     );
   }
 
-  const governmentNeedle = `   lastTavilySources=[
-     {title:'Ikulu — Baraza la Mawaziri (primary)',url:'https://www.ikulu.go.tz/index.php/cabinet'},`;
   if (!source.includes('tavilySourcesByQuery.set(sourceKey(query), [...lastTavilySources])')) {
-    const governmentReplacement = `${governmentNeedle}
+    const govNeedle = `   lastTavilySources=[
+     {title:'Ikulu — Baraza la Mawaziri (primary)',url:'https://www.ikulu.go.tz/index.php/cabinet'},
      ...secondary.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,8),
-   ];
-   tavilySourcesByQuery.set(sourceKey(query), [...lastTavilySources]);`;
-    source = source.replace(
-      `${governmentNeedle}
-     ...secondary.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,8),
-   ];`,
-      governmentReplacement
-    );
-
-    source = source.replace(
-      ` lastTavilySources=results.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,6);
- return formatResults(results);`,
-      ` lastTavilySources=results.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,6);
- tavilySourcesByQuery.set(sourceKey(query), [...lastTavilySources]);
- return formatResults(results);`
-    );
+   ];`;
+    source = source.replace(govNeedle, govNeedle + `\n   tavilySourcesByQuery.set(sourceKey(query), [...lastTavilySources]);`);
+    const genericNeedle = ` lastTavilySources=results.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,6);\n return formatResults(results);`;
+    source = source.replace(genericNeedle, ` lastTavilySources=results.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,6);\n tavilySourcesByQuery.set(sourceKey(query), [...lastTavilySources]);\n return formatResults(results);`);
   }
   return source;
 });
@@ -53,39 +40,41 @@ patch('server/geminiService.ts', 'request-scoped source propagation', (source) =
     `import { searchWithTavily } from './tavilySearch.js';`,
     `import { searchWithTavily, getTavilySourcesForQuery } from './tavilySearch.js';`
   );
-
   source = source.replace(
     `        const tavilyResults = await searchWithTavily(\`${message}\\nCurrent date/time in Tanzania: \${getCurrentTanzaniaTimeContext().formattedString}\`);`,
-    `        const searchEvidenceQuery = \`${message}\\nCurrent date/time in Tanzania: \${getCurrentTanzaniaTimeContext().formattedString}\`;
-        const tavilyResults = await searchWithTavily(searchEvidenceQuery);`
+    `        const searchEvidenceQuery = \`${message}\\nCurrent date/time in Tanzania: \${getCurrentTanzaniaTimeContext().formattedString}\`;\n        const tavilyResults = await searchWithTavily(searchEvidenceQuery);`
   );
-
   if (!source.includes('requestWebSources')) {
-    source = source.replace(
-      `    let aiReplyText = '';`,
-      `    let aiReplyText = '';
-    let requestWebSources: Array<{ title: string; url: string }> = [];`
-    );
+    source = source.replace(`    let aiReplyText = '';`, `    let aiReplyText = '';\n    let requestWebSources: Array<{ title: string; url: string }> = [];`);
     source = source.replace(
       `        if (!aiReplyText?.trim()) throw new Error('Gemini returned an empty response after Tavily search.');`,
-      `        if (!aiReplyText?.trim()) throw new Error('Gemini returned an empty response after Tavily search.');
-        requestWebSources = getTavilySourcesForQuery(searchEvidenceQuery);`
+      `        if (!aiReplyText?.trim()) throw new Error('Gemini returned an empty response after Tavily search.');\n        requestWebSources = getTavilySourcesForQuery(searchEvidenceQuery);`
     );
     source = source.replace(
-      `      generatedFiles: generatedFilesList,
-      aiProvider: AI_PROVIDER,`,
-      `      generatedFiles: generatedFilesList,
-      webSources: requestWebSources,
-      aiProvider: AI_PROVIDER,`
+      `      generatedFiles: generatedFilesList,\n      aiProvider: AI_PROVIDER,`,
+      `      generatedFiles: generatedFilesList,\n      webSources: requestWebSources,\n      aiProvider: AI_PROVIDER,`
     );
     source = source.replace(
-      `  generatedFiles: GeneratedFileSummary[];
-  aiProvider:`,
-      `  generatedFiles: GeneratedFileSummary[];
-  webSources: Array<{ title: string; url: string }>;
-  aiProvider:`
+      `  generatedFiles: GeneratedFileSummary[];\n  aiProvider:`,
+      `  generatedFiles: GeneratedFileSummary[];\n  webSources: Array<{ title: string; url: string }>;\n  aiProvider:`
     );
   }
+  return source;
+});
+
+patch('server.ts', 'API response-owned sources', (source) => {
+  source = source.replace(
+    `const a={id:\`msg_\${Date.now()}_a\`,role:'assistant' as const,content:result.reply,timestamp:new Date().toISOString(),generatedFiles:result.generatedFiles,memoryExtracted:result.memoriesExtracted?.map(m=>m.content),personRecognized:result.peopleRecognized?.map(p=>p.name)};`,
+    `const a={id:\`msg_\${Date.now()}_a\`,role:'assistant' as const,content:result.reply,timestamp:new Date().toISOString(),generatedFiles:result.generatedFiles,memoryExtracted:result.memoriesExtracted?.map(m=>m.content),personRecognized:result.peopleRecognized?.map(p=>p.name),webSources:result.webSources||[]};`
+  );
+  source = source.replace(
+    `return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};`,
+    `return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,webSources:result.webSources||[],aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};`
+  );
+  source = source.replace(
+    `res.write(\`data: \${JSON.stringify({type:'done',...result})}\\n\\n\`);`,
+    `res.write(\`data: \${JSON.stringify({type:'done',...result,webSources:result.webSources||[]})}\\n\\n\`);`
+  );
   return source;
 });
 
