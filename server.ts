@@ -48,7 +48,17 @@ async function startServer() {
     if(!message && (!attachments||attachments.length===0)) throw new Error('Ujumbe au kiambatisho kinahitajika');
     let effectiveHistory=Array.isArray(conversationHistory)&&conversationHistory.length?conversationHistory:[];
     if(!effectiveHistory.length&&conversationId){const stored=db.getConversation(conversationId,DEFAULT_USER_ID);if(stored) effectiveHistory=stored.messages;}
-    const result=await geminiService.processChat({userId:DEFAULT_USER_ID,message,conversationHistory:effectiveHistory,isVoice,attachments});
+
+    // Current/changing facts must be grounded with live Google Search.  Prefixing
+    // the user request with an explicit search directive guarantees the existing
+    // GeminiService search-intent detector enables googleSearch for these queries.
+    const lowerMessage = String(message || '').toLowerCase();
+    const currentFactQuery = /\b(waziri mkuu|rais wa|makamu wa rais|kiongozi wa sasa|mkuu wa nchi|meya wa|mkuu wa|mkurugenzi wa|mwanasiasa|current|latest|sasa|wa sasa|leo|hivi punde|habari mpya|habari za leo|bei ya|thamani ya|exchange rate|rate ya|matokeo ya|ratiba ya|msimamo wa|nani ameshinda|nani kashinda)\b/i.test(lowerMessage);
+    const searchMessage = currentFactQuery && !/\b(tafuta google|search google|tafuta mtandaoni|search online)\b/i.test(lowerMessage)
+      ? `Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu. Swali la mtumiaji: ${message}`
+      : message;
+
+    const result=await geminiService.processChat({userId:DEFAULT_USER_ID,message:searchMessage,conversationHistory:effectiveHistory,isVoice,attachments});
     if(conversationId){let c=db.getConversation(conversationId,DEFAULT_USER_ID);const u={id:`msg_${Date.now()}_u`,role:'user' as const,content:message,timestamp:new Date().toISOString(),isVoice,attachments};const a={id:`msg_${Date.now()}_a`,role:'assistant' as const,content:result.reply,timestamp:new Date().toISOString(),generatedFiles:result.generatedFiles,memoryExtracted:result.memoriesExtracted?.map(m=>m.content),personRecognized:result.peopleRecognized?.map(p=>p.name)};if(c){c.messages.push(u,a);db.saveConversation(c);}else{c={id:conversationId,userId:DEFAULT_USER_ID,title:message.slice(0,35)||'Mazungumzo Mapya',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages:[u,a]};db.saveConversation(c);}}
     return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};
   };
@@ -67,7 +77,8 @@ async function startServer() {
   app.put('/api/memories/:id',(req,res)=>{const item=db.updateMemory(req.params.id,DEFAULT_USER_ID,req.body);if(!item)return res.status(404).json({error:'Kumbukumbu haijapatikana'});res.json(item);});
   app.delete('/api/memories/:id',(req,res)=>res.json({success:db.deleteMemory(req.params.id,DEFAULT_USER_ID)}));
   app.get('/api/people',(_req,res)=>res.json(db.getPeople(DEFAULT_USER_ID)));
-  app.post('/api/people',(req,res)=>{const {name,nickname,relationship,phone,email,notes,avatarColor}=req.body;if(!name||!relationship)return res.status(400).json({error:'Jina na Uhusiano vinahitajika'});res.json(db.addPerson({userId:DEFAULT_USER_ID,name,nickname,relationship,phone,email,notes,avatarColor:avatarColor||'blue'}));});
+  app.post('/api/people',(req,res)=>{const {name,nickname,relationship,phone,email,notes,avatarColor}=req.body;if(!name||!relationship)return res.status(400).json({error:'Jina na Uhusiano vinahitajika'});res.json(db.addPerson({userId:DEFAULT_USER_ID,name,nickname,relationship,phone,email,notes,avatarColor:avatarColor||'blue'}));
+  });
   app.put('/api/people/:id',(req,res)=>{const item=db.updatePerson(req.params.id,DEFAULT_USER_ID,req.body);if(!item)return res.status(404).json({error:'Mtu hajapatikana'});res.json(item);});
   app.delete('/api/people/:id',(req,res)=>res.json({success:db.deletePerson(req.params.id,DEFAULT_USER_ID)}));
 
