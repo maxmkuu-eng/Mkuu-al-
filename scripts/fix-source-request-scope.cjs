@@ -22,7 +22,6 @@ export function getTavilySourcesForQuery(query: string): TavilySource[] {
 }`
     );
   }
-
   if (!source.includes('tavilySourcesByQuery.set(sourceKey(query), [...lastTavilySources])')) {
     const govNeedle = `   lastTavilySources=[
      {title:'Ikulu — Baraza la Mawaziri (primary)',url:'https://www.ikulu.go.tz/index.php/cabinet'},
@@ -62,16 +61,18 @@ patch('server/geminiService.ts', 'request-scoped source propagation', (source) =
 });
 
 patch('server.ts', 'API response-owned sources', (source) => {
-  const oldImport = `import { getLastTavilySources } from './server/tavilySearch.js';`;
-  const newImport = `import { getLastTavilySources, clearLastTavilySources } from './server/tavilySearch.js';`;
-  if (source.includes(oldImport)) source = source.replace(oldImport, newImport);
-  else if (!source.includes('clearLastTavilySources')) {
-    source = source.replace(`import { universalAgent } from './server/agentEngine.js';`, `import { universalAgent } from './server/agentEngine.js';\nimport { clearLastTavilySources } from './server/tavilySearch.js';`);
+  // Always guarantee the reset import exists. A previous partial patch may
+  // have inserted the call but missed the import.
+  const resetImport = `import { clearLastTavilySources } from './server/tavilySearch.js';`;
+  if (!source.includes(resetImport)) {
+    const existing = `import { getLastTavilySources } from './server/tavilySearch.js';`;
+    if (source.includes(existing)) source = source.replace(existing, `import { getLastTavilySources, clearLastTavilySources } from './server/tavilySearch.js';`);
+    else source = source.replace(`import { universalAgent } from './server/agentEngine.js';`, `import { universalAgent } from './server/agentEngine.js';\n${resetImport}`);
   }
   if (!source.includes('clearLastTavilySources(); // MKUU request-scoped source reset')) {
     source = source.replace(
       `  const processChatRequest = async (req:any) => {\n    const {message='',conversationId,conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};`,
-      `  const processChatRequest = async (req:any) => {\n    // Web sources belong only to this request; memory/history remains persistent.\n    clearLastTavilySources(); // MKUU request-scoped source reset\n    const {message='',conversationId,conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};`
+      `  const processChatRequest = async (req:any) => {\n    clearLastTavilySources(); // MKUU request-scoped source reset\n    const {message='',conversationId,conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};`
     );
   }
   source = source.replace(
