@@ -15,7 +15,7 @@ source = source
   .replace(/\\\\n        const tavilyQuery/g, '\n        const tavilyQuery')
   .replace(/\\\\n        const tavilyResults = await searchWithTavily\(tavilyQuery\);/g, '\n        const tavilyResults = await searchWithTavily(tavilyQuery);');
 
-// Also repair the exact malformed sequence produced by the previous version.
+// Repair the exact malformed sequence produced by older versions.
 source = source.replace('message.toLowerCase().trim();\\n        const nextMatchIntent', 'message.toLowerCase().trim();\n        const nextMatchIntent');
 
 if (!source.includes('const nextMatchIntent =')) {
@@ -23,13 +23,15 @@ if (!source.includes('const nextMatchIntent =')) {
   const match = source.match(searchCall);
   if (!match) throw new Error('MKUU: Tavily search call not found for sports intent patch.');
 
+  // Use double quotes for the generated sportsFocus string so apostrophes such
+  // as men's/women's cannot terminate the generated TypeScript string.
   const newBlock = [
     'const lowerSearchMessage = message.toLowerCase().trim();',
     "const nextMatchIntent = /\\b(anacheza lini|inacheza lini|ata[ -]?cheza lini|mchezo unaofuata|mechi inayofuata|next match|when does .* play|when is .* playing)\\b/i.test(lowerSearchMessage);",
     "const opponentIntent = /\\b(anacheza na nani|inacheza na nani|mpinzani wake|opponent wake|who are .* playing)\\b/i.test(lowerSearchMessage);",
     "const timeIntent = /\\b(anacheza saa ngapi|inacheza saa ngapi|mechi ni saa ngapi|mchezo ni saa ngapi|what time .* play|what time is .* match)\\b/i.test(lowerSearchMessage);",
     "const broadScheduleIntent = /\\b(ratiba|schedule|fixtures|michezo yote|mechi zote|all matches|full schedule)\\b/i.test(lowerSearchMessage);",
-    "const sportsFocus = nextMatchIntent && !broadScheduleIntent ? 'SPORTS INTENT: Return ONLY the next relevant match for the specifically named team, not a broad men\\'s/women\\'s schedule. ' + (opponentIntent ? 'Prioritize the opponent. ' : '') + (timeIntent ? 'Prioritize kickoff time and convert it to Tanzania time (Africa/Dar_es_Salaam, UTC+3). ' : '') + 'Use the exact event date/time supported by the search evidence.' : '';",
+    'const sportsFocus = nextMatchIntent && !broadScheduleIntent ? "SPORTS INTENT: Return ONLY the next relevant match for the specifically named team, not a broad men\'s/women\'s schedule. " + (opponentIntent ? "Prioritize the opponent. " : "") + (timeIntent ? "Prioritize kickoff time and convert it to Tanzania time (Africa/Dar_es_Salaam, UTC+3). " : "") + "Use the exact event date/time supported by the search evidence." : "";',
     'const originalTavilyQuery = ' + match[1] + ';',
     "const tavilyQuery = nextMatchIntent && !broadScheduleIntent ? `${message}\\nFind the NEXT upcoming match only for the specifically named team. Do not return a general schedule.\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}` : originalTavilyQuery;",
     'const tavilyResults = await searchWithTavily(tavilyQuery);',
@@ -39,9 +41,9 @@ if (!source.includes('const nextMatchIntent =')) {
 }
 
 if (!source.includes('If sportsFocus is non-empty')) {
-  // Global Live Web Engine now owns the final grounding prompt. Support both
-  // the old and new prompt anchors so this optional sports refinement never
-  // breaks the build when another patch changes the prompt wording/order.
+  // Global Live Web Engine owns the final grounding prompt. Support both the
+  // old and new prompt anchors so this optional sports refinement never breaks
+  // when another patch changes the prompt wording/order.
   const promptAnchors = ['STRICT TAVILY AUTHORITY RULES:', 'STRICT LIVE-DATA RULES:'];
   const promptAnchor = promptAnchors.find(anchor => source.includes(anchor));
   if (promptAnchor) {
