@@ -1,0 +1,96 @@
+name: Fix Live Search
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-live-search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply live-search fix
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('server/geminiService.ts')
+          s = p.read_text(encoding='utf-8')
+
+          old_intent = """    // Direct search phrases
+    if (lower.startsWith('tafuta ') || lower.startsWith('search ') || lower.includes('google ')) {
+      return true;
+    }
+
+    return false;
+"""
+          new_intent = """    // Any question whose answer can change over time must use live Google Search.
+    // This is intentionally broad: current/latest/news/political figures, government,
+    // sports, prices, events and other time-sensitive facts must never rely on model memory.
+    const liveTerms = [
+      'sasa', 'wa sasa', 'kwa sasa', 'wasasa', 'current', 'currently', 'latest',
+      'leo', 'today', 'hivi sasa', 'hivi karibuni', 'mpya', 'habari', 'news',
+      'nani ni', 'nani ndiye', 'nani anaitwa', 'ni nani', 'waziri', 'rais',
+      'serikali', 'kiongozi', 'mkuu wa', 'mteule', 'uteuzi', 'tukio', 'matukio',
+      'bei', 'gharama', 'thamani', 'kiwango', 'dola', 'exchange', 'rate',
+      'matokeo', 'ratiba', 'msimamo', 'mechi', 'mchezo', 'score', 'won', 'winner'
+    ];
+    if (liveTerms.some((term) => lower.includes(term))) return true;
+
+    // Direct search phrases
+    if (lower.startsWith('tafuta ') || lower.startsWith('search ') || lower.includes('google ')) {
+      return true;
+    }
+
+    return false;
+"""
+          if old_intent not in s:
+              raise SystemExit('Expected search-intent block not found; refusing unsafe edit.')
+          s = s.replace(old_intent, new_intent, 1)
+
+          old_fallback = """        // If tools (search grounding) caused quota limit (429) or invalid argument, immediately try this model without tools
+        if (params.config?.tools) {
+          try {
+            console.log(`[MKUU-BACKEND] Retrying ${model} without search tools due to tool limit...`);
+            const configWithoutTools = { ...params.config };
+            delete configWithoutTools.tools;
+            const retryRes = await client.models.generateContent({
+              model,
+              contents: params.contents,
+              config: configWithoutTools,
+            });
+            if (retryRes.text && retryRes.text.trim().length > 0) {
+              return retryRes.text;
+            }
+          } catch (noToolErr) {
+            lastError = noToolErr;
+          }
+        }
+
+"""
+          new_fallback = """        // IMPORTANT: never retry a live-search request without Google Search.
+        // Doing so makes Gemini answer from stale model knowledge.
+        if (!params.config?.tools) {
+          // Non-search requests may continue through the normal model fallback pool.
+        }
+
+"""
+          if old_fallback not in s:
+              raise SystemExit('Expected search fallback block not found; refusing unsafe edit.')
+          s = s.replace(old_fallback, new_fallback, 1)
+
+          p.write_text(s, encoding='utf-8')
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/geminiService.ts
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "fix(search): force live web search for current information"
+          git push origin HEAD:main
