@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "node scripts/enable-autonomous-agent.cjs && node scripts/enable-gfm-markdown.cjs && node scripts/enable-live-search-ui.cjs && node scripts/fix-source-request-scope.cjs && node scripts/finalize-source-isolation.cjs && node scripts/finalize-sports-intent.cjs && node scripts/finalize-sports-freshness.cjs && node scripts/enable-fresh-information.cjs && node scripts/enable-source-display.cjs && node scripts/fix-source-eligibility.cjs && node scripts/enable-native-tts.cjs && node scripts/enable-puter-image-studio.cjs && node scripts/enable-assistant-manager-header.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "node scripts/enable-autonomous-agent.cjs && node scripts/enable-gfm-markdown.cjs && node scripts/enable-live-search-ui.cjs && node scripts/fix-source-request-scope.cjs && node scripts/finalize-source-isolation.cjs && node scripts/finalize-sports-intent.cjs && node scripts/finalize-sports-freshness.cjs && node scripts/enable-fresh-information-v2.cjs && node scripts/enable-source-display.cjs && node scripts/fix-source-eligibility.cjs && node scripts/enable-native-tts.cjs && node scripts/enable-puter-image-studio.cjs && node scripts/enable-assistant-manager-header.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -25,7 +25,7 @@
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
-    "openai": "^5.12.2",
+    "openai": "^5.12.0",
     "pdf-lib": "^1.17.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
@@ -36,6 +36,8 @@
     "@vitejs/plugin-react": "^4.3.4"
   },
   "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/express": "^4.17.21",
     "esbuild": "^0.25.0",
