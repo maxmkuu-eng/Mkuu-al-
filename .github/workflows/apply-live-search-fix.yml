@@ -1,0 +1,51 @@
+name: Apply Live Search Fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: force grounded live search') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch Gemini search behavior
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path('server/geminiService.ts')
+          s = p.read_text()
+
+          old = 'const isSearchQuery = this.detectSearchIntent(message);'
+          new = 'const isSearchQuery = true;'
+          if old not in s:
+              raise SystemExit('Expected search-intent line was not found')
+          s = s.replace(old, new, 1)
+
+          pattern = re.compile(
+              r"\n        # If tools \(search grounding\) caused quota limit \(429\) or invalid argument, immediately try this model without tools.*?\n        # Quick single wait of max 800ms if rate limited before checking fallback model",
+              re.S,
+          )
+          replacement = "\n        # Never retry a grounded request without search tools.\n        # Falling back without tools would allow Gemini's stale model knowledge to answer current questions.\n        # Quick single wait of max 800ms if rate limited before checking fallback model"
+          s2, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit('Expected ungrounded fallback block was not found')
+
+          p.write_text(s2)
+      - name: Commit and push
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/geminiService.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: force grounded live search"
+          git push
