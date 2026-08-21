@@ -25,10 +25,12 @@
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "openai": "^5.12.2",
+    "openai": "^5.12.2",
     "pdf-lib": "^1.17.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwindcss": "^4.1.0",
     "xlsx": "^0.18.5",
     "@vitejs/plugin-react": "^4.3.4"
