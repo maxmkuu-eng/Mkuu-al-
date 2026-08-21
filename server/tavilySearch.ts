@@ -2,6 +2,7 @@ export interface TavilySearchResult { title: string; url: string; content: strin
 export interface TavilySource { title: string; url: string; }
 let lastTavilySources: TavilySource[] = [];
 export function getLastTavilySources(): TavilySource[] { return [...lastTavilySources]; }
+export function clearLastTavilySources(): void { lastTavilySources = []; }
 
 const SPORTS_TERMS = ['yanga','young africans','simba sc','simba','azam fc','coastal union','polisi tanzania','jkt tanzania','namungo','mashujaa','geita gold','tabora united','mbeya city','mechi','mchezo','matokeo','score','kikosi','ratiba','magoli','mshindi','football','soccer','match','premier league','champions league','caf','tff','ligi kuu'];
 const STANDINGS_TERMS = ['msimamo','standings','table','league table','pointi','points','nafasi','position','pld','played','goal difference','tofauti ya magoli'];
@@ -51,14 +52,9 @@ function formatResults(results:TavilySearchResult[], offset=1):string {
 export async function searchWithTavily(query:string):Promise<string>{
  lastTavilySources=[]; const sports=isSportsQuery(query); const standings=isStandingsQuery(query); const government=isGovernmentQuery(query);
  if(government){
-   // Current-government questions use the live Ikulu cabinet snapshot as the primary
-   // authority, but ALSO retrieve corroborating official/public sources so the UI can
-   // show multiple sources. Secondary sources may corroborate or expose a newer change;
-   // they never get silently mixed with old cabinet information.
    let snapshot:string;
    try { snapshot=await getOfficialCabinetSnapshot(); }
    catch (err) { console.error('[MKUU-BACKEND] [OFFICIAL_GOVERNMENT_SOURCE_FAILED]', err); throw new Error('AUTHORITATIVE_GOVERNMENT_SOURCE_UNAVAILABLE: Ikulu current Cabinet could not be verified; refusing to answer from stale information.'); }
-
    const sourceSearches = await Promise.allSettled([
      runTavilySearch(`${query} current Tanzania government official`, 'general', ['tanzania.go.tz']),
      runTavilySearch(`${query} current cabinet Tanzania`, 'general', ['ikulu.go.tz']),
