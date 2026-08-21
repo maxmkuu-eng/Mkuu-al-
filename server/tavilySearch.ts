@@ -19,14 +19,13 @@ async function runTavilySearch(query:string,topic:'general'|'news',includeDomain
  const data=await response.json() as {results?:TavilySearchResult[]}; return Array.isArray(data.results)?data.results:[];
 }
 
-/** Direct authoritative current-cabinet fetch. Generic web results are NEVER mixed into this path. */
+/** Primary authoritative current-cabinet fetch. Other official sources are used as corroborating evidence and are shown to the user. */
 async function getOfficialCabinetSnapshot(): Promise<string> {
  const response = await fetch('https://www.ikulu.go.tz/index.php/cabinet', { headers: { Accept: 'text/html', 'User-Agent': 'MKUU-AI/1.0 current-government-verifier' }, cache: 'no-store' } as any);
  if (!response.ok) throw new Error(`Ikulu Cabinet HTTP ${response.status}`);
  const html = await response.text();
  const text = html.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/\s+/g,' ').trim();
  if (!/Baraza la Mawaziri/i.test(text)) throw new Error('Ikulu Cabinet page did not contain Cabinet data.');
-
  const wanted: Array<[string,string]> = [
    ['Waziri wa Habari, Utamaduni, Sanaa na Michezo','Waziri wa Habari, Utamaduni, Sanaa na Michezo'],
    ['Waziri wa Mawasiliano na Teknolojia ya Habari','Waziri wa Mawasiliano na Teknolojia ya Habari'],
@@ -42,20 +41,41 @@ async function getOfficialCabinetSnapshot(): Promise<string> {
    if(name) extracted.push(`${label}: ${name}`);
  }
  if(!extracted.length) throw new Error('Ikulu Cabinet page did not expose a recognized current office holder.');
- return `[LIVE OFFICIAL IKULU CABINET SNAPSHOT — FETCHED ${new Date().toISOString()}]\nSource: https://www.ikulu.go.tz/index.php/cabinet\n${extracted.join('\n')}\nIMPORTANT: This snapshot is authoritative current-government evidence. Ignore all older cabinet information.`;
+ return `[LIVE OFFICIAL IKULU CABINET SNAPSHOT — FETCHED ${new Date().toISOString()}]\nSource: https://www.ikulu.go.tz/index.php/cabinet\n${extracted.join('\n')}\nIMPORTANT: This is the primary authoritative current-government evidence. Older information must not override it.`;
+}
+
+function formatResults(results:TavilySearchResult[], offset=1):string {
+ return results.map((r,i)=>`[CHANZO ${i+offset}]\nKichwa: ${String(r?.title||'').trim()}\nURL: ${String(r?.url||'').trim()}\nTaarifa: ${String(r?.content||'').trim()}`).join('\n\n');
 }
 
 export async function searchWithTavily(query:string):Promise<string>{
  lastTavilySources=[]; const sports=isSportsQuery(query); const standings=isStandingsQuery(query); const government=isGovernmentQuery(query);
  if(government){
-   // HARD STOP against stale answers: current-government questions are allowed
-   // to use ONLY the live official Ikulu Cabinet page. No Tavily generic results,
-   // old articles, cache, conversation memory or Gemini memory can override it.
+   // Current-government questions use the live Ikulu cabinet snapshot as the primary
+   // authority, but ALSO retrieve corroborating official/public sources so the UI can
+   // show multiple sources. Secondary sources may corroborate or expose a newer change;
+   // they never get silently mixed with old cabinet information.
    let snapshot:string;
    try { snapshot=await getOfficialCabinetSnapshot(); }
    catch (err) { console.error('[MKUU-BACKEND] [OFFICIAL_GOVERNMENT_SOURCE_FAILED]', err); throw new Error('AUTHORITATIVE_GOVERNMENT_SOURCE_UNAVAILABLE: Ikulu current Cabinet could not be verified; refusing to answer from stale information.'); }
-   lastTavilySources=[{title:'Ikulu — Baraza la Mawaziri',url:'https://www.ikulu.go.tz/index.php/cabinet'}];
-   return snapshot+'\n\n[GOVERNMENT HARD RULES]\n- Use ONLY the live official Ikulu snapshot above for current cabinet/minister questions.\n- Never use model memory, old news, cached snippets, previous conversation claims, or generic search results to override it.\n- If the requested office is not present in the verified snapshot, say it could not be verified instead of guessing.\n- If the official page shows a changed or combined ministry, use exactly the current structure shown there.\n- Never merge an old cabinet with the current cabinet.';
+
+   const sourceSearches = await Promise.allSettled([
+     runTavilySearch(`${query} current Tanzania government official`, 'general', ['tanzania.go.tz']),
+     runTavilySearch(`${query} current cabinet Tanzania`, 'general', ['ikulu.go.tz']),
+     runTavilySearch(`${query} current Tanzania official`, 'general', ['parliament.go.tz']),
+     runTavilySearch(`${query} current Tanzania ministry official`, 'general', ['go.tz']),
+     runTavilySearch(`${query} Tanzania current cabinet`, 'general', ['cia.gov']),
+   ]);
+   const corroborating=sourceSearches.flatMap(r=>r.status==='fulfilled'?r.value:[]);
+   const unique=new Map<string,TavilySearchResult>();
+   for(const result of corroborating){const url=String(result?.url||'').trim();if(url&&!unique.has(url))unique.set(url,result);}
+   const secondary=Array.from(unique.values()).slice(0,10);
+   lastTavilySources=[
+     {title:'Ikulu — Baraza la Mawaziri (primary)',url:'https://www.ikulu.go.tz/index.php/cabinet'},
+     ...secondary.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,8),
+   ];
+   const sourceBlock=secondary.length?formatResults(secondary):'[CHANZO ZAIDI]\nHakuna chanzo cha pili kilichopatikana kwa wakati huu.';
+   return snapshot+'\n\n'+sourceBlock+'\n\n[GOVERNMENT SOURCE RULES]\n- Ikulu live snapshot is the PRIMARY source for the current cabinet.\n- Use the other displayed sources as corroboration and cross-checks.\n- Prefer a clearly newer official government change when it is explicitly dated and authoritative; never revive an older office holder from an old article.\n- Never merge an old cabinet with the current cabinet.\n- Cite/show the sources used for the answer so the user can inspect them.\n- If sources conflict and the newer official position cannot be established, say that the conflict could not be verified instead of guessing.';
  }
  const searches:Promise<TavilySearchResult[]>[]=[runTavilySearch(query,'general')];
  if(sports){
@@ -70,5 +90,5 @@ export async function searchWithTavily(query:string):Promise<string>{
  const results=Array.from(unique.values()).sort((a,b)=>Number(b.score||0)-Number(a.score||0)).slice(0,20);
  if(!results.length)throw new Error('Tavily Search returned no results.');
  lastTavilySources=results.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,6);
- return results.map((r,i)=>`[CHANZO ${i+1}]\nKichwa: ${String(r?.title||'').trim()}\nURL: ${String(r?.url||'').trim()}\nTaarifa: ${String(r?.content||'').trim()}`).join('\n\n');
+ return formatResults(results);
 }
