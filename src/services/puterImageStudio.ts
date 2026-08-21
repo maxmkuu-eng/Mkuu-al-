@@ -1,5 +1,3 @@
-import { apiFetch, getApiUrl, MkuuApiError } from './apiConfig';
-
 declare global {
   interface Window { puter?: any; }
 }
@@ -34,9 +32,7 @@ function toDataUrl(base64: string, mimeType: string): string {
 async function ensurePuterAuth(puter: any): Promise<void> {
   try {
     if (puter.auth?.isSignedIn?.()) return;
-    if (puter.auth?.signIn) {
-      await puter.auth.signIn({ attempt_temp_user_creation: true });
-    }
+    if (puter.auth?.signIn) await puter.auth.signIn({ attempt_temp_user_creation: true });
   } catch (error: any) {
     throw new Error(`PUTER_AUTH_REQUIRED: ${error?.msg || error?.message || 'Puter authentication failed.'}`);
   }
@@ -79,31 +75,25 @@ export async function runPuterImageStudio(params: {
       quality: '1K',
     });
   } else {
-    result = await puter.ai.txt2img(prompt, {
-      model: IMAGE_MODEL,
-      quality: '1K',
-    });
+    result = await puter.ai.txt2img(prompt, { model: IMAGE_MODEL, quality: '1K' });
   }
 
   const dataUrl = extractImage(result);
-  const base64Data = dataUrl.split(',')[1] || '';
-  if (!base64Data) throw new Error('PUTER_IMAGE_EMPTY: Empty image payload.');
-
+  const fileType = 'png';
   const filename = params.filename || (hasImage ? 'Picha_Iliyohaririwa_Mkuu.png' : 'Picha_ya_Mkuu.png');
-  const saveResponse = await apiFetch<any>('/api/image/save-client-image', {
-    method: 'POST',
-    body: JSON.stringify({ filename, mimeType: 'image/png', base64Data, prompt }),
-  });
+  const size = Math.max(0, Math.floor(((dataUrl.split(',')[1] || '').length * 3) / 4));
 
-  if (!saveResponse?.success || !saveResponse?.file) {
-    throw new MkuuApiError({
-      code: 'IMAGE_SAVE_FAILED',
-      status: 500,
-      userMessage: 'PICHA IMETENGENEZWA LAKINI IMESHINDWA KUHIFADHIWA. Tafadhali jaribu tena.',
-      technicalDetails: 'Puter returned image data but backend storage failed.',
-      targetUrl: getApiUrl('/api/image/save-client-image'),
-    });
-  }
-
-  return { file: saveResponse.file, model: IMAGE_MODEL };
+  return {
+    file: {
+      id: `puter_image_${Date.now()}`,
+      filename,
+      fileType,
+      size,
+      mimeType: 'image/png',
+      createdAt: new Date().toISOString(),
+      description: 'Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio kupitia Puter.',
+      downloadUrl: dataUrl,
+    },
+    model: IMAGE_MODEL,
+  };
 }
