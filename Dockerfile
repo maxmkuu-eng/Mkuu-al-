@@ -12,7 +12,9 @@ RUN npm install
 COPY . .
 
 # Build application (Vite + esbuild backend)
-RUN npm run build
+# Normalize the live-search model before compiling so the backend never ships
+# with the retired gemini-2.5-flash model.
+RUN sed -i "s/gemini-2\.5-flash/gemini-3.6-flash/g" server/geminiService.ts && npm run build
 
 # Production configuration
 ENV NODE_ENV=production
