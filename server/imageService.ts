@@ -45,7 +45,7 @@ function makePrompt(prompt: string, hasImage: boolean, isBgRemoval: boolean, isO
   if (!hasImage) return base;
   if (isBgRemoval) return `${base}\nRemove the background completely. Preserve the subject identity, face, hair, clothing, body proportions and important details.`;
   if (isObjectRemoval) return `${base}\nRemove the requested object or person and reconstruct the surrounding area naturally. Preserve the rest of the scene.`;
-  if (isClothingChange) return `${base}\nChange only the requested clothing while preserving identity, face, hair, body proportions and the rest of the scene.`;
+  if (isClothingChange) return `${base}\nChange only the requested clothing while preserving identity, face, body proportions and the rest of the scene.`;
   if (isHd) return `${base}\nImprove clarity and detail while preserving the identity and composition.`;
   return base;
 }
@@ -57,7 +57,9 @@ async function pixelRequest(path: string, init: RequestInit): Promise<any> {
   const headers = new Headers(init.headers || {});
   headers.set('Authorization', `Bearer ${key}`);
   headers.set('User-Agent', 'MKUU-AI/1.0');
-  if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json');
+  if (!(init.body instanceof FormData) && !headers.has('Content-Type') && init.body) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   const response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
   const text = await response.text();
@@ -72,7 +74,7 @@ async function pixelRequest(path: string, init: RequestInit): Promise<any> {
 }
 
 async function waitForGeneration(generationId: string): Promise<string> {
-  for (let attempt = 0; attempt < 45; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     const data = await pixelRequest(`/v1/image/${encodeURIComponent(generationId)}`, { method: 'GET' });
     if (data.status === 'completed' && data.output_url) return String(data.output_url);
@@ -80,7 +82,7 @@ async function waitForGeneration(generationId: string): Promise<string> {
       throw new Error(`PIXELAPI_IMAGE_PROCESSING_ERROR: ${data.status}`);
     }
   }
-  throw new Error('PIXELAPI_IMAGE_TIMEOUT: image processing did not complete within 90 seconds.');
+  throw new Error('PIXELAPI_IMAGE_TIMEOUT: image processing did not complete within 120 seconds.');
 }
 
 async function downloadAsBase64(url: string): Promise<string> {
@@ -95,8 +97,8 @@ async function editImage(imageBase64: string, mimeType: string, instruction: str
   const data = await pixelRequest('/v1/image/edit', {
     method: 'POST',
     body: JSON.stringify({
-      image_url: toDataUri(imageBase64, mimeType),
-      instruction,
+      image: toDataUri(imageBase64, mimeType),
+      prompt: instruction,
     }),
   });
 
@@ -109,7 +111,7 @@ async function editImage(imageBase64: string, mimeType: string, instruction: str
 async function generateImage(prompt: string): Promise<string> {
   const data = await pixelRequest('/v1/image/generate', {
     method: 'POST',
-    body: JSON.stringify({ model: 'fast-image', prompt }),
+    body: JSON.stringify({ model: 'fast-image', prompt, width: 1024, height: 1024 }),
   });
   if (data.output_url) return downloadAsBase64(String(data.output_url));
   if (data.generation_id) return downloadAsBase64(await waitForGeneration(String(data.generation_id)));
@@ -117,20 +119,21 @@ async function generateImage(prompt: string): Promise<string> {
 }
 
 async function removeBackground(imageBase64: string, mimeType: string): Promise<string> {
-  const data = await pixelRequest('/v1/image/remove-background', {
-    method: 'POST',
-    body: JSON.stringify({ image_url: toDataUri(imageBase64, mimeType) }),
-  });
+  const form = new FormData();
+  const bytes = Buffer.from(imageBase64, 'base64');
+  form.append('image', new Blob([bytes], { type: mimeType }), 'image.png');
+  const data = await pixelRequest('/v1/image/remove-background', { method: 'POST', body: form });
   if (data.output_url) return downloadAsBase64(String(data.output_url));
   if (data.generation_id) return downloadAsBase64(await waitForGeneration(String(data.generation_id)));
   throw new Error('PIXELAPI_IMAGE_API_EMPTY: background-removal response contained no image output.');
 }
 
 async function removeObject(imageBase64: string, mimeType: string, prompt: string): Promise<string> {
-  const data = await pixelRequest('/v1/image/remove-object', {
-    method: 'POST',
-    body: JSON.stringify({ image_url: toDataUri(imageBase64, mimeType), prompt }),
-  });
+  const form = new FormData();
+  const bytes = Buffer.from(imageBase64, 'base64');
+  form.append('image', new Blob([bytes], { type: mimeType }), 'image.png');
+  form.append('prompt', prompt);
+  const data = await pixelRequest('/v1/image/remove-object', { method: 'POST', body: form });
   if (data.output_url) return downloadAsBase64(String(data.output_url));
   if (data.generation_id) return downloadAsBase64(await waitForGeneration(String(data.generation_id)));
   throw new Error('PIXELAPI_IMAGE_API_EMPTY: object-removal response contained no image output.');
