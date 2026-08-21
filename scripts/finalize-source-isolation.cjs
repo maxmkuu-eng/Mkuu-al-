@@ -33,4 +33,33 @@ patch('server/tavilySearch.ts', 'clear stale sources when a request does not sea
   return source;
 });
 
-console.log('MKUU: Sources are isolated per response; memory remains persistent.');
+patch('server/geminiService.ts', 'capture sources per search response', (source) => {
+  source = source.replace(
+    "import { searchWithTavily } from './tavilySearch.js';",
+    "import { searchWithTavily, getLastTavilySources } from './tavilySearch.js';"
+  );
+
+  if (!source.includes('const tavilySourcesForResponse = getLastTavilySources();')) {
+    source = source.replace(
+      'const tavilyResults = await searchWithTavily(`${message}\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);',
+      'const tavilyResults = await searchWithTavily(`${message}\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);\n        const tavilySourcesForResponse = getLastTavilySources();'
+    );
+  }
+
+  if (!source.includes('webSources: isSearchQuery ? tavilySourcesForResponse : []')) {
+    source = source.replace(
+      'generatedFiles: generatedFilesList,\n      aiProvider: AI_PROVIDER,',
+      'generatedFiles: generatedFilesList,\n      webSources: isSearchQuery ? (typeof tavilySourcesForResponse !== \'undefined\' ? tavilySourcesForResponse : []) : [],\n      aiProvider: AI_PROVIDER,'
+    );
+  }
+
+  if (!source.includes('webSources: [] as Array<{ title: string; url: string }>,')) {
+    source = source.replace(
+      'generatedFiles: GeneratedFileSummary[];\n  aiProvider:',
+      'generatedFiles: GeneratedFileSummary[];\n  webSources: Array<{ title: string; url: string }>;\n  aiProvider:'
+    );
+  }
+  return source;
+});
+
+console.log('MKUU: Sources are isolated per response; memory remains persistent; searched responses keep only their own sources.');
