@@ -12,36 +12,49 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply current-search fix
+      - name: Apply safe Gemini service fixes
         run: |
           python3 <<'PY'
           from pathlib import Path
-          p=Path('server/geminiService.ts')
-          s=p.read_text()
-          if "export const LIVE_SEARCH_MODEL" not in s:
-              s=s.replace("export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';\nexport const BACKEND_IDENTIFIER", "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';\nexport const LIVE_SEARCH_MODEL = 'gemini-2.5-flash';\nexport const BACKEND_IDENTIFIER")
-          s=s.replace("    let aiReplyText = '';\n    let usedModel = PERSONAL_CHAT_MODEL;", "    let aiReplyText = '';\n    const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;")
-          s=s.replace("preferredModel: PERSONAL_CHAT_MODEL,", "preferredModel: usedModel,", 1)
-          s=s.replace("model=\"${PERSONAL_CHAT_MODEL}\" searchGrounding=${isSearchQuery}", "model=\"${usedModel}\" searchGrounding=${isSearchQuery}")
-          old="""      if (isRateLimit) {\n        aiReplyText = `Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). \n\nTafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'** au unitumie ujumbe tena, nitaendelea kukuhudumia mara moja.`;\n      } else {\n        throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);\n      }"""
-          new="""      if (isSearchQuery) {\n        throw new Error(`GOOGLE_SEARCH_REQUIRED: Live Google Search failed (${LIVE_SEARCH_MODEL}). MKUU will not answer this current-information question from stale model memory. ${errMsg}`);\n      }\n      if (isRateLimit) {\n        aiReplyText = `Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). Tafadhali jaribu tena.`;\n      } else {\n        throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);\n      }"""
-          if old not in s: raise SystemExit('search error block not found')
-          s=s.replace(old,new,1)
-          old="""    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;\n    const modelsToTry = [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];"""
-          new="""    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;\n    const modelsToTry = params.config?.tools ? [preferred] : [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];"""
-          if old not in s: raise SystemExit('fallback block not found')
-          s=s.replace(old,new,1)
-          start=s.find("        // If tools (search grounding) caused quota limit")
-          if start>=0:
-              end=s.find("        // Quick single wait", start)
-              if end<0: raise SystemExit('search retry end not found')
-              s=s[:start]+s[end:]
-          s=s.replace("chatModel: PERSONAL_CHAT_MODEL,\n      latencyMs,", "chatModel: usedModel,\n      latencyMs,", 1)
+          import re
+
+          p = Path('server/geminiService.ts')
+          s = p.read_text()
+
+          # Keep exactly one live-search model declaration and use Gemini 3.6 Flash.
+          s = re.sub(r"^export const LIVE_SEARCH_MODEL\s*=\s*[^;]+;\s*$\n?", "", s, flags=re.MULTILINE)
+          marker = "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';"
+          if marker not in s:
+              raise SystemExit('PERSONAL_CHAT_MODEL declaration not found')
+          s = s.replace(
+              marker,
+              marker + "\nexport const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';",
+              1,
+          )
+
+          # server.ts and agentEngine.ts import this named singleton.
+          singleton = "export const geminiService = GeminiService.getInstance();"
+          if singleton not in s:
+              s = s.rstrip() + "\n\n" + singleton + "\n"
+
           p.write_text(s)
           PY
+      - name: Verify Gemini service exports
+        run: |
+          grep -n "PERSONAL_CHAT_MODEL\|LIVE_SEARCH_MODEL\|geminiService = GeminiService.getInstance" server/geminiService.ts
+          test "$(grep -c "export const LIVE_SEARCH_MODEL" server/geminiService.ts)" -eq 1
+          grep -q "export const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';" server/geminiService.ts
+          grep -q "export const geminiService = GeminiService.getInstance();" server/geminiService.ts
+      - name: Build backend to catch TypeScript/esbuild export errors
+        run: |
+          npm ci
+          npm run build
       - name: Commit if changed
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add server/geminiService.ts
-          if ! git diff --cached --quiet; then git commit -m "fix: enforce live search without stale fallback"; git push; fi
+          git add server/geminiService.ts .github/workflows/apply-v2-direct.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: restore Gemini service singleton export"
+            git push
+          fi
