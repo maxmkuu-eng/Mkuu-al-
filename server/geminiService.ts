@@ -8,7 +8,7 @@ import { searchWithTavily } from './tavilySearch.js';
 // ============================================================================
 // Architecture:
 // MKUU AI APP -> MKUU BACKEND (/api/chat) -> GeminiService -> Google Gemini API (gemini-3.7-flash)
-// Live-search fallback: Google Search grounding -> Tavily -> Gemini without tools
+// Live-search path: Tavily -> Gemini without tools; Google Search is retained as a secondary fallback
 // ============================================================================
 
 export const AI_PROVIDER = 'Google Gemini';
@@ -142,59 +142,80 @@ export class GeminiService {
     const contents = this.buildConversationHistory(conversationHistory, message, attachments);
     const isSearchQuery = this.detectSearchIntent(message);
     const generationConfig: any = { systemInstruction: systemPrompt, temperature: 0.7 };
-    if (isSearchQuery) generationConfig.tools = [{ googleSearch: {} }];
     const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;
-    console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider="${AI_PROVIDER}" model="${usedModel}" searchGrounding=${isSearchQuery}`);
 
     let aiReplyText = '';
-    try {
-      aiReplyText = await this.executeGeminiCallWithFallback({ contents, config: generationConfig, preferredModel: usedModel });
 
-      if (!isSearchQuery && this.isInsufficientKnowledgeResponse(aiReplyText)) {
-        console.log('[MKUU-BACKEND] Insufficient knowledge detected. Retrying with Google Search grounding...');
+    // IMPORTANT: Current-information questions must be grounded in fresh web data.
+    // Tavily is the primary live-search provider so a successful Gemini response
+    // cannot silently bypass the web search and answer from stale model memory.
+    if (isSearchQuery) {
+      try {
+        console.log('[MKUU-BACKEND] [TAVILY_SEARCH_STARTED] Using Tavily for live web grounding.');
+        const tavilyResults = await searchWithTavily(`${message}\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);
+        const groundedSystemPrompt = `${systemPrompt}\n\nLIVE WEB SEARCH RESULTS (Tavily):\n${tavilyResults}\n\nSTRICT LIVE-DATA RULES:\n- Answer using the supplied live search results as the primary evidence.\n- Do not use stale model memory to override the search results.\n- Prefer the newest credible source and pay attention to publication dates and event dates.\n- For sports, report the exact latest result from the search evidence; do not substitute an older match.\n- For current public officials, report the current office holder supported by the newest credible source.\n- If sources conflict, explain the conflict briefly and prefer the newest authoritative source.\n- Never invent a name, score, date, or event that is not supported by the supplied results.\n- You may include source names/URLs when useful.\n`;
+        const groundedContents = this.buildConversationHistory(
+          conversationHistory,
+          `${message}\n\n[MKUU LIVE SEARCH EVIDENCE - use this evidence to answer]\n${tavilyResults}`,
+          attachments,
+        );
+        aiReplyText = await this.executeGeminiCallWithFallback({
+          contents: groundedContents,
+          config: { systemInstruction: groundedSystemPrompt, temperature: 0.2 },
+          preferredModel: PERSONAL_CHAT_MODEL,
+        });
+        if (!aiReplyText?.trim()) throw new Error('Gemini returned an empty response after Tavily search.');
+        console.log('[MKUU-BACKEND] [TAVILY_SEARCH_SUCCESS] Live search answer generated from fresh web evidence.');
+      } catch (tavilyErr: any) {
+        const tavilyMsg = String(tavilyErr?.message || tavilyErr);
+        console.warn(`[MKUU-BACKEND] [TAVILY_SEARCH_FAILED] ${tavilyMsg}`);
+
+        // Secondary fallback: Google Search grounding. This is only used when
+        // Tavily itself is unavailable; it can no longer silently win over Tavily.
         try {
+          console.warn('[MKUU-BACKEND] Falling back from Tavily to Google Search grounding.');
           const searchReplyText = await this.executeGeminiCallWithFallback({
             contents,
             config: { ...generationConfig, tools: [{ googleSearch: {} }] },
             preferredModel: usedModel,
           });
           if (searchReplyText?.trim()) aiReplyText = searchReplyText;
-        } catch (searchRetryErr) {
-          console.warn('[MKUU-BACKEND] Google Search retry warning:', searchRetryErr);
+          else throw new Error('Google Search grounding returned an empty response.');
+        } catch (googleErr: any) {
+          const googleMsg = String(googleErr?.message || googleErr);
+          console.error(`[MKUU-BACKEND] [LIVE_SEARCH_FAILED] Tavily and Google Search failed. Tavily=${tavilyMsg}; Google=${googleMsg}`);
+          throw new Error(`LIVE_SEARCH_UNAVAILABLE: Tavily and Google Search grounding both failed. ${tavilyMsg}`);
         }
       }
-      console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED] model="${usedModel}" latency=${Date.now() - startTime}ms status=200`);
-    } catch (err: any) {
-      const errMsg = String(err?.message || err);
-      console.error(`[MKUU-BACKEND] [GEMINI_REQUEST_FAILED] error="${errMsg}" latency=${Date.now() - startTime}ms`);
-      const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota') || errMsg.includes('Rate limit') || errMsg.includes('exceeded your current quota');
 
-      if (isSearchQuery) {
-        try {
-          console.warn('[MKUU-BACKEND] Google Search grounding failed. Falling back to Tavily Search.');
-          const tavilyResults = await searchWithTavily(message);
-          const groundedSystemPrompt = `${systemPrompt}\n\nLIVE WEB SEARCH RESULTS (Tavily fallback):\n${tavilyResults}\n\nIMPORTANT: Answer the user's question using these live search results. Do not claim that you performed Google Search. If sources disagree, say so and prefer the most recent credible source. Include source URLs when useful.`;
-          const groundedContents = this.buildConversationHistory(
-            conversationHistory,
-            `${message}\n\n[Live search results are provided below by the MKUU backend. Use them as evidence.]\n${tavilyResults}`,
-            attachments,
-          );
-          aiReplyText = await this.executeGeminiCallWithFallback({
-            contents: groundedContents,
-            config: { systemInstruction: groundedSystemPrompt, temperature: 0.7 },
-            preferredModel: PERSONAL_CHAT_MODEL,
-          });
-          if (!aiReplyText?.trim()) throw new Error('Gemini returned an empty response after Tavily fallback.');
-          console.log('[MKUU-BACKEND] [TAVILY_FALLBACK_SUCCESS] Live search recovered without Google grounding.');
-        } catch (fallbackErr: any) {
-          const fallbackMsg = String(fallbackErr?.message || fallbackErr);
-          console.error(`[MKUU-BACKEND] [TAVILY_FALLBACK_FAILED] ${fallbackMsg}`);
-          throw new Error(`LIVE_SEARCH_UNAVAILABLE: Google Search grounding and Tavily fallback both failed. ${fallbackMsg}`);
+      console.log(`[MKUU-BACKEND] [LIVE_SEARCH_RESPONSE_RECEIVED] model="${PERSONAL_CHAT_MODEL}" latency=${Date.now() - startTime}ms status=200`);
+    } else {
+      try {
+        aiReplyText = await this.executeGeminiCallWithFallback({ contents, config: generationConfig, preferredModel: PERSONAL_CHAT_MODEL });
+
+        if (this.isInsufficientKnowledgeResponse(aiReplyText)) {
+          console.log('[MKUU-BACKEND] Insufficient knowledge detected. Retrying with Google Search grounding...');
+          try {
+            const searchReplyText = await this.executeGeminiCallWithFallback({
+              contents,
+              config: { ...generationConfig, tools: [{ googleSearch: {} }] },
+              preferredModel: LIVE_SEARCH_MODEL,
+            });
+            if (searchReplyText?.trim()) aiReplyText = searchReplyText;
+          } catch (searchRetryErr) {
+            console.warn('[MKUU-BACKEND] Google Search retry warning:', searchRetryErr);
+          }
         }
-      } else if (isRateLimit) {
-        aiReplyText = 'Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). Tafadhali jaribu tena.';
-      } else {
-        throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);
+        console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED] model="${PERSONAL_CHAT_MODEL}" latency=${Date.now() - startTime}ms status=200`);
+      } catch (err: any) {
+        const errMsg = String(err?.message || err);
+        console.error(`[MKUU-BACKEND] [GEMINI_REQUEST_FAILED] error="${errMsg}" latency=${Date.now() - startTime}ms`);
+        const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota') || errMsg.includes('Rate limit') || errMsg.includes('exceeded your current quota');
+        if (isRateLimit) {
+          aiReplyText = 'Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). Tafadhali jaribu tena.';
+        } else {
+          throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);
+        }
       }
     }
 
@@ -272,12 +293,13 @@ MAADILI NA TABIA YA MKUU AI:
 6. **KANUNI YA MAFAILI NA NYARAKA:**
    - Mfumo huu una injini halisi ya kuzalisha mafaili (PDF, Excel, Word, CSV).
    - Ikiwa Max anaomba faili, mpe maudhui kamili yaliyopangwa vizuri.
-7. **KANUNI YA TAFUTIO LA MTANDAONI (GOOGLE SEARCH GROUNDING):**
-   - Kama swali linahusu michezo/mechi (mfano: Yanga SC, Simba SC, Azam FC, NBC Premier League, Ligi Kuu Tanzania Bara, CAF Champions League, CAF Confederation Cup, EPL, n.k.), habari mpya, matokeo, bei, au jambo lolote la sasa au lisilo na uhakika, tumia Google Search kutafuta taarifa halisi mtandaoni.
-   - Wakati wa kutafuta mechi za mpira wa miguu au matukio, tafuta ratiba kamili na ya sasa (fixtures, live scores, ratiba ya msimu huu, mechi ya leo, mechi inayofuata, mashindano, uwanja na muda).
-   - Ikiwa Max anauliza kuhusu mechi ya leo ya timu kama Yanga au Simba, thibitisha ratiba ya mechi na mpe maelezo kamili ya mechi (mpinzani, uwanja, muda, mashindano). Kama leo hawana mechi, mtajie mechi yao inayofuata ya karibuni kabisa ili apate taarifa kamili.
-   - Kamwe usiseme "sijui", "sina taarifa", "sina access", au kukataa kabla ya kutafuta mtandaoni.
-   - Tumia taarifa halisi zilizopatikana kwenye search kujibu kwa usahihi bila kubuni.
+7. **KANUNI YA TAFUTIO LA MTANDAONI:**
+   - Kama swali linahusu michezo/mechi, habari mpya, matokeo, bei, viongozi wa sasa, au jambo lolote la sasa au lisilo na uhakika, tumia live web evidence iliyotolewa na backend.
+   - Kwa maswali ya sasa, usitegemee kumbukumbu ya modeli kama ushahidi mkuu.
+   - Kwa michezo, thibitisha tarehe ya mechi, mpinzani na matokeo ya karibuni kutoka kwenye vyanzo vya live search.
+   - Kwa viongozi wa sasa, thibitisha jina kutoka chanzo cha kuaminika na cha karibuni.
+   - Kama vyanzo vinapingana, eleza kwa kifupi na chagua chanzo cha karibuni na cha kuaminika zaidi.
+   - Kamwe usibuni jina, bao, tarehe, au tukio lisilothibitishwa na evidence ya search.
 
 ---
 ORODHA YA KUMBUKUMBU ZA SASA ZA MAX (MAX MEMORY - SERVER PERSISTED):
@@ -287,7 +309,7 @@ ${memories.length > 0 ? memories.map((m, i) => `${i + 1}. [${m.category}] ${m.co
 ORODHA YA WATU WANGU WA KARIBU (MAX IDENTIFY / CLOSE PEOPLE):
 ${people.length > 0 ? people.map((p, i) => `${i + 1}. Jina: ${p.name} | Uhusiano: ${p.relationship}${p.nickname ? ` | Jina la utani: ${p.nickname}` : ''}${p.phone ? ` | Simu: ${p.phone}` : ''}${p.email ? ` | Email: ${p.email}` : ''}${p.notes ? ` | Maelezo: ${p.notes}` : ''}`).join('\n') : 'Hakuna watu wa karibu waliohifadhiwa kwa sasa.'}
 
-${newlySavedMemory ? `\nTAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "${newlySavedMemory.content}". Hii imehifadhiwa kwa ufanisi kwenye database ya kudumu (Max Memory). Mthibitishie kuwa umehifadhi.` : ''}
+${newlySavedMemory ? `TAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "${newlySavedMemory.content}". Hii imehifadhiwa kwa ufanisi kwenye database ya kudumu (Max Memory). Mthibitishie kuwa umehifadhi.` : ''}
 `;
   }
 
