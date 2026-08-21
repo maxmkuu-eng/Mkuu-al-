@@ -1,13 +1,13 @@
 import { GeneratedFileSummary } from './db.js';
 import { generateRealFile } from './files.js';
 
-// MKUU IMAGE STUDIO — POLLINATIONS
-// Generation: Flux. Editing/background removal: p-image-edit.
-// This is intentionally separate from Gemini chat/search and OpenAI billing.
-// Pollinations currently exposes image generation/edit endpoints and offers free
-// Pollen through quests; it is not an unlimited-free API.
+// MKUU IMAGE STUDIO
+// Primary provider: Pollinations. Fallback: Gemini 3.1 Flash Image using the
+// existing GEMINI_API_KEY, so Image Studio does not become unusable just because
+// the separate Pollinations key is missing from Render.
 export const PRIMARY_IMAGE_MODEL = 'flux';
 export const EDIT_IMAGE_MODEL = 'p-image-edit';
+export const GEMINI_IMAGE_FALLBACK_MODEL = 'gemini-3.1-flash-image';
 
 export interface ProcessImageParams {
   userId: string;
@@ -28,9 +28,11 @@ export interface ImageProcessResult {
 }
 
 function getPollinationsKey(): string {
-  const key = process.env.POLLINATIONS_API_KEY || '';
-  if (!key.trim()) throw new Error('POLLINATIONS_API_KEY is not configured on MKUU Backend for Image Studio.');
-  return key.trim();
+  return (process.env.POLLINATIONS_API_KEY || '').trim();
+}
+
+function getGeminiKey(): string {
+  return (process.env.GEMINI_API_KEY || '').trim();
 }
 
 function stripDataUrl(value: string): string {
@@ -60,6 +62,8 @@ function makePrompt(prompt: string, hasImage: boolean, isBgRemoval: boolean, isO
 
 async function pollinationsImageRequest(params: { prompt: string; imageBase64?: string; mimeType?: string; transparent?: boolean; model: string; }): Promise<string> {
   const key = getPollinationsKey();
+  if (!key) throw new Error('POLLINATIONS_API_KEY is not configured.');
+
   const endpoint = params.imageBase64
     ? 'https://gen.pollinations.ai/v1/images/edits'
     : 'https://gen.pollinations.ai/v1/images/generations';
@@ -96,6 +100,37 @@ async function pollinationsImageRequest(params: { prompt: string; imageBase64?: 
   return b64;
 }
 
+async function geminiImageRequest(params: { prompt: string; imageBase64?: string; mimeType?: string; }): Promise<string> {
+  const key = getGeminiKey();
+  if (!key) throw new Error('GEMINI_API_KEY is not configured.');
+
+  const parts: any[] = [{ text: params.prompt }];
+  if (params.imageBase64) {
+    parts.push({ inlineData: { mimeType: params.mimeType || 'image/jpeg', data: stripDataUrl(params.imageBase64) } });
+  }
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_FALLBACK_MODEL}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts }],
+      generationConfig: { responseModalities: ['IMAGE'] },
+    }),
+  });
+
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data?.error?.message || `Gemini Image API returned HTTP ${response.status}`;
+    throw new Error(`GEMINI_IMAGE_API_ERROR: ${message}`);
+  }
+
+  const responseParts = data?.candidates?.[0]?.content?.parts || [];
+  const imagePart = responseParts.find((part: any) => part?.inlineData?.data || part?.inline_data?.data);
+  const b64 = imagePart?.inlineData?.data || imagePart?.inline_data?.data;
+  if (!b64) throw new Error('Gemini Image API returned no image data.');
+  return b64;
+}
+
 export class ImageService {
   private static instance: ImageService | null = null;
   public static getInstance(): ImageService { if (!ImageService.instance) ImageService.instance = new ImageService(); return ImageService.instance; }
@@ -111,15 +146,45 @@ export class ImageService {
     const isHd = ['hd', '2k', '4k', 'enhance', 'boresha', 'quality', 'clear', 'restore'].some((term) => lower.includes(term));
     const isClothingChange = ['nguo', 'shirt', 'suti', 'shati', 'mavazi'].some((term) => lower.includes(term));
     const model = hasImage ? EDIT_IMAGE_MODEL : PRIMARY_IMAGE_MODEL;
+    const promptText = makePrompt(prompt, hasImage, isBgRemoval, isObjectRemoval, isClothingChange, isHd);
 
-    console.log(`[MKUU-BACKEND] [POLLINATIONS_IMAGE] model="${model}" hasInputImage=${hasImage}`);
-    const imageBase64 = await pollinationsImageRequest({
-      prompt: makePrompt(prompt, hasImage, isBgRemoval, isObjectRemoval, isClothingChange, isHd),
-      imageBase64: rawBase64 || undefined,
-      mimeType: imageAttachment?.mimeType || 'image/png',
-      transparent: isBgRemoval,
-      model,
-    });
+    let imageBase64 = '';
+    let modelUsed = model;
+    let primaryError = '';
+
+    if (getPollinationsKey()) {
+      try {
+        console.log(`[MKUU-BACKEND] [POLLINATIONS_IMAGE] model="${model}" hasInputImage=${hasImage}`);
+        imageBase64 = await pollinationsImageRequest({
+          prompt: promptText,
+          imageBase64: rawBase64 || undefined,
+          mimeType: imageAttachment?.mimeType || 'image/png',
+          transparent: isBgRemoval,
+          model,
+        });
+      } catch (err: any) {
+        primaryError = String(err?.message || err);
+        console.warn(`[MKUU-BACKEND] [POLLINATIONS_IMAGE_FAILED] ${primaryError}`);
+      }
+    } else {
+      primaryError = 'POLLINATIONS_API_KEY is not configured.';
+      console.warn('[MKUU-BACKEND] [POLLINATIONS_IMAGE] key missing; using Gemini Image fallback.');
+    }
+
+    if (!imageBase64) {
+      try {
+        console.log(`[MKUU-BACKEND] [GEMINI_IMAGE_FALLBACK] model="${GEMINI_IMAGE_FALLBACK_MODEL}" hasInputImage=${hasImage}`);
+        imageBase64 = await geminiImageRequest({
+          prompt: promptText,
+          imageBase64: rawBase64 || undefined,
+          mimeType: imageAttachment?.mimeType || 'image/png',
+        });
+        modelUsed = GEMINI_IMAGE_FALLBACK_MODEL;
+      } catch (err: any) {
+        const fallbackError = String(err?.message || err);
+        throw new Error(`IMAGE_STUDIO_FAILED: Pollinations=${primaryError}; Gemini=${fallbackError}`);
+      }
+    }
 
     const filename = isBgRemoval
       ? `Picha_Bila_Background_${Date.now().toString().slice(-6)}.png`
@@ -129,9 +194,10 @@ export class ImageService {
           ? `Logo_ya_Max_${Date.now().toString().slice(-6)}.png`
           : `Picha_ya_Max_${Date.now().toString().slice(-6)}.png`;
     const title = isBgRemoval ? 'Picha Iliyoondolewa Background' : hasImage ? 'Picha Iliyohaririwa' : lower.includes('logo') ? 'Logo Iliyotengenezwa' : 'Picha Iliyotengenezwa';
-    const saved = await generateRealFile({ userId, filename, fileType: 'png', title, content: imageBase64, base64Data: imageBase64, description: `Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio (${model})` });
-    const explanation = isBgRemoval ? 'Nimeondoa background na kurudisha picha halisi ya PNG yenye transparency.' : hasImage ? 'Nimehariri picha yako na kurudisha picha halisi iliyotengenezwa.' : lower.includes('logo') ? 'Nimetengeneza logo halisi na nimeirudisha kama picha.' : 'Nimetengeneza picha halisi kulingana na maelekezo yako.';
-    return { file: saved, explanation, modelUsed: model };
+    const providerLabel = modelUsed === GEMINI_IMAGE_FALLBACK_MODEL ? 'Gemini Image fallback' : `Pollinations ${modelUsed}`;
+    const saved = await generateRealFile({ userId, filename, fileType: 'png', title, content: imageBase64, base64Data: imageBase64, description: `Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio (${providerLabel})` });
+    const explanation = isBgRemoval ? 'Nimeondoa background na kurudisha picha halisi ya PNG.' : hasImage ? 'Nimehariri picha yako na kurudisha picha halisi iliyotengenezwa.' : lower.includes('logo') ? 'Nimetengeneza logo halisi na nimeirudisha kama picha.' : 'Nimetengeneza picha halisi kulingana na maelekezo yako.';
+    return { file: saved, explanation, modelUsed };
   }
 }
 
