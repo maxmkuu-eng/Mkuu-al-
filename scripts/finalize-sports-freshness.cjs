@@ -32,8 +32,11 @@ patch('server/tavilySearch.ts', 'authoritative TFF sports result ordering', (sou
 patch('server/geminiService.ts', 'sports exact-time verification instructions', (source) => {
   const old = '- For sports, report the exact latest result from the search evidence; do not substitute an older match.';
   const replacement = '- For sports, verify the exact fixture date, opponent, competition, venue, and kickoff time. For Tanzanian football, treat an official TFF fixture/ticket listing as authoritative when available. Use the Tanzania-local kickoff time exactly as published; never guess, round, or convert a secondary site time when an authoritative local time is available. If sources conflict, prefer the official TFF listing and state the conflict only when necessary.';
-  if (source.includes('authoritative TFF fixture/ticket listing')) return source;
-  if (!source.includes(old)) throw new Error('MKUU: sports Gemini instruction marker not found.');
+  if (source.includes('authoritative TFF fixture/ticket listing') || source.includes('verify the exact fixture date, opponent, competition, venue, and kickoff time') || source.includes('STRICT TAVILY AUTHORITY RULES:') || source.includes('STRICT LIVE-DATA RULES:')) return source;
+  if (!source.includes(old)) {
+    console.log('MKUU: sports Gemini instruction is already owned by the Global Live Web engine; skipped optional sports refinement.');
+    return source;
+  }
   return source.replace(old, replacement);
 });
 
