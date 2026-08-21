@@ -1,0 +1,37 @@
+name: Repair current-info freshness
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore service and apply surgical stale-info fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout 61b65612c0d845a96712f9c2cb6d498e66500d93 -- server/geminiService.ts
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('server/geminiService.ts')
+          s=p.read_text()
+          old="""        console.warn(`[MKUU-BACKEND] [TAVILY_SEARCH_FAILED] ${tavilyMsg}`);\n\n        // Secondary fallback: Google Search grounding. This is only used when\n        // Tavily itself is unavailable; it can no longer silently win over Tavily.\n        try {"""
+          new="""        console.warn(`[MKUU-BACKEND] [TAVILY_SEARCH_FAILED] ${tavilyMsg}`);\n\n        // Current-government verification is fail-closed. If the official Ikulu\n        // snapshot failed, NEVER fall back to Gemini/Google Search, because an old\n        // article or model memory can reintroduce a former office holder.\n        if (/AUTHORITATIVE_GOVERNMENT_SOURCE_UNAVAILABLE/i.test(tavilyMsg)) {\n          throw new Error(tavilyMsg);\n        }\n\n        // Secondary fallback: Google Search grounding. This is only used for\n        // non-government searches when Tavily itself is unavailable.\n        try {"""
+          if old not in s:
+            raise SystemExit('expected stale-info fallback block not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          if git diff --quiet; then
+            echo "No repair changes required"
+            exit 0
+          fi
+          git add server/geminiService.ts
+          git commit -m "fix: fail closed when current government source is unavailable"
+          git push origin main
