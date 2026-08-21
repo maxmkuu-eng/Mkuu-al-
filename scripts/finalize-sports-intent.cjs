@@ -39,12 +39,19 @@ if (!source.includes('const nextMatchIntent =')) {
 }
 
 if (!source.includes('If sportsFocus is non-empty')) {
-  const promptAnchor = 'STRICT LIVE-DATA RULES:';
-  if (!source.includes(promptAnchor)) throw new Error('MKUU: live search prompt anchor not found.');
-  source = source.replace(
-    promptAnchor,
-    '${sportsFocus}\n- If sportsFocus is non-empty, follow it strictly and answer only the requested next-match detail.\nSTRICT LIVE-DATA RULES:'
-  );
+  // Global Live Web Engine now owns the final grounding prompt. Support both
+  // the old and new prompt anchors so this optional sports refinement never
+  // breaks the build when another patch changes the prompt wording/order.
+  const promptAnchors = ['STRICT TAVILY AUTHORITY RULES:', 'STRICT LIVE-DATA RULES:'];
+  const promptAnchor = promptAnchors.find(anchor => source.includes(anchor));
+  if (promptAnchor) {
+    source = source.replace(
+      promptAnchor,
+      '${sportsFocus}\\n- If sportsFocus is non-empty, follow it strictly and answer only the requested next-match detail.\\n' + promptAnchor
+    );
+  } else {
+    console.log('MKUU: sports prompt anchor already owned by the Global Live Web engine; skipped optional sports prompt insertion.');
+  }
 }
 
 fs.writeFileSync(file, source, 'utf8');
