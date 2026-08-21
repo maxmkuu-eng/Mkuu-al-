@@ -26,26 +26,41 @@ jobs:
           marker = "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';"
           if marker not in s:
               raise SystemExit('PERSONAL_CHAT_MODEL declaration not found')
-          s = s.replace(
-              marker,
-              marker + "\nexport const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';",
-              1,
-          )
+          s = s.replace(marker, marker + "\nexport const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';", 1)
 
-          # server.ts and agentEngine.ts import this named singleton.
+          # Ensure the named singleton export required by server.ts and agentEngine.ts.
           singleton = "export const geminiService = GeminiService.getInstance();"
           if singleton not in s:
               s = s.rstrip() + "\n\n" + singleton + "\n"
 
+          # Add the Tavily fallback import exactly once.
+          tavily_import = "import { searchWithTavily } from './tavilySearch.js';"
+          if tavily_import not in s:
+              marker_import = "import { generateRealFile } from './files.js';"
+              if marker_import not in s:
+                  raise SystemExit('files import marker not found')
+              s = s.replace(marker_import, marker_import + "\n" + tavily_import, 1)
+
+          # Replace the old hard failure for current-information searches with:
+          # Google Search -> Tavily live search -> Gemini without tools.
+          old = """      if (isSearchQuery) {\n        throw new Error(`GOOGLE_SEARCH_REQUIRED: Live Google Search failed (${LIVE_SEARCH_MODEL}). MKUU will not answer this current-information question from stale model memory. ${errMsg}`);\n      }"""
+          new = """      if (isSearchQuery) {\n        try {\n          console.warn('[MKUU-BACKEND] Google Search grounding failed. Falling back to Tavily Search.');\n          const tavilyResults = await searchWithTavily(message);\n          const groundedSystemPrompt = `${systemPrompt}\\n\\nLIVE WEB SEARCH RESULTS (Tavily fallback):\\n${tavilyResults}\\n\\nIMPORTANT: Answer the user's question using these live search results. Do not claim that you performed Google Search. If sources disagree, say so and prefer the most recent credible source. Include source URLs when useful.`;\n          const groundedContents = this.buildConversationHistory(\n            conversationHistory,\n            `${message}\\n\\n[Live search results are provided below by the MKUU backend. Use them as evidence.]\\n${tavilyResults}`,\n            attachments,\n          );\n          const fallbackReply = await this.executeGeminiCallWithFallback({\n            contents: groundedContents,\n            config: { systemInstruction: groundedSystemPrompt, temperature: 0.7 },\n            preferredModel: PERSONAL_CHAT_MODEL,\n          });\n          if (!fallbackReply || !fallbackReply.trim()) {\n            throw new Error('Gemini returned an empty response after Tavily fallback.');\n          }\n          aiReplyText = fallbackReply;\n          console.log('[MKUU-BACKEND] [TAVILY_FALLBACK_SUCCESS] Live search recovered without Google grounding.');\n        } catch (fallbackErr: any) {\n          const fallbackMsg = String(fallbackErr?.message || fallbackErr);\n          console.error(`[MKUU-BACKEND] [TAVILY_FALLBACK_FAILED] ${fallbackMsg}`);\n          throw new Error(`LIVE_SEARCH_UNAVAILABLE: Google Search grounding and Tavily fallback both failed. ${fallbackMsg}`);\n        }\n      }"""
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif '[TAVILY_FALLBACK_SUCCESS]' not in s:
+              raise SystemExit('current live-search error block not found')
+
           p.write_text(s)
           PY
-      - name: Verify Gemini service exports
+      - name: Verify Gemini service exports and Tavily fallback
         run: |
-          grep -n "PERSONAL_CHAT_MODEL\|LIVE_SEARCH_MODEL\|geminiService = GeminiService.getInstance" server/geminiService.ts
+          grep -n "PERSONAL_CHAT_MODEL\|LIVE_SEARCH_MODEL\|geminiService = GeminiService.getInstance\|searchWithTavily\|TAVILY_FALLBACK_SUCCESS" server/geminiService.ts
           test "$(grep -c "export const LIVE_SEARCH_MODEL" server/geminiService.ts)" -eq 1
           grep -q "export const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';" server/geminiService.ts
           grep -q "export const geminiService = GeminiService.getInstance();" server/geminiService.ts
-      - name: Build backend to catch TypeScript/esbuild export errors
+          grep -q "searchWithTavily" server/geminiService.ts
+          test -f server/tavilySearch.ts
+      - name: Build backend to catch TypeScript/esbuild errors
         run: |
           npm ci
           npm run build
@@ -53,8 +68,8 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add server/geminiService.ts .github/workflows/apply-v2-direct.yml
+          git add server/geminiService.ts server/tavilySearch.ts .github/workflows/apply-v2-direct.yml
           if ! git diff --cached --quiet; then
-            git commit -m "fix: restore Gemini service singleton export"
+            git commit -m "fix: add Tavily fallback for live search"
             git push
           fi
