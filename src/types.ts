@@ -35,6 +35,11 @@ export interface GeneratedFileSummary {
   downloadUrl: string;
 }
 
+export interface WebSource {
+  title: string;
+  url: string;
+}
+
 export interface AttachmentItem {
   id?: string;
   filename: string;
@@ -54,6 +59,7 @@ export interface ChatMessage {
   isVoice?: boolean;
   attachments?: AttachmentItem[];
   generatedFiles?: GeneratedFileSummary[];
+  webSources?: WebSource[];
   memoryExtracted?: string[];
   personRecognized?: string[];
   savedOffline?: boolean;
@@ -71,7 +77,7 @@ export interface AutoReplySettings {
   workingHours: { enabled: boolean; start: string; end: string; }; myPhoneNumber: string; phoneVerified?: boolean; phoneVerifiedAt?: string; smsEnabled: boolean; gmailEnabled: boolean; safetyRules: string[]; whitelistedNumbers: string[]; blacklistedNumbers: string[];
 }
 export interface AutoReplyLog { id:string; userId:string; channel:'sms'|'gmail'; sender:string; senderName?:string; recipient:string; incomingMessage:string; generatedReply:string; status:'sent'|'blocked_emergency'|'pending_approval'|'failed'|'outside_hours'; timestamp:string; matchedPersonId?:string; matchedRelationship?:string; confidence:number; }
-export interface UserProfile { id:string; email:string; name:string; title:string; role:'owner'|'guest'; language:'Kiswahili'|'English'; theme:'dark'|'light'; securityPinSet:boolean; securityPin?:string; createdAt:string; }
+export interface UserProfile { id:string; email:string; name:string; title:string; role:'owner'|'guest'; language:'Kiswahili'|'English'|'Auto'; theme:'dark'|'light'; securityPinSet:boolean; securityPin?:string; createdAt:string; }
 
 export type ActiveTab = 'chat' | 'history' | 'memory' | 'people' | 'autoreply' | 'files' | 'security' | 'manager';
 export type VoiceState = 'ready' | 'listening' | 'thinking' | 'speaking' | 'error';
