@@ -30,18 +30,17 @@ function toDataUrl(base64: string, mimeType: string): string {
 }
 
 async function ensurePuterAuth(puter: any): Promise<void> {
-  try {
-    if (puter.auth?.isSignedIn?.()) return;
-    if (puter.auth?.signIn) await puter.auth.signIn({ attempt_temp_user_creation: true });
-  } catch (error: any) {
-    throw new Error(`PUTER_AUTH_REQUIRED: ${error?.msg || error?.message || 'Puter authentication failed.'}`);
-  }
+  if (puter.auth?.isSignedIn?.()) return;
+  throw new Error('PUTER_AUTH_REQUIRED: Image Studio inahitaji Puter authentication. Ingia Puter mara moja kwenye Image Studio, kisha ujaribu tena. MKUU hatafungua login link yenyewe wakati wa kutuma command.');
 }
 
 function extractImage(result: any): string {
+  if (result && typeof result.src === 'string') {
+    if (result.src.startsWith('data:image/')) return result.src;
+    if (/^https?:\/\//i.test(result.src)) return result.src;
+  }
   const image = result?.message?.images?.[0]?.image_url?.url || result?.images?.[0]?.image_url?.url || result?.image?.image_url?.url;
-  if (typeof image === 'string' && image.startsWith('data:image/')) return image;
-  if (typeof result?.src === 'string' && result.src.startsWith('data:image/')) return result.src;
+  if (typeof image === 'string' && (image.startsWith('data:image/') || /^https?:\/\//i.test(image))) return image;
   throw new Error('PUTER_IMAGE_EMPTY: Puter returned no generated image data.');
 }
 
