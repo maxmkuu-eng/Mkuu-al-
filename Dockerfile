@@ -12,9 +12,9 @@ RUN npm install
 COPY . .
 
 # Build application (Vite + esbuild backend)
-# Normalize the live-search model before compiling so the backend never ships
-# with the retired gemini-2.5-flash model.
-RUN sed -i "s/gemini-2\.5-flash/gemini-3.6-flash/g" server/geminiService.ts && npm run build
+# Enable Puter Image Studio in the browser before Vite bundles the frontend.
+# Puter handles authentication and AI access; no Pollinations image key is required.
+RUN node scripts/enable-puter-image-studio.cjs && sed -i "s/gemini-2\.5-flash/gemini-3.6-flash/g" server/geminiService.ts && npm run build
 
 # Production configuration
 ENV NODE_ENV=production
