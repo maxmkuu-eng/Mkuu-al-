@@ -32,35 +32,9 @@ export function getApiUrl(endpoint:string,explicitBase?:string){if(endpoint.star
 export async function checkServerReachability(){const s=Date.now();try{const d=await apiFetch<any>('/health',{},8000);return{reachable:d?.status==='ok'||d?.status==='connected',status:d?.status,latencyMs:Date.now()-s};}catch(e:any){return{reachable:false,latencyMs:Date.now()-s,error:e.userMessage||e.message};}}
 
 export async function apiFetch<T>(endpoint:string,options?:RequestInit,timeoutMs=45000):Promise<T>{
-  // Image Studio is deliberately client-side through Puter. This avoids Gemini
-  // image-model Free-Tier=0, OpenAI billing, Pollinations/Pollen and paid GPU
-  // infrastructure. Chat/search continues to use the normal Render backend.
-  if (endpoint === '/api/image/generate' || endpoint === '/api/image/edit' || endpoint === '/api/image') {
-    try {
-      const body = options?.body ? JSON.parse(String(options.body)) : {};
-      const { runPuterImageStudio } = await import('./puterImageStudio');
-      const result = await runPuterImageStudio({
-        prompt: String(body?.prompt || ''),
-        imageBase64: body?.imageBase64 || undefined,
-        mimeType: body?.mimeType || 'image/jpeg',
-        filename: body?.filename || undefined,
-      });
-      return { success: true, reply: body?.imageBase64 ? 'Nimehariri picha yako na kurudisha picha halisi.' : 'Nimetengeneza picha halisi kulingana na maelekezo yako.', file: result.file, modelUsed: result.model } as T;
-    } catch (e:any) {
-      if (e instanceof MkuuApiError) throw e;
-      const message = e?.message || 'Puter Image Studio failed.';
-      throw new MkuuApiError({
-        code: 'IMAGE_GENERATION_FAILED',
-        status: 502,
-        userMessage: message.includes('PUTER_AUTH_REQUIRED') ? 'IMAGE STUDIO INAHITAJI KUUNGANISHWA NA PUTER. Tafadhali ruhusu kuingia kisha jaribu tena.' : 'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali jaribu tena.',
-        technicalDetails: message,
-        targetUrl: 'https://js.puter.com/v2/',
-      });
-    }
-  }
-
   const url=getApiUrl(endpoint);
   if(typeof navigator!=='undefined'&&!navigator.onLine)throw new MkuuApiError({code:'NO_INTERNET',userMessage:'HAKUNA INTANETI\nTafadhali washa Wi-Fi au Mobile Data.',technicalDetails:'Device offline',targetUrl:url});
+  const isImageEndpoint = endpoint === '/api/image/generate' || endpoint === '/api/image/edit' || endpoint === '/api/image';
   const headers:Record<string,string>={Accept:'application/json',...(options?.headers as Record<string,string>||{})};
   if(options?.body&&!headers['Content-Type'])headers['Content-Type']='application/json';
   let last:any;
@@ -70,9 +44,21 @@ export async function apiFetch<T>(endpoint:string,options?:RequestInit,timeoutMs
       const r=await fetch(url,{...options,headers,cache:'no-store',signal:options?.signal||c.signal});clearTimeout(t);
       const ct=r.headers.get('content-type')||'';let body:any;
       if(ct.includes('application/json')){try{body=await r.json();}catch{body={};}}else{body=await r.text();}
-      if(!r.ok){const detail=typeof body==='string'?body:(body?.error||`HTTP ${r.status}`);throw new MkuuApiError({code:r.status===429||r.status===503?'GEMINI_UNAVAILABLE':'BACKEND_UNREACHABLE',status:r.status,userMessage:r.status===429||r.status===503?'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:String(detail),targetUrl:url});}
+      if(!r.ok){
+        const detail=typeof body==='string'?body:(body?.message||body?.error||`HTTP ${r.status}`);
+        if(isImageEndpoint){
+          throw new MkuuApiError({
+            code:'IMAGE_GENERATION_FAILED',
+            status:r.status,
+            userMessage:'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali hakikisha Image Studio imeunganishwa na jaribu tena.',
+            technicalDetails:String(detail),
+            targetUrl:url,
+          });
+        }
+        throw new MkuuApiError({code:r.status===429||r.status===503?'GEMINI_UNAVAILABLE':'BACKEND_UNREACHABLE',status:r.status,userMessage:r.status===429||r.status===503?'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:String(detail),targetUrl:url});
+      }
       return body as T;
-    }catch(e:any){clearTimeout(t);last=e instanceof MkuuApiError?e:new MkuuApiError({code:'BACKEND_UNREACHABLE',userMessage:'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:e?.message||'Failed to fetch',targetUrl:url});if(last.code==='GEMINI_UNAVAILABLE')throw last;if(attempt===0)await new Promise(r=>setTimeout(r,500));}
+    }catch(e:any){clearTimeout(t);last=e instanceof MkuuApiError?e:new MkuuApiError({code:isImageEndpoint?'IMAGE_GENERATION_FAILED':'BACKEND_UNREACHABLE',userMessage:isImageEndpoint?'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:e?.message||'Failed to fetch',targetUrl:url});if(last.code==='GEMINI_UNAVAILABLE'||last.code==='IMAGE_GENERATION_FAILED')throw last;if(attempt===0)await new Promise(r=>setTimeout(r,500));}
   }
   throw last;
 }
