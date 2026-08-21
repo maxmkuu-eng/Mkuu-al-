@@ -35,7 +35,7 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
     throw new MkuuApiError({
       code: 'PUTER_UNAVAILABLE',
       status: 503,
-      userMessage: 'IMAGE STUDIO HAIJAPATIKANA\\nTafadhali subiri sekunde chache kisha jaribu tena.',
+      userMessage: 'IMAGE STUDIO HAIJAPATIKANA\nTafadhali subiri sekunde chache kisha jaribu tena.',
       technicalDetails: 'Puter.js Image Studio is not loaded.',
     });
   }
@@ -58,20 +58,20 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
       'Preserve the exact person, face, hair, clothing, body proportions and important details.',
       'Do not return a text explanation and do not return the original image unchanged.',
       prompt,
-    ].join('\\n');
+    ].join('\n');
   } else if (hasImage) {
     prompt = [
       'EDIT THE PROVIDED IMAGE according to the user instruction.',
       'Return the edited image itself, not a prompt or text-only answer.',
       'Preserve identity and important details unless the user explicitly asks to change them.',
       prompt,
-    ].join('\\n');
+    ].join('\n');
   } else {
     prompt = [
       'GENERATE THE IMAGE ITSELF.',
       'Do not return a prompt, SVG, JSON, or text-only answer.',
       prompt,
-    ].join('\\n');
+    ].join('\n');
   }
 
   const options: any = {
@@ -139,7 +139,7 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
     throw new MkuuApiError({
       code: 'PUTER_IMAGE_FAILED',
       status: 502,
-      userMessage: 'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA\\nTafadhali jaribu tena.',
+      userMessage: 'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA\nTafadhali jaribu tena.',
       technicalDetails: 'Puter Image Studio: ' + details,
     });
   }
