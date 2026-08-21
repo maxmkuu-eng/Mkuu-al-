@@ -50,9 +50,15 @@ patch('src/App.tsx', 'assistant message source persistence', (source) => {
 
 patch('src/components/ChatView.tsx', 'visible per-response source footer', (source) => {
   if (source.includes('/* Sources used for this response */')) return source;
-  const needle = '                        {/* Generated Real Binary Files / Images Cards */}';
+  // The chat composer UI was refactored, so the old generated-file comment is no longer
+  // present. Insert immediately before the generated-files block instead.
+  const needles = [
+    '                        {/* Generated Real Binary Files / Images Cards */}',
+    '}{msg.generatedFiles && msg.generatedFiles.length > 0 && <div className="mt-3 pt-3 border-t border-[#222222] space-y-3 not-italic font-sans">',
+  ];
+  const needle = needles.find((candidate) => source.includes(candidate));
   const block = `                        {/* Sources used for this response */}\n                        {msg.webSources && msg.webSources.length > 0 && (\n                          <div className="mt-3 pt-3 border-t border-[#222222] not-italic font-sans">\n                            <div className="flex items-center justify-end mb-2 text-[10px] font-bold uppercase tracking-wider text-[#D4AF37]">\n                              <span>Vyanzo vya Taarifa</span>\n                            </div>\n                            <div className="flex flex-wrap justify-end gap-1.5">\n                              {msg.webSources.map((source, idx) => (\n                                <a\n                                  key={source.url || idx}\n                                  href={source.url}\n                                  target="_blank"\n                                  rel="noopener noreferrer"\n                                  className="inline-flex max-w-full items-center px-2.5 py-1.5 rounded-lg bg-white/5 border border-[#333333] text-[10px] text-[#BBBBBB] hover:text-[#D4AF37] hover:border-[#D4AF37]/50 transition"\n                                  title={source.url}\n                                >\n                                  <span className="truncate max-w-[220px]">{source.title || source.url}</span>\n                                </a>\n                              ))}\n                            </div>\n                          </div>\n                        )}\n\n`;
-  if (!source.includes(needle)) throw new Error('MKUU: ChatView source insertion point not found.');
+  if (!needle) throw new Error('MKUU: ChatView source insertion point not found.');
   return source.replace(needle, block + needle);
 });
 
