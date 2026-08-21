@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "node scripts/enable-autonomous-agent.cjs && node scripts/enable-gfm-markdown.cjs && node scripts/enable-live-search-ui.cjs && node scripts/fix-source-request-scope.cjs && node scripts/finalize-source-isolation.cjs && node scripts/finalize-sports-intent.cjs && node scripts/enable-source-display.cjs && node scripts/fix-source-eligibility.cjs && node scripts/enable-puter-image-studio.cjs && node scripts/enable-assistant-manager-header.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "node scripts/enable-autonomous-agent.cjs && node scripts/enable-gfm-markdown.cjs && node scripts/enable-live-search-ui.cjs && node scripts/fix-source-request-scope.cjs && node scripts/finalize-source-isolation.cjs && node scripts/finalize-sports-intent.cjs && node scripts/enable-source-display.cjs && node scripts/fix-source-eligibility.cjs && node scripts/enable-native-tts.cjs && node scripts/enable-puter-image-studio.cjs && node scripts/enable-assistant-manager-header.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -14,6 +14,8 @@
   "dependencies": {
     "@capacitor/android": "^8.5.0",
     "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor-community/text-to-speech": "^8.0.2",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/canvas-confetti": "^1.9.0",
