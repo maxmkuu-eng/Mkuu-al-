@@ -29,7 +29,7 @@ jobs:
       - name: 4. Build Production Web Assets and Sync Android
         run: |
           npm run build
-          npx cap copy android
+          npx cap sync android
 
       - name: 5. Configure JDK 21
         uses: actions/setup-java@v4
