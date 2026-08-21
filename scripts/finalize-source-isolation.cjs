@@ -39,21 +39,28 @@ patch('server/geminiService.ts', 'capture sources per search response', (source)
     "import { searchWithTavily, getLastTavilySources } from './tavilySearch.js';"
   );
 
-  if (!source.includes('const tavilySourcesForResponse = getLastTavilySources();')) {
+  if (!source.includes('let responseWebSources: Array<{ title: string; url: string }> = [];')) {
+    source = source.replace(
+      'let aiReplyText = \'\';',
+      "let aiReplyText = '';\n    let responseWebSources: Array<{ title: string; url: string }> = [];"
+    );
+  }
+
+  if (!source.includes('responseWebSources = getLastTavilySources();')) {
     source = source.replace(
       'const tavilyResults = await searchWithTavily(`${message}\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);',
-      'const tavilyResults = await searchWithTavily(`${message}\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);\n        const tavilySourcesForResponse = getLastTavilySources();'
+      'const tavilyResults = await searchWithTavily(`${message}\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);\n        responseWebSources = getLastTavilySources();'
     );
   }
 
-  if (!source.includes('webSources: isSearchQuery ? tavilySourcesForResponse : []')) {
+  if (!source.includes('webSources: responseWebSources')) {
     source = source.replace(
       'generatedFiles: generatedFilesList,\n      aiProvider: AI_PROVIDER,',
-      'generatedFiles: generatedFilesList,\n      webSources: isSearchQuery ? (typeof tavilySourcesForResponse !== \'undefined\' ? tavilySourcesForResponse : []) : [],\n      aiProvider: AI_PROVIDER,'
+      'generatedFiles: generatedFilesList,\n      webSources: responseWebSources,\n      aiProvider: AI_PROVIDER,'
     );
   }
 
-  if (!source.includes('webSources: [] as Array<{ title: string; url: string }>,')) {
+  if (!source.includes('webSources: Array<{ title: string; url: string }>;')) {
     source = source.replace(
       'generatedFiles: GeneratedFileSummary[];\n  aiProvider:',
       'generatedFiles: GeneratedFileSummary[];\n  webSources: Array<{ title: string; url: string }>;\n  aiProvider:'
