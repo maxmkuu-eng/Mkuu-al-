@@ -41,15 +41,7 @@ let tavilySource = fs.readFileSync(tavilyFile, 'utf8');
 if (!tavilySource.includes('MKUU_GLOBAL_LIVE_SEARCH_V2')) {
   const marker = " const searches:Promise<TavilySearchResult[]>[]=[runTavilySearch(query,'general')];";
   if (!tavilySource.includes(marker)) throw new Error('MKUU: global Tavily fan-out insertion point not found.');
-  const replacement = ` const searches:Promise<TavilySearchResult[]>[]=[
-   runTavilySearch(query,'general'),
-   runTavilySearch(\`${query} latest current update news\`,'news'),
-   runTavilySearch(\`${query} latest 2026 official announcement\`,'general'),
-   runTavilySearch(\`${query} latest social media Instagram TikTok YouTube Facebook X official\`,'general'),
- ];
- // MKUU_GLOBAL_LIVE_SEARCH_V2
- // Worldwide evidence fan-out: search engines/news plus social/official web results.
-`;
+  const replacement = " const searches:Promise<TavilySearchResult[]>[]=[\n   runTavilySearch(query,'general'),\n   runTavilySearch(`${query} latest current update news`,'news'),\n   runTavilySearch(`${query} latest 2026 official announcement`,'general'),\n   runTavilySearch(`${query} latest social media Instagram TikTok YouTube Facebook X official`,'general'),\n ];\n // MKUU_GLOBAL_LIVE_SEARCH_V2\n // Worldwide evidence fan-out: search engines/news plus social/official web results.\n";
   tavilySource = tavilySource.replace(marker, replacement);
   fs.writeFileSync(tavilyFile, tavilySource, 'utf8');
   console.log('MKUU: Global worldwide Tavily evidence fan-out V2 enabled.');
