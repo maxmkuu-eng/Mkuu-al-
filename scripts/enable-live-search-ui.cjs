@@ -16,8 +16,6 @@ function patch(filePath, replacements) {
   if (changed) fs.writeFileSync(fullPath, source);
 }
 
-// Pass verified Tavily source metadata through the API response and persist it
-// with the assistant message. Only current-information requests get sources.
 patch('server.ts', [
   [
     "import { searchWithTavily } from './server/tavilySearch.js';",
@@ -37,7 +35,6 @@ patch('server.ts', [
   ],
 ]);
 
-// Carry source metadata through the browser chat engine.
 patch('src/services/aiEngine.ts', [
   [
     "import { ChatMessage, Memory, Person, GeneratedFileSummary, UserProfile } from '../types';",
@@ -51,9 +48,20 @@ patch('src/services/aiEngine.ts', [
     "    generatedFiles: serverRes.generatedFiles,\n    engineUsed: 'server',",
     "    generatedFiles: serverRes.generatedFiles,\n    webSources: serverRes.webSources,\n    engineUsed: 'server',",
   ],
+  [
+    "  let reply = '';\n  emitStream('', false);",
+    "  let reply = '';\n  let webSources: WebSource[] = [];\n  emitStream('', false);",
+  ],
+  [
+    "        if (payload.type === 'delta' && payload.text) { reply += payload.text; emitStream(payload.text, false); }\n        if (payload.type === 'error') throw new Error(payload.message || 'Streaming error');",
+    "        if (payload.type === 'delta' && payload.text) { reply += payload.text; emitStream(payload.text, false); }\n        if (payload.type === 'done' && Array.isArray(payload.webSources)) webSources = payload.webSources;\n        if (payload.type === 'error') throw new Error(payload.message || 'Streaming error');",
+  ],
+  [
+    "  return { reply, cleanSpeechText: reply.replace(/[#*`_~[\\]()]/g, ' ').replace(/\\s+/g, ' ').trim(), engineUsed: 'server', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', intent: 'chat' };",
+    "  return { reply, cleanSpeechText: reply.replace(/[#*`_~[\\]()]/g, ' ').replace(/\\s+/g, ' ').trim(), webSources, engineUsed: 'server', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', intent: 'chat' };",
+  ],
 ]);
 
-// Render source links at the bottom-right of each live-search answer.
 patch('src/components/ChatView.tsx', [
   [
     "                      {/* Footer Controls for AI Message */}",
