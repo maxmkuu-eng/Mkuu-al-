@@ -82,6 +82,14 @@ function needsImageRoute(params: ChatEngineParams) {
   return hasImage || imageWords.some((word) => text.includes(word));
 }
 
+function needsLiveSearch(message: string): boolean {
+  const lower = String(message || '').toLowerCase();
+  const changingFactPatterns = [
+    /\bwaziri mkuu\b/, /\brais wa\b/, /\bmakamu wa rais\b/, /\bkiongozi wa sasa\b/, /\bmkuu wa nchi\b/, /\bmkuu wa serikali\b/, /\bmeya wa\b/, /\bnaibu\s+waziri\b/, /\bwaziri wa\b/, /\bserikali ya sasa\b/, /\bcurrent\b/, /\blatest\b/, /\bsasa\b/, /\bwa sasa\b/, /\bleo\b/, /\bhivi punde\b/, /\bhabari mpya\b/, /\bhabari za leo\b/, /\bbei ya\b/, /\bthamani ya\b/, /\bexchange rate\b/, /\brate ya\b/, /\bmatokeo ya\b/, /\bratiba ya\b/, /\bmsimamo wa\b/, /\bnani ameshinda\b/, /\bnani kashinda\b/, /\bwho is\b/, /\bwho won\b/, /\btoday\b/, /\btonight\b/, /\bthis week\b/, /\bthis month\b/, /\b2025\b/, /\b2026\b/
+  ];
+  return changingFactPatterns.some((pattern) => pattern.test(lower));
+}
+
 async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResult> {
   const attachments = params.attachments || [];
   const imageAttachment = attachments.find((a: any) => String(a?.mimeType || '').startsWith('image/'));
@@ -131,17 +139,29 @@ async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResu
 
 async function callDirectGemini(apiKey: string, params: ChatEngineParams): Promise<ChatEngineResult> {
   const peopleText = (params.people || []).slice(0, 20).map((p) => `- ${p.name}${p.nickname ? ` (${p.nickname})` : ''}: ${p.relationship}; ${p.phone || ''}; ${p.notes || ''}`).join('\n');
-  const systemPrompt = `Wewe ni MKUU AI, msaidizi wa Max. Zungumza kwa Kiswahili fasaha. Tumia taarifa hizi za watu wa karibu inapohitajika:\n${peopleText || 'Hakuna watu wa karibu waliosajiliwa.'}`;
+  const liveSearchRequired = needsLiveSearch(params.message);
+  const systemPrompt = `Wewe ni MKUU AI, msaidizi wa Max. Zungumza kwa Kiswahili fasaha. Tumia taarifa hizi za watu wa karibu inapohitajika:\n${peopleText || 'Hakuna watu wa karibu waliosajiliwa.'}\n\nLIVE INFORMATION RULE: Kwa swali lolote linalohusu taarifa inayoweza kubadilika kwa muda (viongozi wa sasa, nyadhifa za serikali, habari, bei, viwango vya fedha, matokeo, ratiba, hali ya hewa, au mtu aliye kwenye nafasi fulani kwa sasa), lazima utumie Google Search grounding kabla ya kutoa jibu. Usitumie kumbukumbu ya model kama chanzo cha mwisho. Ikiwa utafutaji unaonyesha taarifa mpya, tumia hiyo taarifa mpya. Taja kwa ufupi chanzo/tarehe inapofaa.`;
   const rawHistory = Array.isArray(params.conversationHistory) ? params.conversationHistory.slice(-10) : [];
   const contents: any[] = rawHistory.filter((h) => h.content || h.attachments?.length).map((h) => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: h.content || '' }] }));
-  contents.push({ role: 'user', parts: [{ text: params.message }] });
+  const userPrompt = liveSearchRequired
+    ? `Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu. Jibu swali hili kwa usahihi kulingana na taarifa ya sasa: ${params.message}`
+    : params.message;
+  contents.push({ role: 'user', parts: [{ text: userPrompt }] });
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${apiKey}`;
-  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ systemInstruction: { parts: [{ text: systemPrompt }] }, contents, generationConfig: { temperature: 0.7, maxOutputTokens: 1024 } }) });
+  const body: any = {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
+  };
+  // Google Search grounding is enabled for the direct Gemini path too. This is
+  // the critical path used when an API key is stored in the Android app.
+  body.tools = [{ google_search: {} }];
+  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!response.ok) throw new MkuuApiError({ code: 'GEMINI_UNAVAILABLE', status: response.status, userMessage: 'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.', technicalDetails: `Gemini API error (${response.status})`, targetUrl: url });
   const data = await response.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const rawText = data.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || '').join('') || '';
   if (!rawText.trim()) throw new Error('Gemini returned an empty response');
-  return { reply: rawText, cleanSpeechText: rawText.replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(), engineUsed: 'direct_gemini', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash' };
+  return { reply: rawText, cleanSpeechText: rawText.replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(), engineUsed: 'direct_gemini', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', intent: liveSearchRequired ? 'web_search' : 'chat' };
 }
 
 async function callNativeServerChat(params: ChatEngineParams): Promise<ChatEngineResult> {
@@ -206,8 +226,6 @@ async function streamServerChat(params: ChatEngineParams): Promise<ChatEngineRes
 
 export async function executeMkuuChat(params: ChatEngineParams): Promise<ChatEngineResult> {
   // Image generation/editing must always use the dedicated Image Studio backend.
-  // This is especially important on Android/Capacitor, where the old flow sent
-  // image requests to the text-chat endpoint and Gemini could return only a prompt.
   if (needsImageRoute(params)) {
     return callImageStudio(params);
   }
