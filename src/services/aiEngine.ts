@@ -70,6 +70,65 @@ function needsArtifactRoute(params: ChatEngineParams) {
   return hasImage || /\b(pdf|docx?|word|excel|xlsx|csv|logo|banner|poster|cartoon|picha|image|background|document|proposal|ripoti)\b/i.test(text);
 }
 
+function needsImageRoute(params: ChatEngineParams) {
+  const text = String(params.message || '').toLowerCase();
+  const hasImage = (params.attachments || []).some((a: any) => String(a?.mimeType || '').startsWith('image/'));
+  const imageWords = [
+    'picha', 'image', 'photo', 'logo', 'background', 'remove background', 'ondoa background',
+    'toa background', 'futa background', 'edit picha', 'hariri picha', 'hariri', 'edit image',
+    'tengeneza logo', 'tengeneza picha', 'generate image', 'create image', 'create logo',
+    'poster', 'banner', 'cartoon', 'transparent', 'png', '2k', '4k', 'hd', 'enhance', 'boresha',
+  ];
+  return hasImage || imageWords.some((word) => text.includes(word));
+}
+
+async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResult> {
+  const attachments = params.attachments || [];
+  const imageAttachment = attachments.find((a: any) => String(a?.mimeType || '').startsWith('image/'));
+  const imageBase64 = imageAttachment?.base64Data || '';
+  const mimeType = imageAttachment?.mimeType || 'image/jpeg';
+  const lower = String(params.message || '').toLowerCase();
+  const isGeneration = !imageAttachment;
+  const endpoint = isGeneration ? '/api/image/generate' : '/api/image/edit';
+
+  const response = await apiFetch<any>(endpoint, {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt: params.message,
+      imageBase64: imageBase64 || undefined,
+      mimeType,
+      filename: isGeneration
+        ? (lower.includes('logo') ? 'Logo_ya_Mkuu.png' : 'Picha_ya_Mkuu.png')
+        : 'Picha_Iliyohaririwa_Mkuu.png',
+    }),
+  });
+
+  if (!response?.success || !response?.file) {
+    throw new MkuuApiError({
+      code: 'IMAGE_GENERATION_FAILED',
+      status: 500,
+      userMessage: 'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA\nTafadhali jaribu tena.',
+      technicalDetails: 'Image Studio returned no generated file',
+      targetUrl: getApiUrl(endpoint),
+    });
+  }
+
+  const file = {
+    ...response.file,
+    downloadUrl: response.file.downloadUrl?.startsWith('http') ? response.file.downloadUrl : getApiUrl(response.file.downloadUrl),
+  };
+
+  return {
+    reply: response.reply || 'Picha yako imetengenezwa na MKUU Image Studio na iko tayari hapa chini.',
+    cleanSpeechText: (response.reply || 'Picha yako imetengenezwa na MKUU Image Studio.').replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(),
+    generatedFiles: [file],
+    engineUsed: 'server',
+    aiProvider: 'Google Gemini',
+    chatModel: response.modelUsed || 'gemini-3.1-flash-image',
+    intent: isGeneration ? 'image_generation' : 'image_edit',
+  };
+}
+
 async function callDirectGemini(apiKey: string, params: ChatEngineParams): Promise<ChatEngineResult> {
   const peopleText = (params.people || []).slice(0, 20).map((p) => `- ${p.name}${p.nickname ? ` (${p.nickname})` : ''}: ${p.relationship}; ${p.phone || ''}; ${p.notes || ''}`).join('\n');
   const systemPrompt = `Wewe ni MKUU AI, msaidizi wa Max. Zungumza kwa Kiswahili fasaha. Tumia taarifa hizi za watu wa karibu inapohitajika:\n${peopleText || 'Hakuna watu wa karibu waliosajiliwa.'}`;
@@ -146,6 +205,13 @@ async function streamServerChat(params: ChatEngineParams): Promise<ChatEngineRes
 }
 
 export async function executeMkuuChat(params: ChatEngineParams): Promise<ChatEngineResult> {
+  // Image generation/editing must always use the dedicated Image Studio backend.
+  // This is especially important on Android/Capacitor, where the old flow sent
+  // image requests to the text-chat endpoint and Gemini could return only a prompt.
+  if (needsImageRoute(params)) {
+    return callImageStudio(params);
+  }
+
   const directApiKey = getStoredGeminiApiKey();
   if (directApiKey && directApiKey.trim().length > 10) return callDirectGemini(directApiKey.trim(), params);
 
