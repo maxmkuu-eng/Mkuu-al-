@@ -15,8 +15,12 @@ patch('server/geminiService.ts', 'fresh-information intent routing', (source) =>
   if (!source.includes('function isFreshInformationQuery(message: string): boolean')) {
     const helper = `function isFreshInformationQuery(message: string): boolean {
   const lower = String(message || '').toLowerCase().trim();
+  const personalOrCasual = ['mke wangu','mume wangu','familia yangu','mtoto wangu','mama yangu','baba yangu','rafiki yangu','unamjua','unamkumbuka','unakumbuka','nilikwambia','nilikuambia','nilituma','niliweka kwenye mfumo','habari mkuu','salama mkuu','asante mkuu','sawa mkuu'];
+  if (personalOrCasual.some(term => lower.includes(term))) return false;
   const freshnessTerms = ['latest','current','currently','right now','now','today','yesterday','tomorrow','recent','recently','newest','updated','update','breaking','sasa','hivi sasa','leo','jana','kesho','kwa sasa','ya sasa','mpya','habari mpya','tukio la sasa','nani ni waziri','waziri mkuu','rais wa','naibu waziri','meya wa','kiongozi wa sasa','current minister','prime minister','current president','current leader','current ceo'];
-  return freshnessTerms.some(term => lower.includes(term));
+  const webTopicTerms = ['serikali','wizara','ikulu','bunge','rais','waziri','uchaguzi','siasa','sheria','mahakama','tanzania','dunia','habari','news','breaking','michezo','mchezo','mechi','simba','yanga','azam','football','soccer','nba','basketball','tennis','caf','fifa','epl','uefa','champions league','biashara','kampuni','company','business','soko','market','bei','price','hisa','stock','fedha','currency','exchange rate','dola','crypto','bitcoin','uchumi','economy','benki','bank','msanii','msanii wa','wasanii','artist','singer','actor','movie','filamu','muziki','music','concert','album','wimbo','technology','teknolojia','ai','gemini','openai','google','iphone','samsung','app','programu','product','release','tuzo','award','transfer','ratiba','matokeo','msimamo','kikosi','score','fixture','schedule','weather','hali ya hewa'];
+  const interrogative = /^(nani|nini|lini|wapi|kwa nini|vipi|je|ni nani|ni nini|ni lini|ni wapi|how|who|what|when|where|why|which|how much|how many|does|is|are|can|will)\\b/i.test(lower);
+  return freshnessTerms.some(term => lower.includes(term)) || webTopicTerms.some(term => lower.includes(term)) || interrogative;
 }\n\n`;
     const marker = 'export class GeminiService {';
     if (!source.includes(marker)) throw new Error('MKUU: GeminiService class marker not found.');
