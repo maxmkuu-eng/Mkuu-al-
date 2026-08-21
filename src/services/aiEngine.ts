@@ -123,7 +123,7 @@ async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResu
 
   const file = {
     ...response.file,
-    downloadUrl: response.file.downloadUrl?.startsWith('http') ? response.file.downloadUrl : getApiUrl(response.file.downloadUrl),
+    downloadUrl: response.file.downloadUrl?.startsWith('http') || response.file.downloadUrl?.startsWith('data:') ? response.file.downloadUrl : getApiUrl(response.file.downloadUrl),
   };
 
   return {
@@ -131,8 +131,8 @@ async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResu
     cleanSpeechText: (response.reply || 'Picha yako imetengenezwa na MKUU Image Studio.').replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(),
     generatedFiles: [file],
     engineUsed: 'server',
-    aiProvider: 'Google Gemini',
-    chatModel: response.modelUsed || 'gemini-3.1-flash-image',
+    aiProvider: response.aiProvider || 'Puter Image Studio',
+    chatModel: response.modelUsed || 'gemini-3.1-flash-image-preview',
     intent: isGeneration ? 'image_generation' : 'image_edit',
   };
 }
@@ -147,21 +147,23 @@ async function callDirectGemini(apiKey: string, params: ChatEngineParams): Promi
     ? `Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu. Jibu swali hili kwa usahihi kulingana na taarifa ya sasa: ${params.message}`
     : params.message;
   contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${apiKey}`;
+  // Gemini 3.x text generation has no Free-Tier Google Search grounding. For
+  // current-information questions use Gemini 2.5 Flash, whose API Free Tier
+  // includes Google Search grounding (up to 500 RPD). Normal chat stays on 3.7.
+  const directModel = liveSearchRequired ? 'gemini-2.5-flash' : 'gemini-3.7-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${directModel}:generateContent?key=${apiKey}`;
   const body: any = {
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents,
     generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
   };
-  // Google Search grounding is enabled for the direct Gemini path too. This is
-  // the critical path used when an API key is stored in the Android app.
-  body.tools = [{ google_search: {} }];
+  if (liveSearchRequired) body.tools = [{ google_search: {} }];
   const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!response.ok) throw new MkuuApiError({ code: 'GEMINI_UNAVAILABLE', status: response.status, userMessage: 'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.', technicalDetails: `Gemini API error (${response.status})`, targetUrl: url });
   const data = await response.json();
   const rawText = data.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || '').join('') || '';
   if (!rawText.trim()) throw new Error('Gemini returned an empty response');
-  return { reply: rawText, cleanSpeechText: rawText.replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(), engineUsed: 'direct_gemini', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', intent: liveSearchRequired ? 'web_search' : 'chat' };
+  return { reply: rawText, cleanSpeechText: rawText.replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(), engineUsed: 'direct_gemini', aiProvider: 'Google Gemini', chatModel: directModel, intent: liveSearchRequired ? 'web_search' : 'chat' };
 }
 
 async function callNativeServerChat(params: ChatEngineParams): Promise<ChatEngineResult> {
@@ -225,7 +227,6 @@ async function streamServerChat(params: ChatEngineParams): Promise<ChatEngineRes
 }
 
 export async function executeMkuuChat(params: ChatEngineParams): Promise<ChatEngineResult> {
-  // Image generation/editing must always use the dedicated Image Studio backend.
   if (needsImageRoute(params)) {
     return callImageStudio(params);
   }
