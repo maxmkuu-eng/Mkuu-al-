@@ -40,10 +40,9 @@ patch('server/geminiService.ts', 'request-scoped source propagation', (source) =
     `import { searchWithTavily } from './tavilySearch.js';`,
     `import { searchWithTavily, getTavilySourcesForQuery } from './tavilySearch.js';`
   );
-  source = source.replace(
-    `        const tavilyResults = await searchWithTavily(\`${message}\\nCurrent date/time in Tanzania: \${getCurrentTanzaniaTimeContext().formattedString}\`);`,
-    `        const searchEvidenceQuery = \`${message}\\nCurrent date/time in Tanzania: \${getCurrentTanzaniaTimeContext().formattedString}\`;\n        const tavilyResults = await searchWithTavily(searchEvidenceQuery);`
-  );
+  const oldSearch = "        const tavilyResults = await searchWithTavily(`" + '${message}' + "\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);";
+  const newSearch = "        const searchEvidenceQuery = `" + '${message}' + "\\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`;\n        const tavilyResults = await searchWithTavily(searchEvidenceQuery);";
+  source = source.replace(oldSearch, newSearch);
   if (!source.includes('requestWebSources')) {
     source = source.replace(`    let aiReplyText = '';`, `    let aiReplyText = '';\n    let requestWebSources: Array<{ title: string; url: string }> = [];`);
     source = source.replace(
