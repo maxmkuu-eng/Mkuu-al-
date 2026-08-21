@@ -11,6 +11,7 @@ function patch(file, label, fn) {
   }
 }
 
+// Keep Tavily sources owned by the response that produced them.
 patch('server/tavilySearch.ts', 'clear stale sources when a request does not search', (source) => {
   if (!source.includes('export function clearLastTavilySources')) {
     source = source.replace(
@@ -47,6 +48,7 @@ patch('server/geminiService.ts', 'capture sources per search response', (source)
   return source;
 });
 
+// Persist response-owned sources through the backend API and historical source attribution.
 patch('server.ts', 'persist response-owned web sources', (source) => {
   if (!source.includes('webSources?: Array<{ title: string; url: string }>;')) {
     source = source.replace('generatedFiles?: any[];\n  }', 'generatedFiles?: any[];\n      webSources?: Array<{ title: string; url: string }>;\n    }');
@@ -74,12 +76,13 @@ patch('server.ts', 'persist response-owned web sources', (source) => {
       "      return { reply, cleanSpeechText: reply, memoriesExtracted: [], peopleRecognized: [], generatedFiles: [], webSources: historicalSources, aiProvider: 'Google Gemini', chatModel: 'historical-source-reference', latencyMs: 0, __MKUU_HISTORICAL_SOURCE_ANSWER: true };",
       "    }",
       ""
-    ].join('\\n');
+    ].join('\n');
     source = source.replace(marker, marker + historicalCode);
   }
   return source;
 });
 
+// Persist backend-provided sources in the client chat message.
 patch('src/App.tsx', 'persist web sources in client chat messages', (source) => {
   if (!source.includes('webSources: chatResult.webSources || []')) {
     source = source.replace(
@@ -90,11 +93,23 @@ patch('src/App.tsx', 'persist web sources in client chat messages', (source) => 
   return source;
 });
 
+// Carry sources through the native chat engine. Also de-duplicate any earlier build-script insertion.
 patch('src/services/aiEngine.ts', 'carry web sources through chat engine', (source) => {
   if (!source.includes('webSources?: Array<{ title: string; url: string }>')) {
     source = source.replace('generatedFiles?: GeneratedFileSummary[];\n  engineUsed:', 'generatedFiles?: GeneratedFileSummary[];\n  webSources?: Array<{ title: string; url: string }>;\n  engineUsed:');
   }
-  if (!source.includes('webSources: serverRes.webSources')) {
+
+  const sourceLine = '    webSources: serverRes.webSources || [],';
+  const count = (source.match(/webSources: serverRes\.webSources \|\| \[\],/g) || []).length;
+  if (count > 1) {
+    let seen = false;
+    source = source.replace(/    webSources: serverRes\.webSources \|\| \[\],\n/g, (line) => {
+      if (seen) return '';
+      seen = true;
+      return line;
+    });
+  }
+  if (!source.includes(sourceLine)) {
     source = source.replace('generatedFiles: serverRes.generatedFiles,\n    engineUsed:', 'generatedFiles: serverRes.generatedFiles,\n    webSources: serverRes.webSources || [],\n    engineUsed:');
   }
   return source;
