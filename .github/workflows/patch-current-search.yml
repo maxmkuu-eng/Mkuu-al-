@@ -1,0 +1,69 @@
+name: Patch current-fact search
+
+on:
+  push:
+    branches: ["fix/latest-search-free"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[current-search-patched]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch Gemini search routing
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('server/geminiService.ts')
+          s = p.read_text()
+
+          old = "preferredModel: PERSONAL_CHAT_MODEL,"
+          new = "preferredModel: isSearchQuery ? 'gemini-2.5-flash' : PERSONAL_CHAT_MODEL,"
+          count = s.count(old)
+          if count < 2:
+              raise SystemExit(f'Expected at least 2 search call sites, found {count}')
+          s = s.replace(old, new, 2)
+
+          block = '''        // If tools (search grounding) caused quota limit (429) or invalid argument, immediately try this model without tools
+        if (params.config?.tools) {
+          try {
+            console.log(`[MKUU-BACKEND] Retrying ${model} without search tools due to tool limit...`);
+            const configWithoutTools = { ...params.config };
+            delete configWithoutTools.tools;
+            const retryRes = await client.models.generateContent({
+              model,
+              contents: params.contents,
+              config: configWithoutTools,
+            });
+            if (retryRes.text && retryRes.text.trim().length > 0) {
+              return retryRes.text;
+            }
+          } catch (noToolErr) {
+            lastError = noToolErr;
+          }
+        }
+
+'''
+          if block not in s:
+              raise SystemExit('Unsafe fallback block was not found; refusing to modify the file')
+          s = s.replace(block, '')
+
+          p.write_text(s)
+          print('Patched current-fact search: Gemini 2.5 Flash + no ungrounded fallback.')
+          PY
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/geminiService.ts .github/workflows/patch-current-search.yml
+          git commit -m "fix: require grounded search for current facts [current-search-patched]"
+          git push
