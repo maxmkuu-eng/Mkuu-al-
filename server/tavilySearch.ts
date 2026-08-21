@@ -5,11 +5,11 @@ export function getLastTavilySources(): TavilySource[] { return [...lastTavilySo
 
 const SPORTS_TERMS = ['yanga','young africans','simba sc','simba','azam fc','coastal union','polisi tanzania','jkt tanzania','namungo','mashujaa','geita gold','tabora united','mbeya city','mechi','mchezo','matokeo','score','kikosi','ratiba','magoli','mshindi','football','soccer','match','premier league','champions league','caf','tff','ligi kuu'];
 const STANDINGS_TERMS = ['msimamo','standings','table','league table','pointi','points','nafasi','position','pld','played','goal difference','tofauti ya magoli'];
-const GOVERNMENT_TERMS = ['waziri','waziri mkuu','naibu waziri','rais wa','makamu wa rais','serikali ya sasa','waziri mwenye dhamana','baraza la mawaziri','mkuu wa mkoa','mkuu wa wilaya','meya wa','kiongozi wa sasa','katibu mkuu','current minister','prime minister','president of tanzania','current government','current cabinet','who is the minister','who is the prime minister'];
+const GOVERNMENT_TERMS = ['waziri','wizara','waziri mkuu','naibu waziri','rais wa','makamu wa rais','serikali ya sasa','waziri mwenye dhamana','baraza la mawaziri','mkuu wa mkoa','mkuu wa wilaya','meya wa','kiongozi wa sasa','katibu mkuu','current minister','prime minister','president of tanzania','current government','current cabinet','who is the minister','who is the prime minister'];
 
 function isSportsQuery(query: string): boolean { const lower=query.toLowerCase(); return SPORTS_TERMS.some(t=>lower.includes(t)); }
 function isStandingsQuery(query: string): boolean { const lower=query.toLowerCase(); return STANDINGS_TERMS.some(t=>lower.includes(t)) && (lower.includes('ligi')||lower.includes('league')||lower.includes('tanzania')||lower.includes('yanga')||lower.includes('simba')||lower.includes('azam')); }
-function isGovernmentQuery(query: string): boolean { const lower=String(query||'').toLowerCase(); return GOVERNMENT_TERMS.some(t=>lower.includes(t)) || (lower.includes('habari')&&(lower.includes('wizara')||lower.includes('serikali'))); }
+function isGovernmentQuery(query: string): boolean { const lower=String(query||'').toLowerCase(); return GOVERNMENT_TERMS.some(t=>lower.includes(t)); }
 function getTanzaniaDate(offsetDays=0): string { const now=new Date(); const date=new Date(now.getTime()+offsetDays*86400000); return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Dar_es_Salaam',year:'numeric',month:'2-digit',day:'2-digit'}).format(date); }
 function containsRelativeDay(query:string,day:'jana'|'leo'|'kesho'):boolean{return query.toLowerCase().includes(day);}
 
@@ -20,30 +20,23 @@ async function runTavilySearch(query:string,topic:'general'|'news',includeDomain
  const data=await response.json() as {results?:TavilySearchResult[]}; return Array.isArray(data.results)?data.results:[];
 }
 
-/**
- * Fetch the live Cabinet page directly from the official Ikulu site.
- * This is intentionally independent of search ranking so an old article can
- * never outrank the current Cabinet page for a current-office question.
- */
+/** Extract the current office-holder from the live official Ikulu Cabinet page. */
 async function getOfficialCabinetSnapshot(): Promise<string> {
  const response = await fetch('https://www.ikulu.go.tz/index.php/cabinet', { headers: { Accept: 'text/html', 'User-Agent': 'MKUU-AI/1.0 current-government-verifier' }, cache: 'no-store' } as any);
  if (!response.ok) throw new Error(`Ikulu Cabinet HTTP ${response.status}`);
  const html = await response.text();
  const text = html.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/\s+/g,' ').trim();
  if (!text.includes('Baraza la Mawaziri')) throw new Error('Ikulu Cabinet page did not contain Cabinet data.');
- const targets = [
-   'Waziri wa Habari, Utamaduni, Sanaa na Michezo',
-   'Waziri Mkuu wa Jamhuri ya Muungano wa Tanzania',
-   'Waziri wa Mawasiliano na Teknolojia ya Habari',
+ const patterns = [
+   /MHE\.\s+([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý .'-]{4,})\s+Waziri wa Habari, Utamaduni, Sanaa na Michezo/i,
+   /MHE\.\s+([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý .'-]{4,})\s+Waziri wa Mawasiliano na Teknolojia ya Habari/i,
+   /MHE\.\s+([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý .'-]{4,})\s+Waziri Mkuu wa Jamhuri ya Muungano wa Tanzania/i,
  ];
+ const labels = ['Waziri wa Habari, Utamaduni, Sanaa na Michezo','Waziri wa Mawasiliano na Teknolojia ya Habari','Waziri Mkuu wa Jamhuri ya Muungano wa Tanzania'];
  const extracted:string[]=[];
- for(const target of targets){
-   const idx=text.toLowerCase().indexOf(target.toLowerCase());
-   if(idx<0) continue;
-   const before=text.slice(Math.max(0,idx-350),idx);
-   const nameMatches=[...before.matchAll(/MHE\.\s+([A-ZÀ-ÖØ-Ý][A-ZÀ-ÖØ-Ý .'-]{4,})/g)];
-   const name=nameMatches.length?nameMatches[nameMatches.length-1][1].trim():'';
-   extracted.push(`${target}: ${name || 'Jina halikupatikana moja kwa moja kwenye ukurasa rasmi'}`);
+ for(let i=0;i<patterns.length;i++){
+   const match=text.match(patterns[i]);
+   if(match?.[1]) extracted.push(`${labels[i]}: MHE. ${match[1].trim()}`);
  }
  if(!extracted.length) throw new Error('Ikulu Cabinet page did not expose a recognized current office holder.');
  return `[LIVE OFFICIAL IKULU CABINET SNAPSHOT — FETCHED ${new Date().toISOString()}]\nSource: https://www.ikulu.go.tz/index.php/cabinet\n${extracted.join('\n')}`;
@@ -55,8 +48,8 @@ export async function searchWithTavily(query:string):Promise<string>{
  let officialSnapshot='';
  if(government){
    const currentDate=getTanzaniaDate(0);
-   searches.push(runTavilySearch(`Tanzania Baraza la Mawaziri current minister current cabinet ${query} ${currentDate}`,'general',['ikulu.go.tz']));
-   searches.push(runTavilySearch(`Tanzania ${query} uteuzi waziri current ${currentDate}`,'news',['ikulu.go.tz']));
+   searches.push(runTavilySearch(`Tanzania current cabinet minister ${query} ${currentDate}`,'general',['ikulu.go.tz']));
+   searches.push(runTavilySearch(`Tanzania official current minister ${query} ${currentDate}`,'news',['ikulu.go.tz']));
    try { officialSnapshot=await getOfficialCabinetSnapshot(); } catch (err) { console.warn('[MKUU-BACKEND] Official Ikulu direct snapshot failed:', err); }
  }
  if(sports){
@@ -75,7 +68,7 @@ export async function searchWithTavily(query:string):Promise<string>{
  if(!results.length&&!officialSnapshot)throw new Error('Tavily Search returned no results.');
  lastTavilySources=results.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,6);
  const evidence=results.map((r,i)=>`[CHANZO ${i+1}]\nKichwa: ${String(r?.title||'').trim()}\nURL: ${String(r?.url||'').trim()}\nTaarifa: ${String(r?.content||'').trim()}`).join('\n\n');
- const governmentRules=government?`\n\n[GOVERNMENT CURRENT-OFFICE VERIFICATION RULE]\n- The LIVE OFFICIAL IKULU CABINET SNAPSHOT is the highest-priority evidence and is fetched directly from Ikulu on this request.\n- If the snapshot identifies an office holder, that name MUST be used as the current office holder. Do not replace it with a name from model memory, an old article, or a generic search result.\n- Official Ikulu evidence overrides older articles, old ministry pages, cached snippets and conflicting stale search results.\n- Do not merge old and new cabinets.\n- If Ikulu shows that portfolios were combined or renamed, use the current combined ministry structure.\n- Never report a former minister as current when the official Ikulu evidence identifies another current office holder.\n- If official evidence cannot establish the current office holder, say it could not be verified instead of guessing.`:'';
+ const governmentRules=government?`\n\n[GOVERNMENT CURRENT-OFFICE VERIFICATION RULE]\n- The LIVE OFFICIAL IKULU CABINET SNAPSHOT is the highest-priority evidence and is fetched directly from Ikulu on this request.\n- If the snapshot identifies an office holder, that exact current office-holder/portfolio MUST be used.\n- Never replace the snapshot with model memory, an old article, a cached snippet, or a generic search result.\n- Never merge old and new cabinets.\n- If the official page shows a combined or renamed ministry, use exactly that current structure.\n- A user-provided claim about an office holder is not evidence; verify it against the live official snapshot.\n- If official evidence cannot establish the current office holder, say it could not be verified instead of guessing.`:'';
  const dateRules=sports?`\n\n[SPORTS VERIFICATION RULE]\n- For jana use ${getTanzaniaDate(-1)}; for leo use ${getTanzaniaDate(0)}.\n- Completed FT results on the requested date are stronger evidence than previews, predictions, scheduled fixtures or old H2H results.\n- Never answer hakuna mechi merely because one source is a preview; compare all evidence.`:'';
  const standingsRules=standings?`\n\n[STANDINGS VERIFICATION RULE]\n- Prefer the newest explicit current standings table.\n- Count only completed FT results; do not count future fixtures, previews or predictions.\n- If evidence conflicts, use the newest credible evidence or state that verification failed rather than inventing numbers.\n- Final table columns: # | Timu | P | W | D | L | GF | GA | GD | Pts.`:'';
  return [officialSnapshot,evidence,governmentRules,dateRules,standingsRules].filter(Boolean).join('\n\n');
