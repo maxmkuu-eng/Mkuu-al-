@@ -29,6 +29,22 @@ function toDataUrl(base64: string, mimeType: string): string {
   return `data:${mimeType};base64,${base64}`;
 }
 
+function stringifyPuterError(error: unknown): string {
+  if (error == null) return 'Unknown Puter Image Studio error.';
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message || error.name;
+  const candidate = error as any;
+  const useful = candidate?.message ?? candidate?.msg ?? candidate?.error ?? candidate?.details ?? candidate;
+  if (typeof useful === 'string') return useful;
+  try {
+    const json = JSON.stringify(useful);
+    if (json && json !== '[object Object]') return json;
+  } catch {
+    // Fall through to the stable generic message below.
+  }
+  return 'Puter Image Studio returned an error object without a readable message.';
+}
+
 async function ensurePuterAuth(puter: any): Promise<void> {
   if (puter.auth?.isSignedIn?.()) return;
   throw new Error('PUTER_AUTH_REQUIRED: Image Studio inahitaji Puter authentication. Ingia Puter mara moja kwenye Image Studio, kisha ujaribu tena. MKUU hatafungua login link yenyewe wakati wa kutuma command.');
@@ -59,40 +75,45 @@ export async function runPuterImageStudio(params: {
   mimeType?: string;
   filename?: string;
 }): Promise<any> {
-  const puter = await loadPuter();
-  await ensurePuterAuth(puter);
-  const hasImage = !!params.imageBase64;
-  const prompt = buildPrompt(params.prompt, hasImage);
-  let result: any;
+  try {
+    const puter = await loadPuter();
+    await ensurePuterAuth(puter);
+    const hasImage = !!params.imageBase64;
+    const prompt = buildPrompt(params.prompt, hasImage);
+    let result: any;
 
-  if (hasImage) {
-    const dataUrl = toDataUrl(params.imageBase64!, params.mimeType || 'image/jpeg');
-    result = await puter.ai.txt2img(prompt, {
+    if (hasImage) {
+      const dataUrl = toDataUrl(params.imageBase64!, params.mimeType || 'image/jpeg');
+      result = await puter.ai.txt2img(prompt, {
+        model: IMAGE_MODEL,
+        input_image: dataUrl,
+        input_image_mime_type: params.mimeType || 'image/jpeg',
+        quality: '1K',
+      });
+    } else {
+      result = await puter.ai.txt2img(prompt, { model: IMAGE_MODEL, quality: '1K' });
+    }
+
+    const dataUrl = extractImage(result);
+    const fileType = 'png';
+    const filename = params.filename || (hasImage ? 'Picha_Iliyohaririwa_Mkuu.png' : 'Picha_ya_Mkuu.png');
+    const size = Math.max(0, Math.floor(((dataUrl.split(',')[1] || '').length * 3) / 4));
+
+    return {
+      file: {
+        id: `puter_image_${Date.now()}`,
+        filename,
+        fileType,
+        size,
+        mimeType: 'image/png',
+        createdAt: new Date().toISOString(),
+        description: 'Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio kupitia Puter.',
+        downloadUrl: dataUrl,
+      },
       model: IMAGE_MODEL,
-      input_image: dataUrl,
-      input_image_mime_type: params.mimeType || 'image/jpeg',
-      quality: '1K',
-    });
-  } else {
-    result = await puter.ai.txt2img(prompt, { model: IMAGE_MODEL, quality: '1K' });
+    };
+  } catch (error: unknown) {
+    const message = stringifyPuterError(error);
+    throw new Error(message === '[object Object]' ? 'Unknown Puter Image Studio error.' : message);
   }
-
-  const dataUrl = extractImage(result);
-  const fileType = 'png';
-  const filename = params.filename || (hasImage ? 'Picha_Iliyohaririwa_Mkuu.png' : 'Picha_ya_Mkuu.png');
-  const size = Math.max(0, Math.floor(((dataUrl.split(',')[1] || '').length * 3) / 4));
-
-  return {
-    file: {
-      id: `puter_image_${Date.now()}`,
-      filename,
-      fileType,
-      size,
-      mimeType: 'image/png',
-      createdAt: new Date().toISOString(),
-      description: 'Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio kupitia Puter.',
-      downloadUrl: dataUrl,
-    },
-    model: IMAGE_MODEL,
-  };
 }
