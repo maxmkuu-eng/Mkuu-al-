@@ -13,9 +13,20 @@ const SPORTS_TERMS = [
   'premier league', 'champions league', 'caf', 'tff', 'ligi kuu',
 ];
 
+const STANDINGS_TERMS = [
+  'msimamo', 'standings', 'table', 'league table', 'pointi', 'points',
+  'nafasi', 'position', 'pld', 'played', 'goal difference', 'tofauti ya magoli',
+];
+
 function isSportsQuery(query: string): boolean {
   const lower = query.toLowerCase();
   return SPORTS_TERMS.some((term) => lower.includes(term));
+}
+
+function isStandingsQuery(query: string): boolean {
+  const lower = query.toLowerCase();
+  return STANDINGS_TERMS.some((term) => lower.includes(term)) &&
+    (lower.includes('ligi') || lower.includes('league') || lower.includes('tanzania') || lower.includes('yanga') || lower.includes('simba') || lower.includes('azam'));
 }
 
 function getTanzaniaDate(offsetDays = 0): string {
@@ -62,14 +73,12 @@ async function runTavilySearch(query: string, topic: 'general' | 'news'): Promis
 
 export async function searchWithTavily(query: string): Promise<string> {
   const sports = isSportsQuery(query);
+  const standings = isStandingsQuery(query);
   const searches: Promise<TavilySearchResult[]>[] = [runTavilySearch(query, 'general')];
 
   if (sports) {
     searches.push(runTavilySearch(`${query} final score FT full time result completed match`, 'news'));
 
-    // Relative dates such as "jana" are resolved on the server, not by Gemini.
-    // This prevents search results for a future fixture/preview from replacing
-    // an already-completed match from the requested date.
     if (containsRelativeDay(query, 'jana')) {
       const yesterday = getTanzaniaDate(-1);
       searches.push(runTavilySearch(`${query} Tanzania ${yesterday} FT final score result completed`, 'news'));
@@ -84,6 +93,21 @@ export async function searchWithTavily(query: string): Promise<string> {
     }
   }
 
+  // Dedicated standings layer: search for an actual current table separately
+  // from fixtures/results. This prevents Gemini from building a table by mixing
+  // old previews, future fixtures and partial snippets from ordinary search.
+  if (standings) {
+    const today = getTanzaniaDate(0);
+    searches.push(runTavilySearch(
+      `Tanzania NBC Premier League 2026/2027 current standings table ${today} P W D L GF GA GD points`,
+      'general',
+    ));
+    searches.push(runTavilySearch(
+      `Tanzania NBC Premier League 2026/2027 latest completed results FT standings updated ${today}`,
+      'news',
+    ));
+  }
+
   const merged = (await Promise.all(searches)).flat();
   const unique = new Map<string, TavilySearchResult>();
   for (const result of merged) {
@@ -95,7 +119,7 @@ export async function searchWithTavily(query: string): Promise<string> {
 
   const results = Array.from(unique.values())
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
-    .slice(0, 16);
+    .slice(0, 20);
 
   if (results.length === 0) throw new Error('Tavily Search returned no results.');
 
@@ -112,5 +136,9 @@ export async function searchWithTavily(query: string): Promise<string> {
     ? `\n\n[SPORTS VERIFICATION RULE]\n- For "jana", the requested event date is the server-resolved Tanzania date ${getTanzaniaDate(-1)}.\n- For "leo", the requested event date is the server-resolved Tanzania date ${getTanzaniaDate(0)}.\n- Treat a completed FT result on the requested date as stronger evidence than a preview, prediction, scheduled fixture, or older H2H result.\n- Never answer "hakuna mechi" merely because one source is a preview or says "upcoming"; compare all supplied evidence first.\n- If multiple credible sources show an FT score for the requested date, use that score.`
     : '';
 
-  return evidence + dateRules;
+  const standingsRules = standings
+    ? `\n\n[STANDINGS VERIFICATION RULE]\n- This is a league-standings question. Do NOT invent or reconstruct the table from prose snippets alone.\n- Prefer a source that explicitly provides the current standings table for Tanzania NBC Premier League 2026/2027.\n- Use only completed FT results when checking whether a team's P/W/D/L/GF/GA/GD/Pts should have changed. Future fixtures, previews, predictions and scheduled matches MUST NOT be counted.\n- Before answering, cross-check the explicit standings table against the latest completed results in the supplied evidence.\n- If sources disagree, do not silently choose a random table. Prefer the newest credible standings source and use completed FT results to resolve obvious stale entries.\n- The final table MUST use these columns in this exact order: # | Timu | P | W | D | L | GF | GA | GD | Pts.\n- Keep the table clean and aligned; do not put raw search-source text inside the table.\n- Do not mention a future fixture as if it were already played.\n- Do not claim a team has played fewer/more matches than the verified FT results support.\n- If the evidence is genuinely contradictory and cannot be resolved, clearly state that the standings could not be verified instead of fabricating numbers.`
+    : '';
+
+  return evidence + dateRules + standingsRules;
 }
