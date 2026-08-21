@@ -89,9 +89,16 @@ patch('src/services/aiEngine.ts', 'direct Puter Image Studio', (source) => {
   }
 
   try {
+    // Do not use puter.auth.signIn() here: Puter documents that it opens a
+    // separate popup. Use the in-page Puter authentication dialog instead.
     if (!puter.auth?.isSignedIn?.()) {
-      await puter.auth?.signIn?.({ attempt_temp_user_creation: true });
+      if (typeof puter.ui?.authenticateWithPuter === 'function') {
+        await puter.ui.authenticateWithPuter();
+      } else {
+        throw new Error('PUTER_AUTH_REQUIRED: Fungua Image Studio ndani ya MKUU na ukamilishe login ya Puter.');
+      }
     }
+
     const image = await puter.ai.txt2img(prompt, options);
     const dataUrl = image?.src || (typeof image === 'string' ? image : '');
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
