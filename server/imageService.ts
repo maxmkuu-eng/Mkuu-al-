@@ -38,18 +38,8 @@ function stripDataUrl(value: string): string {
 
 function makePrompt(prompt: string, hasImage: boolean, isBgRemoval: boolean, isObjectRemoval: boolean, isClothingChange: boolean, isHd: boolean): string {
   const base = String(prompt || '').trim() || 'Create a high-quality professional image.';
-  if (!hasImage) return [
-    'GENERATE THE IMAGE ITSELF.',
-    base,
-    'Create a polished production-ready image suitable for the user request.',
-  ].join('\n');
-  if (isBgRemoval) return [
-    'EDIT THE PROVIDED IMAGE.',
-    'Remove the background as completely as possible and replace it with a clean plain background suitable for the request.',
-    'Preserve the subject identity, face, hair, clothing, body proportions and important details.',
-    'Do not return the original image unchanged.',
-    base,
-  ].join('\n');
+  if (!hasImage) return ['GENERATE THE IMAGE ITSELF.', base, 'Create a polished production-ready image suitable for the user request.'].join('\n');
+  if (isBgRemoval) return ['EDIT THE PROVIDED IMAGE.', 'Remove the background as completely as possible and replace it with a clean plain background suitable for the request.', 'Preserve the subject identity, face, hair, clothing, body proportions and important details.', 'Do not return the original image unchanged.', base].join('\n');
   if (isObjectRemoval) return ['EDIT THE PROVIDED IMAGE.', base, 'Remove the requested object or person completely and reconstruct the surrounding area naturally.', 'Preserve the rest of the scene.', 'Do not return the original image unchanged.'].join('\n');
   if (isClothingChange) return ['EDIT THE PROVIDED IMAGE.', base, 'Change only the requested clothing while preserving identity, face, hair, body proportions and scene.', 'Do not return the original image unchanged.'].join('\n');
   if (isHd) return ['EDIT THE PROVIDED IMAGE.', base, 'Improve clarity and detail while preserving the identity and composition.', 'Do not return the original image unchanged.'].join('\n');
@@ -62,22 +52,16 @@ async function cloudflareImageRequest(params: { prompt: string; imageBase64?: st
   if (!accountId) throw new Error('CLOUDFLARE_ACCOUNT_ID is not configured.');
   if (!token) throw new Error('CLOUDFLARE_API_TOKEN is not configured.');
 
-  const body: any = {
-    prompt: params.prompt,
-    width: 1024,
-    height: 1024,
-    num_steps: 20,
-    guidance: 7.5,
-  };
+  const body: any = { prompt: params.prompt, width: 1024, height: 1024, num_steps: 20, guidance: 7.5 };
   if (params.imageBase64) body.image_b64 = stripDataUrl(params.imageBase64);
 
-  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(PRIMARY_IMAGE_MODEL)}`;
+  // Keep @cf/runwayml/... as path segments. Encoding the whole model with
+  // encodeURIComponent() turns the slash into %2F and causes Cloudflare
+  // error 7000: No route for that URI.
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${PRIMARY_IMAGE_MODEL}`;
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
@@ -87,8 +71,6 @@ async function cloudflareImageRequest(params: { prompt: string; imageBase64?: st
     throw new Error(`CLOUDFLARE_IMAGE_API_ERROR: HTTP ${response.status}${errorText ? ` - ${errorText.slice(0, 500)}` : ''}`);
   }
 
-  // Cloudflare's REST Execute AI endpoint returns the generated PNG as the
-  // result string for TextToImage models. Some deployments may wrap it in JSON.
   if (contentType.includes('application/json')) {
     const data: any = await response.json().catch(() => ({}));
     const result = data?.result;
@@ -129,15 +111,7 @@ export class ImageService {
           ? `Logo_ya_Max_${Date.now().toString().slice(-6)}.png`
           : `Picha_ya_Max_${Date.now().toString().slice(-6)}.png`;
     const title = isBgRemoval ? 'Picha Iliyoondolewa Background' : hasImage ? 'Picha Iliyohaririwa' : lower.includes('logo') ? 'Logo Iliyotengenezwa' : 'Picha Iliyotengenezwa';
-    const saved = await generateRealFile({
-      userId,
-      filename,
-      fileType: 'png',
-      title,
-      content: imageBase64,
-      base64Data: imageBase64,
-      description: `Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio (Cloudflare Workers AI ${PRIMARY_IMAGE_MODEL}).`,
-    });
+    const saved = await generateRealFile({ userId, filename, fileType: 'png', title, content: imageBase64, base64Data: imageBase64, description: `Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio (Cloudflare Workers AI ${PRIMARY_IMAGE_MODEL}).` });
 
     const explanation = isBgRemoval
       ? 'Nimehariri picha yako kwa Image Studio na kuondoa background kwa kadiri model inavyoweza.'
