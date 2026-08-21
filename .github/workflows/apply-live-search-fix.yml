@@ -31,10 +31,10 @@ jobs:
           s = s.replace(old, new, 1)
 
           pattern = re.compile(
-              r"\n        # If tools \(search grounding\) caused quota limit \(429\) or invalid argument, immediately try this model without tools.*?\n        # Quick single wait of max 800ms if rate limited before checking fallback model",
+              r"\n        // If tools \(search grounding\) caused quota limit \(429\) or invalid argument, immediately try this model without tools.*?\n        // Quick single wait of max 800ms if rate limited before checking fallback model",
               re.S,
           )
-          replacement = "\n        # Never retry a grounded request without search tools.\n        # Falling back without tools would allow Gemini's stale model knowledge to answer current questions.\n        # Quick single wait of max 800ms if rate limited before checking fallback model"
+          replacement = "\n        // Never retry a grounded request without search tools.\n        // Falling back without tools would allow Gemini's stale model knowledge to answer current questions.\n        // Quick single wait of max 800ms if rate limited before checking fallback model"
           s2, n = pattern.subn(replacement, s, count=1)
           if n != 1:
               raise SystemExit('Expected ungrounded fallback block was not found')
