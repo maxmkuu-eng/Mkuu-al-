@@ -232,10 +232,11 @@ export class GeminiService {
       generationConfig.tools = [{ googleSearch: {} }];
     }
 
+    const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;
+
     console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider="${AI_PROVIDER}" model="${usedModel}" searchGrounding=${isSearchQuery}`);
 
     let aiReplyText = '';
-    const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;
 
     try {
       aiReplyText = await this.executeGeminiCallWithFallback({
@@ -255,7 +256,7 @@ export class GeminiService {
           const searchReplyText = await this.executeGeminiCallWithFallback({
             contents,
             config: searchGenerationConfig,
-            preferredModel: PERSONAL_CHAT_MODEL,
+            preferredModel: usedModel,
           });
           if (searchReplyText && searchReplyText.trim().length > 0) {
             aiReplyText = searchReplyText;
