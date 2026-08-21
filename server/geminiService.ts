@@ -11,6 +11,7 @@ import { generateRealFile } from './files.js';
 
 export const AI_PROVIDER = 'Google Gemini';
 export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';
+export const LIVE_SEARCH_MODEL = 'gemini-2.5-flash';
 export const BACKEND_IDENTIFIER = 'MKUU Server';
 
 // Multi-candidate fallback list for resilience (using models available on standard tier)
@@ -231,16 +232,16 @@ export class GeminiService {
       generationConfig.tools = [{ googleSearch: {} }];
     }
 
-    console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider="${AI_PROVIDER}" model="${PERSONAL_CHAT_MODEL}" searchGrounding=${isSearchQuery}`);
+    console.log(`[MKUU-BACKEND] [GEMINI_REQUEST_STARTED] provider="${AI_PROVIDER}" model="${usedModel}" searchGrounding=${isSearchQuery}`);
 
     let aiReplyText = '';
-    let usedModel = PERSONAL_CHAT_MODEL;
+    const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;
 
     try {
       aiReplyText = await this.executeGeminiCallWithFallback({
         contents,
         config: generationConfig,
-        preferredModel: PERSONAL_CHAT_MODEL,
+        preferredModel: usedModel,
       });
 
       // If search was not triggered upfront, check if response reveals insufficient knowledge/recency, then fallback to Google Search
@@ -278,10 +279,11 @@ export class GeminiService {
         errMsg.includes('Rate limit') ||
         errMsg.includes('exceeded your current quota');
 
+      if (isSearchQuery) {
+        throw new Error(`GOOGLE_SEARCH_REQUIRED: Live Google Search failed (${LIVE_SEARCH_MODEL}). MKUU will not answer this current-information question from stale model memory. ${errMsg}`);
+      }
       if (isRateLimit) {
-        aiReplyText = `Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). 
-
-Tafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'** au unitumie ujumbe tena, nitaendelea kukuhudumia mara moja.`;
+        aiReplyText = `Mkuu wangu **Max**, seva za Gemini zimepata msongamano wa muda mfupi wa maombi (Rate Limit Quota). Tafadhali jaribu tena.`;
       } else {
         throw new Error(`Google Gemini API (${PERSONAL_CHAT_MODEL}) Error: ${err?.message || 'Huduma haikupatikana kwa sasa'}`);
       }
@@ -314,7 +316,7 @@ Tafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'** au unitumie uju
       peopleRecognized: newlySavedPerson ? [{ name: newlySavedPerson.name, relationship: newlySavedPerson.relationship }] : [],
       generatedFiles: generatedFilesList,
       aiProvider: AI_PROVIDER,
-      chatModel: PERSONAL_CHAT_MODEL,
+      chatModel: usedModel,
       latencyMs,
     };
   }
@@ -326,7 +328,7 @@ Tafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'** au unitumie uju
   }): Promise<string> {
     const client = this.getClient();
     const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;
-    const modelsToTry = [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];
+    const modelsToTry = params.config?.tools ? [preferred] : [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];
 
     let lastError: any = null;
 
@@ -345,25 +347,6 @@ Tafadhali subiri sekunde chache kisha ubonyeze **'JARIBU TENA'** au unitumie uju
       } catch (err: any) {
         lastError = err;
         const errMsg = String(err?.message || err);
-
-        // If tools (search grounding) caused quota limit (429) or invalid argument, immediately try this model without tools
-        if (params.config?.tools) {
-          try {
-            console.log(`[MKUU-BACKEND] Retrying ${model} without search tools due to tool limit...`);
-            const configWithoutTools = { ...params.config };
-            delete configWithoutTools.tools;
-            const retryRes = await client.models.generateContent({
-              model,
-              contents: params.contents,
-              config: configWithoutTools,
-            });
-            if (retryRes.text && retryRes.text.trim().length > 0) {
-              return retryRes.text;
-            }
-          } catch (noToolErr) {
-            lastError = noToolErr;
-          }
-        }
 
         // Quick single wait of max 800ms if rate limited before checking fallback model
         const isRateLimit = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota');
