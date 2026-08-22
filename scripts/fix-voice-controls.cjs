@@ -14,7 +14,6 @@ function ensureCapacitorImport(source) {
   return source.replace(/^import React/m, "import { Capacitor } from '@capacitor/core';\nimport React");
 }
 
-// Normal response speaker: use Android native TTS first, with a safe language fallback.
 patch('src/components/ChatView.tsx', (original) => {
   let source = ensureCapacitorImport(original);
   const marker = 'const playSpeech = async (msgId: string, text: string) => {';
@@ -31,7 +30,7 @@ patch('src/components/ChatView.tsx', (original) => {
     const cleanText = text
       .replace(/https?:\/\/\S+/g, ' ')
       .replace(/\[[^\]]*\]\([^)]*\)/g, ' ')
-      .replace(/[*_~#`>]+/g, ' ')
+      .replace(/[*_~#\`>]+/g, ' ')
       .replace(/[|{}\[\]<>^=+\\/]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
@@ -84,12 +83,11 @@ patch('src/components/ChatView.tsx', (original) => {
   return source.slice(0, start) + block + source.slice(end + 5);
 });
 
-// Live Voice: native Android TTS first, with Swahili -> Android default voice fallback.
 patch('src/components/VoiceModal.tsx', (original) => {
   let source = ensureCapacitorImport(original);
-  const start = source.indexOf('  const speakText = async (text: string) => {') >= 0
-    ? source.indexOf('  const speakText = async (text: string) => {')
-    : source.indexOf('  const speakText = (text: string) => {');
+  const asyncMarker = '  const speakText = async (text: string) => {';
+  const syncMarker = '  const speakText = (text: string) => {';
+  const start = source.indexOf(asyncMarker) >= 0 ? source.indexOf(asyncMarker) : source.indexOf(syncMarker);
   if (start < 0) return source;
   const end = source.indexOf('\n  };', start);
   if (end < 0) return source;
