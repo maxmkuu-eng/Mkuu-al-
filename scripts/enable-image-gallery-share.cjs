@@ -24,10 +24,8 @@ async function resolveFileDataUrlForNative(file: {
 }): Promise<string | null> {
   if (file.base64Data?.startsWith('data:')) return file.base64Data;
   if (file.downloadUrl?.startsWith('data:')) return file.downloadUrl;
-
   const localFile = await localChatStorage.getFileData(file.filename);
   if (localFile?.data?.startsWith('data:')) return localFile.data;
-
   if (file.downloadUrl) {
     try {
       const fullUrl = getApiUrl(file.downloadUrl);
@@ -37,10 +35,7 @@ async function resolveFileDataUrlForNative(file: {
       console.warn('[MKUU] Native image fetch failed:', error);
     }
   }
-
-  if (file.content) {
-    return await blobToBase64(new Blob([file.content], { type: file.mimeType || 'text/plain;charset=utf-8' }));
-  }
+  if (file.content) return await blobToBase64(new Blob([file.content], { type: file.mimeType || 'text/plain;charset=utf-8' }));
   return null;
 }
 
@@ -53,7 +48,6 @@ async function saveImageToAndroidGallery(file: {
 }): Promise<string> {
   const dataUrl = await resolveFileDataUrlForNative(file);
   if (!dataUrl?.startsWith('data:')) throw new Error('Picha haikupatikana kwa ajili ya kuhifadhi.');
-
   const comma = dataUrl.indexOf(',');
   if (comma < 0) throw new Error('Muundo wa picha si sahihi.');
   const base64 = dataUrl.slice(comma + 1);
@@ -61,14 +55,8 @@ async function saveImageToAndroidGallery(file: {
   const mimeType = file.mimeType || dataUrl.slice(5, comma).split(';')[0] || 'image/png';
   const extension = safeName.includes('.') ? safeName.split('.').pop() : (mimeType.split('/')[1] || 'png');
   const filename = safeName.includes('.') ? safeName : safeName + '.' + extension;
-
   const { Filesystem, Directory } = await import('@capacitor/filesystem');
-  const result = await Filesystem.writeFile({
-    path: 'MKUU AI/' + filename,
-    data: base64,
-    directory: Directory.Pictures,
-    recursive: true,
-  });
+  const result = await Filesystem.writeFile({ path: 'MKUU AI/' + filename, data: base64, directory: Directory.Pictures, recursive: true });
   return result.uri;
 }
 
@@ -83,7 +71,6 @@ export async function shareFileHelper(file: {
   if (typeof window === 'undefined') return;
   const isImage = Boolean(file.mimeType?.startsWith('image/')) || ['png','jpg','jpeg','webp','gif','svg'].includes((file.fileType || '').toLowerCase());
   if (!isImage) return;
-
   try {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
     if (isNative) {
@@ -92,7 +79,6 @@ export async function shareFileHelper(file: {
       await Share.share({ title: 'MKUU AI', text: file.filename, url: uri, dialogTitle: 'Shiriki picha ya MKUU AI' });
       return;
     }
-
     const dataUrl = await resolveFileDataUrlForNative(file);
     if (!dataUrl) return;
     if (navigator.share) {
@@ -133,7 +119,6 @@ export async function shareFileHelper(file: {
     if (!s.includes(nativeMarker)) throw new Error('MKUU: download helper body marker not found.');
     s = s.replace(nativeMarker, injected);
   }
-
   write(file, s);
 }
 
@@ -141,20 +126,14 @@ export async function shareFileHelper(file: {
 {
   const file = 'src/components/ChatView.tsx';
   let s = read(file);
-  s = s.replace(
-    '  Send, Mic, Crown, Brain, Users, Download, FileText, FileSpreadsheet, FileCode,',
-    '  Send, Share2, Mic, Crown, Brain, Users, Download, FileText, FileSpreadsheet, FileCode,'
-  );
-  s = s.replace(
-    "import { downloadFileHelper } from '../services/clientFileGenerator';",
-    "import { downloadFileHelper, shareFileHelper } from '../services/clientFileGenerator';"
-  );
+  s = s.replace('  Send, Mic, Crown, Brain, Users, Download, FileText, FileSpreadsheet, FileCode,', '  Send, Share2, Mic, Crown, Brain, Users, Download, FileText, FileSpreadsheet, FileCode,');
+  s = s.replace("import { downloadFileHelper } from '../services/clientFileGenerator';", "import { downloadFileHelper, shareFileHelper } from '../services/clientFileGenerator';");
 
   const downloadMarker = '<button id={`download-file-${file.id}`}';
   if (!s.includes('share-file-${file.id}')) {
     const start = s.indexOf(downloadMarker);
     if (start < 0) throw new Error('MKUU: image download button marker not found.');
-    const shareButton = `<button id={\\`share-file-\\${file.id}\\`} onClick={() => shareFileHelper(file)} className="px-2.5 py-1.5 rounded-lg glass hover:bg-white/10 text-xs font-semibold text-[#CCCCCC] hover:text-white flex items-center space-x-1 border border-[#333333] transition cursor-pointer" title="Shiriki Picha">{<Share2 className="w-3.5 h-3.5 text-[#D4AF37]" />}<span>SHIRIKI</span></button>`;
+    const shareButton = '<button id={`share-file-${file.id}`} onClick={() => shareFileHelper(file)} className="px-2.5 py-1.5 rounded-lg glass hover:bg-white/10 text-xs font-semibold text-[#CCCCCC] hover:text-white flex items-center space-x-1 border border-[#333333] transition cursor-pointer" title="Shiriki Picha"><Share2 className="w-3.5 h-3.5 text-[#D4AF37]" /><span>SHIRIKI</span></button>';
     s = s.slice(0, start) + `{isImage && ${shareButton}}` + s.slice(start);
   }
   write(file, s);
