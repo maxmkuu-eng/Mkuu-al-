@@ -15,7 +15,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -69,7 +68,6 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
         new Thread(() -> {
             try {
-                // Security gate: only contacts saved in the app's Watu Wangu list may trigger auto-reply.
                 if (!isAllowedPerson(from)) {
                     android.util.Log.i("MKUU_SMS", "Ignoring SMS from non-whitelisted number: " + from);
                     return;
@@ -115,17 +113,11 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
 
             JSONArray people;
             JSONObject root = new JSONObject(response.toString());
-            if (root.has("people") && root.opt("people") instanceof JSONArray) {
-                people = root.getJSONArray("people");
-            } else if (root.has("data") && root.opt("data") instanceof JSONArray) {
-                people = root.getJSONArray("data");
-            } else if (root.has("results") && root.opt("results") instanceof JSONArray) {
-                people = root.getJSONArray("results");
-            } else if (root.has("phone")) {
-                people = new JSONArray().put(root);
-            } else {
-                return false;
-            }
+            if (root.has("people") && root.opt("people") instanceof JSONArray) people = root.getJSONArray("people");
+            else if (root.has("data") && root.opt("data") instanceof JSONArray) people = root.getJSONArray("data");
+            else if (root.has("results") && root.opt("results") instanceof JSONArray) people = root.getJSONArray("results");
+            else if (root.has("phone")) people = new JSONArray().put(root);
+            else return false;
 
             String normalizedSender = normalizePhone(sender);
             for (int i = 0; i < people.length(); i++) {
@@ -135,7 +127,6 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
                 if (!phone.isEmpty() && normalizedSender.equals(normalizePhone(phone))) return true;
             }
         } catch (Exception e) {
-            // Fail closed: if the whitelist cannot be verified, never auto-reply.
             android.util.Log.w("MKUU_SMS", "Could not verify SMS sender whitelist", e);
         } finally {
             if (connection != null) connection.disconnect();
@@ -152,9 +143,9 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
 
     private static String cleanSmsReply(String reply) {
         String text = reply == null ? "" : reply.trim();
-        text = text.replaceFirst("(?i)^MKUU AI\s*[:\-]\s*", "");
-        text = text.replaceFirst("(?i)^AI\s*[:\-]\s*", "");
-        text = text.replaceAll("\\*\\*", "");
+        text = text.replaceFirst("(?i)^MKUU AI\\s*[:\\-]\\s*", "");
+        text = text.replaceFirst("(?i)^AI\\s*[:\\-]\\s*", "");
+        text = text.replaceAll("\\\\*\\\\*", "");
         text = text.replaceAll("(?m)^[-*]\\s+", "");
         return text.trim();
     }
