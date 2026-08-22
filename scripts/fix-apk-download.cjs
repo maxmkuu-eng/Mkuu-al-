@@ -25,23 +25,26 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
 
     if (isNative) {
-      const dataUrl = file.base64Data || file.downloadUrl;
-      if (!dataUrl || !dataUrl.startsWith('data:')) {
-        throw new Error('Faili halikupatikana kwa ajili ya kupakua.');
+      const dataUrl = file.base64Data || file.downloadUrl || '';
+      if (!dataUrl.startsWith('data:')) {
+        throw new Error('Picha haijapatikana kwenye kifaa.');
       }
 
       const comma = dataUrl.indexOf(',');
-      if (comma < 0) throw new Error('Muundo wa faili si sahihi.');
+      if (comma < 0) throw new Error('Muundo wa picha si sahihi.');
+
+      const payload = dataUrl.slice(comma + 1);
+      const isBase64 = dataUrl.slice(0, comma).includes(';base64');
+      const data = isBase64 ? payload : btoa(unescape(encodeURIComponent(payload)));
 
       const { Filesystem, Directory } = await import('@capacitor/filesystem');
       await Filesystem.writeFile({
-        path: 'MKUU AI/' + filename,
-        data: dataUrl.slice(comma + 1),
+        path: filename,
+        data,
         directory: Directory.Documents,
-        recursive: true,
       });
 
-      console.log('[MKUU] File saved on Android:', filename);
+      console.log('[MKUU] Android download saved:', filename);
       return;
     }
 
@@ -62,4 +65,4 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
 
 source = source.slice(0, start) + replacement;
 fs.writeFileSync(filePath, source);
-console.log('MKUU: APK Download saves files to Android Documents; web download unchanged.');
+console.log('MKUU: Image Download uses a single safe Android Documents file; button remains enabled and web download is unchanged.');
