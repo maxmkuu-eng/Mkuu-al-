@@ -1,38 +1,15 @@
 import { registerPlugin } from '@capacitor/core';
+export type SimCard={subscriptionId:number;slotIndex:number;displayName:string;number:string};
+export type SmsStatus={status:'sending'|'sent'|'delivered'|'failed';to:string;part?:number;total?:number;resultCode?:number;timestamp:number};
+interface SmsSenderPlugin{getSimCards():Promise<{sims:SimCard[]}>;sendSms(options:{to:string;message:string;subscriptionId?:number}):Promise<{status:string;to:string;parts:number;timestamp:number}>;addListener(eventName:'smsStatus',listenerFunc:(status:SmsStatus)=>void):Promise<{remove:()=>Promise<void>}>;}
+export const SmsSender=registerPlugin<SmsSenderPlugin>('SmsSender');
+export async function getSimCards():Promise<SimCard[]>{try{return(await SmsSender.getSimCards()).sims||[];}catch{return[];}}
+export async function sendNativeSms(to:string,message:string,subscriptionId?:number){return SmsSender.sendSms({to,message,subscriptionId});}
 
-export type SimCard = {
-  subscriptionId: number;
-  slotIndex: number;
-  displayName: string;
-  number: string;
-};
-
-export type SmsStatus = {
-  status: 'sending' | 'sent' | 'delivered' | 'failed';
-  to: string;
-  part?: number;
-  total?: number;
-  resultCode?: number;
-  timestamp: number;
-};
-
-interface SmsSenderPlugin {
-  getSimCards(): Promise<{ sims: SimCard[] }>;
-  sendSms(options: { to: string; message: string; subscriptionId?: number }): Promise<{ status: string; to: string; parts: number; timestamp: number }>;
-  addListener(eventName: 'smsStatus', listenerFunc: (status: SmsStatus) => void): Promise<{ remove: () => Promise<void> }>;
+function installPeopleSmsButtons(){
+ if(typeof window==='undefined'||!document.body)return;
+ const observer=new MutationObserver(addButtons);observer.observe(document.body,{childList:true,subtree:true});addButtons();
+ function addButtons(){document.querySelectorAll<HTMLElement>('button[id^="open-person-"]').forEach(openBtn=>{const card=openBtn.closest('.3d-card') as HTMLElement|null;if(!card||card.querySelector('[data-mkuu-send-sms]'))return;const actions=openBtn.parentElement;if(!actions)return;const btn=document.createElement('button');btn.setAttribute('data-mkuu-send-sms','1');btn.className='px-3 py-1.5 rounded-lg bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 text-[#D4AF37] border border-[#D4AF37]/40 text-xs font-bold transition cursor-pointer';btn.textContent='SEND SMS';const m=card.innerText.match(/\+?255\s*\d[\d\s-]{8,}/);const receiver=(m?.[0]||'').replace(/[\s-]/g,'');btn.onclick=e=>{e.preventDefault();e.stopPropagation();openComposer(receiver);};actions.appendChild(btn);});}
+ async function openComposer(receiver:string){const old=document.getElementById('mkuu-sms-composer');if(old)old.remove();const sims=await getSimCards();const modal=document.createElement('div');modal.id='mkuu-sms-composer';modal.style.cssText='position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(8px)';const options=sims.map(s=>`<option value="${s.subscriptionId}">${s.displayName}${s.number?' — '+s.number:''}</option>`).join('');modal.innerHTML=`<div style="width:100%;max-width:460px;background:#0d0d0d;border:1px solid #333;border-radius:20px;padding:22px;color:#F5F2ED;font-family:system-ui"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><b style="font-size:18px">📤 Send Message</b><button id="mkuu-sms-close" style="background:none;border:0;color:#888;font-size:22px">×</button></div><label style="font-size:12px;color:#aaa">Sender / SIM</label><select id="mkuu-sms-sender" style="width:100%;padding:11px;margin:5px 0 12px;border-radius:10px;background:#050505;color:#fff;border:1px solid #333">${options||'<option value="">Default SIM</option>'}</select><label style="font-size:12px;color:#aaa">Receiver Number</label><input id="mkuu-sms-receiver" value="${receiver}" style="width:100%;padding:11px;margin:5px 0 12px;border-radius:10px;background:#050505;color:#fff;border:1px solid #333"/><label style="font-size:12px;color:#aaa">Message</label><textarea id="mkuu-sms-message" rows="4" placeholder="Andika ujumbe..." style="width:100%;padding:11px;margin:5px 0;border-radius:10px;background:#050505;color:#fff;border:1px solid #333"></textarea><div id="mkuu-sms-status" style="font-size:12px;color:#aaa;min-height:18px;margin:8px 0"></div><button id="mkuu-sms-send" style="width:100%;padding:12px;border:0;border-radius:11px;background:#D4AF37;color:#000;font-weight:800">SEND MESSAGE</button></div>`;document.body.appendChild(modal);modal.querySelector('#mkuu-sms-close')?.addEventListener('click',()=>modal.remove());modal.querySelector('#mkuu-sms-send')?.addEventListener('click',async()=>{const to=(modal.querySelector('#mkuu-sms-receiver') as HTMLInputElement).value.trim();const body=(modal.querySelector('#mkuu-sms-message') as HTMLTextAreaElement).value.trim();const sub=(modal.querySelector('#mkuu-sms-sender') as HTMLSelectElement).value;const status=modal.querySelector('#mkuu-sms-status') as HTMLElement;if(!to||!body){status.textContent='Weka receiver number na message.';return;}status.textContent='Sending...';try{await sendNativeSms(to,body,sub?Number(sub):undefined);status.textContent='✓ Sent — nasubiri delivery report...';const listener=await SmsSender.addListener('smsStatus',s=>{if(s.to.replace(/\s/g,'')===to.replace(/\s/g,'')){status.textContent=s.status==='delivered'?'✓✓ Delivered':'✓ Sent';if(s.status==='delivered')setTimeout(()=>listener.remove(),1500);}});}catch(e:any){status.textContent='⚠️ Failed: '+(e?.message||'SMS haikutumwa.');}});}
 }
-
-export const SmsSender = registerPlugin<SmsSenderPlugin>('SmsSender');
-
-export async function getSimCards(): Promise<SimCard[]> {
-  try {
-    const result = await SmsSender.getSimCards();
-    return result.sims || [];
-  } catch {
-    return [];
-  }
-}
-
-export async function sendNativeSms(to: string, message: string, subscriptionId?: number) {
-  return SmsSender.sendSms({ to, message, subscriptionId });
-}
+if(typeof window!=='undefined')window.setTimeout(installPeopleSmsButtons,800);
