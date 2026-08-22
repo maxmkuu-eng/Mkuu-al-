@@ -1,3 +1,4 @@
+# SMS direct-send + delivery validation build
 name: Build and Validate Android Release APK
 
 on:
@@ -11,144 +12,56 @@ jobs:
   build-and-verify-apk:
     name: Build, Sign & Validate Android APK
     runs-on: ubuntu-latest
-
     steps:
       - name: 1. Checkout Repository
         uses: actions/checkout@v4
-
       - name: 2. Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
-
       - name: 3. Install Node Dependencies
-        run: |
-          npm ci || npm install
-
+        run: npm ci || npm install
       - name: 4. Build Production Web Assets and Sync Android
-        run: |
-          npm run build
-          npx cap sync android
-
+        run: npm run build && npx cap sync android
       - name: 5. Configure JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
-
       - name: 6. Configure Android SDK & Build Tools
         uses: android-actions/setup-android@v3
-
       - name: 7. Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           validate-wrappers: false
           gradle-version: wrapper
-
-      - name: 8. Verify and Ensure Gradle Wrapper Integrity
+      - name: 8. Verify Gradle Wrapper
         run: |
-          if [ ! -s android/gradle/wrapper/gradle-wrapper.jar ] || ! unzip -t android/gradle/wrapper/gradle-wrapper.jar >/dev/null 2>&1; then
-            echo "Repairing gradle-wrapper.jar..."
-            mkdir -p android/gradle/wrapper
-            curl -sSL https://raw.githubusercontent.com/ionic-team/capacitor/main/android/gradle/wrapper/gradle-wrapper.jar -o android/gradle/wrapper/gradle-wrapper.jar
-          fi
           chmod +x android/gradlew
           cd android
           ./gradlew --version
-
       - name: 9. Build Production Android APK (:app:assembleRelease)
-        run: |
-          cd android
-          echo "=========================================="
-          echo "Building Production APK with: ./gradlew clean :app:assembleRelease"
-          echo "=========================================="
-          ./gradlew clean :app:assembleRelease --no-daemon --stacktrace
-
-      - name: 10. Align and Sign Production Release APK (v1 + v2 + v3)
+        run: cd android && ./gradlew clean :app:assembleRelease --no-daemon --stacktrace
+      - name: 10. Align and Sign Production Release APK
         run: |
           mkdir -p release-output
-
           RAW_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
-          if [ -z "$RAW_APK" ] || [ ! -f "$RAW_APK" ]; then
-            echo "ERROR: Release APK binary was not generated at android/app/build/outputs/apk/release/!"
-            exit 1
-          fi
-          echo "Located generated release APK at: $RAW_APK"
-
+          test -n "$RAW_APK" && test -f "$RAW_APK"
           BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
-          echo "Using Android Build-Tools from: $BUILD_TOOLS_DIR"
           export PATH="$BUILD_TOOLS_DIR:$PATH"
-
-          ALIGNED_APK="release-output/aligned_unsigned.apk"
-          zipalign -v -p 4 "$RAW_APK" "$ALIGNED_APK"
-          echo "✓ zipalign completed successfully"
-
-          TARGET_APK="release-output/MkuuAI_Master_v1.0.3_Signed.apk"
-
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "Using repository secret keystore..."
-            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
-            KS_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-            KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
-            KS_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
-          else
-            echo "Generating unified release signing keystore..."
-            keytool -genkey -v -keystore release.keystore -alias mkuu_ai_master_key \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "MkuuAiMasterRelease2026" -keypass "MkuuAiMasterRelease2026" \
-              -dname "CN=Max, OU=MKUU AI, O=MKUU, L=DarEsSalaam, ST=Tanzania, C=TZ"
-            KS_PASS="MkuuAiMasterRelease2026"
-            KEY_PASS="MkuuAiMasterRelease2026"
-            KS_ALIAS="mkuu_ai_master_key"
-          fi
-
-          apksigner sign \
-            --ks release.keystore \
-            --ks-pass "pass:$KS_PASS" \
-            --key-pass "pass:$KEY_PASS" \
-            --ks-key-alias "$KS_ALIAS" \
-            --v1-signing-enabled true \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            --out "$TARGET_APK" \
-            "$ALIGNED_APK"
-
-          echo "✓ Official apksigner completed with v1+v2+v3 signature schemes"
-
-      - name: 11. Strict APK Inspection and Verification
+          zipalign -v -p 4 "$RAW_APK" release-output/aligned_unsigned.apk
+          keytool -genkey -v -keystore release.keystore -alias mkuu_ai_master_key -keyalg RSA -keysize 2048 -validity 10000 -storepass "MkuuAiMasterRelease2026" -keypass "MkuuAiMasterRelease2026" -dname "CN=Max, OU=MKUU AI, O=MKUU, L=DarEsSalaam, ST=Tanzania, C=TZ"
+          apksigner sign --ks release.keystore --ks-pass pass:MkuuAiMasterRelease2026 --key-pass pass:MkuuAiMasterRelease2026 --ks-key-alias mkuu_ai_master_key --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out release-output/MkuuAI_Master_v1.0.3_Signed.apk release-output/aligned_unsigned.apk
+      - name: 11. Strict APK Inspection
         run: |
-          TARGET_APK="release-output/MkuuAI_Master_v1.0.3_Signed.apk"
+          TARGET_APK=release-output/MkuuAI_Master_v1.0.3_Signed.apk
           BUILD_TOOLS_DIR=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           export PATH="$BUILD_TOOLS_DIR:$PATH"
-
-          echo "=========================================="
-          echo "1. Size and Existence Check"
-          echo "=========================================="
-          if [ ! -f "$TARGET_APK" ]; then
-            echo "ERROR: $TARGET_APK does not exist!"
-            exit 1
-          fi
-          APK_SIZE=$(stat -c%s "$TARGET_APK" 2>/dev/null || wc -c < "$TARGET_APK")
-          echo "APK Size: $APK_SIZE bytes (~$(($APK_SIZE / 1024 / 1024)) MB)"
-
-          echo "=========================================="
-          echo "2. Official apksigner Verification (v1, v2, v3)"
-          echo "=========================================="
+          test -f "$TARGET_APK"
           apksigner verify --verbose --print-certs "$TARGET_APK"
-
-          echo "=========================================="
-          echo "3. AAPT Badging & Package Inspection"
-          echo "=========================================="
           aapt dump badging "$TARGET_APK" | head -n 35
-
-          echo "=========================================="
-          echo "4. Zipalign Alignment Verification"
-          echo "=========================================="
           zipalign -c -v 4 "$TARGET_APK"
-
-          echo "ALL INSTALLABILITY VALIDATIONS PASSED!"
-
       - name: 12. Upload Verified Production APK Artifact
         uses: actions/upload-artifact@v4
         with:
