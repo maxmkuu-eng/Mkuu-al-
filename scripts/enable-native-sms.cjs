@@ -10,7 +10,6 @@ function patch(path, marker, insertBefore, block) {
   if (index < 0) throw new Error(`[SMS] ${path}: insertion point not found`);
   text = text.slice(0, index) + block + text.slice(index);
   fs.writeFileSync(path, text);
-  console.log(`[SMS] ${path}: patched`);
 }
 
 patch(
@@ -46,7 +45,7 @@ if (!peopleSource.includes('MKUU_PEOPLE_SMS_HANDLERS_V1')) {
 
 if (!peopleSource.includes('id={`send-sms-${person.id}`}')) {
   const buttonAnchor = '                <div className="flex items-center space-x-1.5">';
-  const buttonBlock = `                <div className="flex items-center space-x-1.5">\n                  <button id={\`send-sms-${person.id}\`} onClick={() => openSmsModal(person)} className="px-2.5 py-1.5 rounded-lg bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30 text-xs font-semibold flex items-center space-x-1 transition cursor-pointer">\n                    <MessageSquare className="w-3.5 h-3.5" /><span>SMS</span>\n                  </button>`;
+  const buttonBlock = `                <div className="flex items-center space-x-1.5">\n                  <button id={\`send-sms-\${person.id}\`} onClick={() => openSmsModal(person)} className="px-2.5 py-1.5 rounded-lg bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30 text-xs font-semibold flex items-center space-x-1 transition cursor-pointer">\n                    <MessageSquare className="w-3.5 h-3.5" /><span>SMS</span>\n                  </button>`;
   if (!peopleSource.includes(buttonAnchor)) throw new Error('[SMS] PeopleCenter button anchor not found.');
   peopleSource = peopleSource.replace(buttonAnchor, buttonBlock);
 }
