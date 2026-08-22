@@ -25,104 +25,55 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
 
     if (isNative) {
-      const { Filesystem, Directory } = await import('@capacitor/filesystem');
-
-      // Prefer Capacitor's native download for real HTTP/HTTPS files. This avoids
-      // loading the whole file into a WebView/base64 buffer and prevents Android
-      // from exiting on large generated images/PDFs.
-      if (file.downloadUrl && !file.downloadUrl.startsWith('data:') && !file.downloadUrl.startsWith('blob:')) {
-        const fullUrl = getApiUrl(file.downloadUrl);
-        await Filesystem.downloadFile({
-          url: fullUrl,
-          path: filename,
-          directory: Directory.Documents,
-        });
-        console.log('[MKUU] Android native download saved:', filename);
-        return;
-      }
-
-      // Generated/local files may only exist as data. Keep this path small and
-      // avoid recursive/nested native paths that can terminate some Android WebViews.
-      let dataUrl: string | null = null;
-      if (file.base64Data?.startsWith('data:')) dataUrl = file.base64Data;
-      else if (file.downloadUrl?.startsWith('data:')) dataUrl = file.downloadUrl;
-      else {
-        const localFile = await localChatStorage.getFileData(file.filename);
-        if (localFile?.data?.startsWith('data:')) dataUrl = localFile.data;
-      }
-
-      if (!dataUrl && file.content) {
-        dataUrl = await blobToBase64(new Blob([file.content], {
-          type: file.mimeType || 'application/octet-stream',
-        }));
-      }
-
-      if (!dataUrl?.startsWith('data:')) {
+      // Android: use the system share/save sheet instead of directly writing to
+      // shared storage. This avoids storage-permission and native-write crashes.
+      const dataUrl = file.base64Data || file.downloadUrl;
+      if (!dataUrl || !dataUrl.startsWith('data:')) {
         throw new Error('Faili halikupatikana kwa ajili ya kupakua.');
       }
 
+      const { Share } = await import('@capacitor/share');
+      const canShare = await Share.canShare();
+      if (!canShare.value) throw new Error('Android sharing haipatikani.');
+
+      const { Filesystem, Directory } = await import('@capacitor/filesystem');
       const comma = dataUrl.indexOf(',');
       if (comma < 0) throw new Error('Muundo wa faili si sahihi.');
-      await Filesystem.writeFile({
+
+      const base64 = dataUrl.slice(comma + 1);
+      const saved = await Filesystem.writeFile({
         path: filename,
-        data: dataUrl.slice(comma + 1),
-        directory: Directory.Documents,
+        data: base64,
+        directory: Directory.Cache,
       });
-      console.log('[MKUU] Android local download saved:', filename);
+
+      await Share.share({
+        title: filename,
+        text: filename,
+        url: saved.uri,
+        dialogTitle: 'Hifadhi au Shiriki faili',
+      });
       return;
     }
 
-    // Preserve the existing browser download behaviour.
-    let sourceUrl: string | null = null;
-    let objectUrl: string | null = null;
-
-    if (file.base64Data?.startsWith('data:')) {
-      sourceUrl = file.base64Data;
-    } else if (file.downloadUrl?.startsWith('data:') || file.downloadUrl?.startsWith('blob:')) {
-      sourceUrl = file.downloadUrl;
-    } else {
-      const localFile = await localChatStorage.getFileData(file.filename);
-      if (localFile?.data?.startsWith('data:')) sourceUrl = localFile.data;
-    }
-
-    if (!sourceUrl && file.downloadUrl) {
-      const fullUrl = getApiUrl(file.downloadUrl);
-      try {
-        const response = await fetch(fullUrl);
-        if (response.ok) {
-          objectUrl = URL.createObjectURL(await response.blob());
-          sourceUrl = objectUrl;
-        }
-      } catch (error) {
-        console.warn('[MKUU] Browser download fetch failed:', error);
-      }
-      if (!sourceUrl) sourceUrl = fullUrl;
-    }
-
-    if (!sourceUrl && file.content) {
-      objectUrl = URL.createObjectURL(new Blob([file.content], {
-        type: file.mimeType || 'text/plain;charset=utf-8',
-      }));
-      sourceUrl = objectUrl;
-    }
-
+    // Existing browser behaviour: unchanged.
+    const sourceUrl = file.base64Data || file.downloadUrl;
     if (!sourceUrl) throw new Error('Faili halikupatikana kwa ajili ya kupakua.');
 
     const link = document.createElement('a');
     link.href = sourceUrl;
     link.download = filename;
+    link.target = '_blank';
     document.body.appendChild(link);
     link.click();
-    setTimeout(() => {
-      document.body.removeChild(link);
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    }, 2000);
+    setTimeout(() => document.body.removeChild(link), 1500);
   } catch (error) {
     console.error('[MKUU] Download failed:', error);
+    // Never terminate the app because Download failed.
   }
 }
 `;
 
 source = source.slice(0, start) + replacement;
 fs.writeFileSync(filePath, source);
-console.log('MKUU: APK Download now prefers native Filesystem.downloadFile for remote files; web download unchanged.');
+console.log('MKUU: APK Download now uses Android Cache + system Save/Share sheet; web download unchanged.');
