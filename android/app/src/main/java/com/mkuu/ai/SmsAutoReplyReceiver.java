@@ -1,26 +1,35 @@
 package com.mkuu.ai;
 
+import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.provider.Telephony;
-import android.telephony.SmsMessage;
 import android.telephony.SmsManager;
-import android.content.SharedPreferences;
+import android.telephony.SmsMessage;
+
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 /**
- * Background SMS Auto Reply. MKUU is NOT the default SMS application.
- * The receiver is fail-closed: it replies only when explicitly enabled,
- * Emergency Stop is off, and the incoming sender is allowed by the settings.
+ * Receives SMS and, when Auto Reply is enabled, asks MKUU/Gemini for a reply.
+ * Replies are sent through the device SIM using SmsManager.
  */
 public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String PREFS = "mkuu_autoreply";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_EMERGENCY_STOP = "emergencyStop";
-    private static final String KEY_VERIFIED_PHONE = "verifiedPhone";
-    private static final String KEY_REPLY_TEXT = "replyText";
-    private static final String KEY_ALLOWED_SENDERS = "allowedSenders";
+    private static final String BACKEND_CHAT_URL = "https://mkuu-al-3.onrender.com/api/chat";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -28,56 +37,86 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         if (!prefs.getBoolean(KEY_ENABLED, false) || prefs.getBoolean(KEY_EMERGENCY_STOP, false)) return;
+        if (context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
         Bundle bundle = intent.getExtras();
         if (bundle == null) return;
         Object[] pdus = (Object[]) bundle.get("pdus");
-        if (pdus == null) return;
+        if (pdus == null || pdus.length == 0) return;
 
         String format = bundle.getString("format");
         StringBuilder body = new StringBuilder();
         String sender = "";
         for (Object pdu : pdus) {
-            SmsMessage sms = SmsMessage.createFromPdu((byte[]) pdu, format);
+            SmsMessage sms;
+            try {
+                sms = SmsMessage.createFromPdu((byte[]) pdu, format);
+            } catch (Exception e) {
+                continue;
+            }
             if (sms == null) continue;
-            sender = sms.getOriginatingAddress();
+            if (sender.isEmpty()) sender = sms.getOriginatingAddress();
             body.append(sms.getMessageBody());
         }
 
-        if (!isAllowedSender(prefs, sender)) return;
+        final String message = body.toString().trim();
+        final String from = sender == null ? "" : sender.trim();
+        if (message.isEmpty() || from.isEmpty()) return;
 
-        // Until the backend/AI reply callback is connected, use the explicit
-        // Auto Reply template configured by the user. Never send an empty SMS.
-        String reply = prefs.getString(KEY_REPLY_TEXT, "").trim();
-        if (reply.isEmpty()) return;
-
-        try {
-            SmsManager.getDefault().sendTextMessage(sender, null, reply, null, null);
-        } catch (SecurityException ignored) {
-            // Android permission was revoked: fail closed.
-        }
-    }
-
-    private static boolean isAllowedSender(SharedPreferences prefs, String sender) {
-        String normalizedSender = normalize(sender);
-        if (normalizedSender.isEmpty()) return false;
-
-        // Prefer an explicit sender allow-list when present.
-        String rawAllowed = prefs.getString(KEY_ALLOWED_SENDERS, "").trim();
-        if (!rawAllowed.isEmpty()) {
-            for (String candidate : rawAllowed.split(",")) {
-                if (normalizedSender.equals(normalize(candidate))) return true;
+        final PendingResult pendingResult = goAsync();
+        new Thread(() -> {
+            try {
+                String reply = requestMkuuReply(from, message);
+                if (reply != null && !reply.trim().isEmpty()
+                        && context.checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
+                    SmsManager.getDefault().sendTextMessage(from, null, reply.trim(), null, null);
+                }
+            } catch (Exception e) {
+                android.util.Log.e("MKUU_SMS", "SMS auto reply failed", e);
+            } finally {
+                pendingResult.finish();
             }
-            return false;
-        }
-
-        // Backward-compatible single verified number.
-        String verified = normalize(prefs.getString(KEY_VERIFIED_PHONE, ""));
-        return !verified.isEmpty() && normalizedSender.equals(verified);
+        }, "mkuu-sms-reply").start();
     }
 
-    private static String normalize(String number) {
-        if (number == null) return "";
-        return number.replaceAll("[^0-9+]", "");
+    private static String requestMkuuReply(String sender, String smsText) throws Exception {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(BACKEND_CHAT_URL);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(30000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+            JSONObject payload = new JSONObject();
+            payload.put("message", "Jibu SMS hii kwa kifupi na kwa lugha ileile ya mtumaji. Usitaje kwamba wewe ni mfumo wa AI isipokuwa ukiulizwa. Mtumaji: " + sender + "\nSMS: " + smsText);
+            payload.put("isVoice", false);
+            payload.put("conversationHistory", new org.json.JSONArray());
+            payload.put("people", new org.json.JSONArray());
+
+            byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(data);
+            }
+
+            int status = connection.getResponseCode();
+            InputStream stream = status >= 200 && status < 300
+                    ? connection.getInputStream() : connection.getErrorStream();
+            if (stream == null || status < 200 || status >= 300) return null;
+
+            StringBuilder response = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) response.append(line);
+            }
+
+            JSONObject json = new JSONObject(response.toString());
+            return json.optString("reply", "").trim();
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 }
