@@ -1,246 +1,34 @@
 import { ChatMessage, Memory, Person, GeneratedFileSummary, UserProfile } from '../types';
 import { apiFetch, getApiUrl, isCapacitorNative, MkuuApiError } from './apiConfig';
+import { sendNativeSms } from './smsService';
 
 const GEMINI_API_KEY_STORAGE = 'mkuu_gemini_api_key_v1';
+export function getStoredGeminiApiKey(): string { if (typeof window === 'undefined') return ''; return localStorage.getItem(GEMINI_API_KEY_STORAGE) || ''; }
+export function setStoredGeminiApiKey(key: string): void { if (typeof window === 'undefined') return; if (!key || !key.trim()) localStorage.removeItem(GEMINI_API_KEY_STORAGE); else localStorage.setItem(GEMINI_API_KEY_STORAGE, key.trim()); }
+export interface ChatEngineParams { userId:string; message:string; conversationId:string; conversationHistory?:ChatMessage[]; isVoice?:boolean; attachments?:any[]; user?:UserProfile|null; memories?:Memory[]; people?:Person[]; }
+export interface ChatEngineResult { reply:string; cleanSpeechText:string; memoriesExtracted?:Memory[]; peopleRecognized?:Person[]; generatedFiles?:GeneratedFileSummary[]; engineUsed:'server'|'direct_gemini'; aiProvider?:string; chatModel?:string; intent?:string; }
 
-export function getStoredGeminiApiKey(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem(GEMINI_API_KEY_STORAGE) || '';
+function normalizePhone(value:string){return String(value||'').replace(/[^+\d]/g,'');}
+async function handleDirectSmsCommand(params:ChatEngineParams):Promise<ChatEngineResult|null>{
+ const text=String(params.message||'').trim();
+ if(!/\b(mtumie|tuma\s+sms|tuma\s+ujumbe|send\s+(?:an\s+)?sms)\b/i.test(text)) return null;
+ const match=text.match(/(?:mkuu\s*[,;:]?\s*)?(?:mtumie|tuma\s+sms\s+(?:kwa\s+)?|tuma\s+ujumbe\s+(?:kwa\s+)?|send\s+(?:an\s+)?sms\s+(?:to\s+)?)\s+(.+?)(?:\s+sms\s*)?\s*[:\-]\s*(.+)$/i);
+ if(!match)return null;
+ const target=match[1].trim(); const message=match[2].trim(); const people=params.people||[]; const targetDigits=normalizePhone(target);
+ const person=people.find(p=>normalizePhone(p.phone||'')===targetDigits||p.name.toLowerCase()===target.toLowerCase()||p.nickname?.toLowerCase()===target.toLowerCase());
+ const to=normalizePhone(person?.phone||target);
+ if(!/^\+?\d{7,15}$/.test(to)) return {reply:`Sijaweza kupata namba ya ${target}. Tafadhali weka mtu huyo kwenye Watu Wangu au tumia namba kamili.`,cleanSpeechText:`Sijaweza kupata namba ya ${target}.`,engineUsed:'server',intent:'sms_send_failed'};
+ if(!isCapacitorNative()) return {reply:'Kutuma SMS moja kwa moja kunahitaji APK ya MKUU yenye SIM na ruhusa ya SMS.',cleanSpeechText:'Kutuma SMS moja kwa moja kunahitaji APK ya MKUU.',engineUsed:'server',intent:'sms_send_unavailable'};
+ try{await sendNativeSms(to,message);return{reply:`Nimetuma SMS kwa ${person?.name||to}.`,cleanSpeechText:`Nimetuma SMS kwa ${person?.name||to}.`,engineUsed:'server',aiProvider:'Android SIM',intent:'sms_send'};}catch(e:any){return{reply:`SMS haikutumwa kwa ${person?.name||to}. ${e?.message||'Hakikisha ruhusa ya SMS na SIM ziko tayari.'}`,cleanSpeechText:'SMS haikutumwa.',engineUsed:'server',aiProvider:'Android SIM',intent:'sms_send_failed'};}
 }
 
-export function setStoredGeminiApiKey(key: string): void {
-  if (typeof window === 'undefined') return;
-  if (!key || !key.trim()) localStorage.removeItem(GEMINI_API_KEY_STORAGE);
-  else localStorage.setItem(GEMINI_API_KEY_STORAGE, key.trim());
-}
-
-export interface ChatEngineParams {
-  userId: string;
-  message: string;
-  conversationId: string;
-  conversationHistory?: ChatMessage[];
-  isVoice?: boolean;
-  attachments?: any[];
-  user?: UserProfile | null;
-  memories?: Memory[];
-  people?: Person[];
-}
-
-export interface ChatEngineResult {
-  reply: string;
-  cleanSpeechText: string;
-  memoriesExtracted?: Memory[];
-  peopleRecognized?: Person[];
-  generatedFiles?: GeneratedFileSummary[];
-  engineUsed: 'server' | 'direct_gemini';
-  aiProvider?: string;
-  chatModel?: string;
-  intent?: string;
-}
-
-let streamPreview = '';
-
-function emitStream(text: string, done = false) {
-  if (typeof window === 'undefined') return;
-  streamPreview += text;
-  let node = document.getElementById('mkuu-stream-preview');
-  if (!node && !done) {
-    node = document.createElement('div');
-    node.id = 'mkuu-stream-preview';
-    node.setAttribute('aria-live', 'polite');
-    Object.assign(node.style, {
-      position: 'fixed', left: '16px', right: '16px', bottom: '88px', zIndex: '9999',
-      maxWidth: '760px', margin: '0 auto', padding: '14px 16px', borderRadius: '16px',
-      background: 'rgba(8,8,8,.96)', color: '#F5F2ED', border: '1px solid rgba(212,175,55,.45)',
-      boxShadow: '0 18px 50px rgba(0,0,0,.45)', fontSize: '14px', lineHeight: '1.55',
-      whiteSpace: 'pre-wrap', maxHeight: '38vh', overflow: 'auto', backdropFilter: 'blur(14px)',
-    });
-    document.body.appendChild(node);
-  }
-  if (node) node.textContent = streamPreview;
-  if (done) {
-    window.setTimeout(() => document.getElementById('mkuu-stream-preview')?.remove(), 120);
-    streamPreview = '';
-  }
-}
-
-function needsArtifactRoute(params: ChatEngineParams) {
-  const text = String(params.message || '').toLowerCase();
-  const hasImage = (params.attachments || []).some((a: any) => String(a?.mimeType || '').startsWith('image/'));
-  return hasImage || /\b(pdf|docx?|word|excel|xlsx|csv|logo|banner|poster|cartoon|picha|image|background|document|proposal|ripoti)\b/i.test(text);
-}
-
-function needsImageRoute(params: ChatEngineParams) {
-  const text = String(params.message || '').toLowerCase();
-  const hasImage = (params.attachments || []).some((a: any) => String(a?.mimeType || '').startsWith('image/'));
-  const imageWords = [
-    'picha', 'image', 'photo', 'logo', 'background', 'remove background', 'ondoa background',
-    'toa background', 'futa background', 'edit picha', 'hariri picha', 'hariri', 'edit image',
-    'tengeneza logo', 'tengeneza picha', 'generate image', 'create image', 'create logo',
-    'poster', 'banner', 'cartoon', 'transparent', 'png', '2k', '4k', 'hd', 'enhance', 'boresha',
-  ];
-  return hasImage || imageWords.some((word) => text.includes(word));
-}
-
-function needsLiveSearch(message: string): boolean {
-  const lower = String(message || '').toLowerCase();
-  const changingFactPatterns = [
-    /\bwaziri mkuu\b/, /\brais wa\b/, /\bmakamu wa rais\b/, /\bkiongozi wa sasa\b/, /\bmkuu wa nchi\b/, /\bmkuu wa serikali\b/, /\bmeya wa\b/, /\bnaibu\s+waziri\b/, /\bwaziri wa\b/, /\bserikali ya sasa\b/, /\bcurrent\b/, /\blatest\b/, /\bsasa\b/, /\bwa sasa\b/, /\bleo\b/, /\bhivi punde\b/, /\bhabari mpya\b/, /\bhabari za leo\b/, /\bbei ya\b/, /\bthamani ya\b/, /\bexchange rate\b/, /\brate ya\b/, /\bmatokeo ya\b/, /\bratiba ya\b/, /\bmsimamo wa\b/, /\bnani ameshinda\b/, /\bnani kashinda\b/, /\bwho is\b/, /\bwho won\b/, /\btoday\b/, /\btonight\b/, /\bthis week\b/, /\bthis month\b/, /\b2025\b/, /\b2026\b/
-  ];
-  return changingFactPatterns.some((pattern) => pattern.test(lower));
-}
-
-async function callImageStudio(params: ChatEngineParams): Promise<ChatEngineResult> {
-  const attachments = params.attachments || [];
-  const imageAttachment = attachments.find((a: any) => String(a?.mimeType || '').startsWith('image/'));
-  const imageBase64 = imageAttachment?.base64Data || '';
-  const mimeType = imageAttachment?.mimeType || 'image/jpeg';
-  const lower = String(params.message || '').toLowerCase();
-  const isGeneration = !imageAttachment;
-  const endpoint = isGeneration ? '/api/image/generate' : '/api/image/edit';
-
-  const response = await apiFetch<any>(endpoint, {
-    method: 'POST',
-    body: JSON.stringify({
-      prompt: params.message,
-      imageBase64: imageBase64 || undefined,
-      mimeType,
-      filename: isGeneration
-        ? (lower.includes('logo') ? 'Logo_ya_Mkuu.png' : 'Picha_ya_Mkuu.png')
-        : 'Picha_Iliyohaririwa_Mkuu.png',
-    }),
-  });
-
-  if (!response?.success || !response?.file) {
-    throw new MkuuApiError({
-      code: 'IMAGE_GENERATION_FAILED',
-      status: 500,
-      userMessage: 'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA\nTafadhali jaribu tena.',
-      technicalDetails: 'Image Studio returned no generated file',
-      targetUrl: getApiUrl(endpoint),
-    });
-  }
-
-  const file = {
-    ...response.file,
-    downloadUrl: response.file.downloadUrl?.startsWith('http') || response.file.downloadUrl?.startsWith('data:') ? response.file.downloadUrl : getApiUrl(response.file.downloadUrl),
-  };
-
-  return {
-    reply: response.reply || 'Picha yako imetengenezwa na MKUU Image Studio na iko tayari hapa chini.',
-    cleanSpeechText: (response.reply || 'Picha yako imetengenezwa na MKUU Image Studio.').replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(),
-    generatedFiles: [file],
-    engineUsed: 'server',
-    aiProvider: response.aiProvider || 'Puter Image Studio',
-    chatModel: response.modelUsed || 'gemini-3.1-flash-image-preview',
-    intent: isGeneration ? 'image_generation' : 'image_edit',
-  };
-}
-
-async function callDirectGemini(apiKey: string, params: ChatEngineParams): Promise<ChatEngineResult> {
-  const peopleText = (params.people || []).slice(0, 20).map((p) => `- ${p.name}${p.nickname ? ` (${p.nickname})` : ''}: ${p.relationship}; ${p.phone || ''}; ${p.notes || ''}`).join('\n');
-  const liveSearchRequired = needsLiveSearch(params.message);
-  const systemPrompt = `Wewe ni MKUU AI, msaidizi wa Max. Zungumza kwa Kiswahili fasaha. Tumia taarifa hizi za watu wa karibu inapohitajika:\n${peopleText || 'Hakuna watu wa karibu waliosajiliwa.'}\n\nLIVE INFORMATION RULE: Kwa swali lolote linalohusu taarifa inayoweza kubadilika kwa muda (viongozi wa sasa, nyadhifa za serikali, habari, bei, viwango vya fedha, matokeo, ratiba, hali ya hewa, au mtu aliye kwenye nafasi fulani kwa sasa), lazima utumie Google Search grounding kabla ya kutoa jibu. Usitumie kumbukumbu ya model kama chanzo cha mwisho. Ikiwa utafutaji unaonyesha taarifa mpya, tumia hiyo taarifa mpya. Taja kwa ufupi chanzo/tarehe inapofaa.`;
-  const rawHistory = Array.isArray(params.conversationHistory) ? params.conversationHistory.slice(-10) : [];
-  const contents: any[] = rawHistory.filter((h) => h.content || h.attachments?.length).map((h) => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: h.content || '' }] }));
-  const userPrompt = liveSearchRequired
-    ? `Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu. Jibu swali hili kwa usahihi kulingana na taarifa ya sasa: ${params.message}`
-    : params.message;
-  contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-  // Gemini 3.x text generation has no Free-Tier Google Search grounding. For
-  // current-information questions use Gemini 2.5 Flash, whose API Free Tier
-  // includes Google Search grounding (up to 500 RPD). Normal chat stays on 3.7.
-  const directModel = liveSearchRequired ? 'gemini-2.5-flash' : 'gemini-3.7-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${directModel}:generateContent?key=${apiKey}`;
-  const body: any = {
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
-  };
-  if (liveSearchRequired) body.tools = [{ google_search: {} }];
-  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!response.ok) throw new MkuuApiError({ code: 'GEMINI_UNAVAILABLE', status: response.status, userMessage: 'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.', technicalDetails: `Gemini API error (${response.status})`, targetUrl: url });
-  const data = await response.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || '').join('') || '';
-  if (!rawText.trim()) throw new Error('Gemini returned an empty response');
-  return { reply: rawText, cleanSpeechText: rawText.replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(), engineUsed: 'direct_gemini', aiProvider: 'Google Gemini', chatModel: directModel, intent: liveSearchRequired ? 'web_search' : 'chat' };
-}
-
-async function callNativeServerChat(params: ChatEngineParams): Promise<ChatEngineResult> {
-  const serverRes = await apiFetch<any>('/api/chat', {
-    method: 'POST',
-    body: JSON.stringify({
-      conversationId: params.conversationId,
-      message: params.message,
-      isVoice: params.isVoice,
-      attachments: params.attachments || [],
-      conversationHistory: (params.conversationHistory || []).slice(-10),
-      people: params.people || [],
-    }),
-  });
-  if (!serverRes?.reply) throw new MkuuApiError({ code: 'BACKEND_UNREACHABLE', userMessage: 'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.', technicalDetails: 'Native Android chat returned an empty response payload', targetUrl: getApiUrl('/api/chat') });
-  return {
-    reply: serverRes.reply,
-    cleanSpeechText: serverRes.cleanSpeechText || serverRes.reply,
-    memoriesExtracted: serverRes.memoriesExtracted,
-    peopleRecognized: serverRes.peopleRecognized,
-    generatedFiles: serverRes.generatedFiles,
-    engineUsed: 'server',
-    aiProvider: serverRes.aiProvider || 'Google Gemini',
-    chatModel: serverRes.chatModel || 'gemini-3.7-flash',
-    intent: serverRes.intent || 'chat',
-  };
-}
-
-async function streamServerChat(params: ChatEngineParams): Promise<ChatEngineResult> {
-  const url = getApiUrl('/api/chat/stream');
-  const response = await fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }, body: JSON.stringify({ message: params.message, conversationHistory: (params.conversationHistory || []).slice(-10), people: params.people || [], attachments: params.attachments || [] }) });
-  if (!response.ok || !response.body) throw new MkuuApiError({ code: 'BACKEND_UNREACHABLE', status: response.status, userMessage: 'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.', technicalDetails: `Streaming endpoint returned HTTP ${response.status}`, targetUrl: url });
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let reply = '';
-  emitStream('', false);
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const events = buffer.split('\n\n');
-    buffer = events.pop() || '';
-    for (const event of events) {
-      const line = event.split('\n').find((l) => l.startsWith('data: '));
-      if (!line) continue;
-      try {
-        const payload = JSON.parse(line.slice(6));
-        if (payload.type === 'delta' && payload.text) { reply += payload.text; emitStream(payload.text, false); }
-        if (payload.type === 'error') throw new Error(payload.message || 'Streaming error');
-      } catch (error) {
-        if (error instanceof SyntaxError) continue;
-        throw error;
-      }
-    }
-  }
-  emitStream('', true);
-  if (!reply.trim()) throw new Error('MKUU streaming returned an empty response');
-  return { reply, cleanSpeechText: reply.replace(/[#*`_~[\]()]/g, ' ').replace(/\s+/g, ' ').trim(), engineUsed: 'server', aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', intent: 'chat' };
-}
-
-export async function executeMkuuChat(params: ChatEngineParams): Promise<ChatEngineResult> {
-  if (needsImageRoute(params)) {
-    return callImageStudio(params);
-  }
-
-  const directApiKey = getStoredGeminiApiKey();
-  if (directApiKey && directApiKey.trim().length > 10) return callDirectGemini(directApiKey.trim(), params);
-
-  if (isCapacitorNative()) return callNativeServerChat(params);
-
-  if (needsArtifactRoute(params)) {
-    const serverRes = await apiFetch<any>('/api/agent', { method: 'POST', body: JSON.stringify({ conversationId: params.conversationId, message: params.message, isVoice: params.isVoice, attachments: params.attachments, conversationHistory: (params.conversationHistory || []).slice(-10), people: params.people || [] }) });
-    if (serverRes && (serverRes.reply || serverRes.success)) return { reply: serverRes.reply || '', cleanSpeechText: serverRes.cleanSpeechText || serverRes.reply || '', memoriesExtracted: serverRes.memoriesExtracted, peopleRecognized: serverRes.peopleRecognized, generatedFiles: serverRes.generatedFiles, engineUsed: 'server', aiProvider: serverRes.aiProvider || 'Google Gemini', chatModel: serverRes.chatModel || 'gemini-3.7-flash', intent: serverRes.intent };
-    throw new MkuuApiError({ code: 'BACKEND_UNREACHABLE', userMessage: 'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.', technicalDetails: 'Empty Universal Agent response payload', targetUrl: '/api/agent' });
-  }
-
-  return streamServerChat(params);
-}
+let streamPreview='';
+function emitStream(text:string,done=false){if(typeof window==='undefined')return;streamPreview+=text;let node=document.getElementById('mkuu-stream-preview');if(!node&&!done){node=document.createElement('div');node.id='mkuu-stream-preview';node.setAttribute('aria-live','polite');Object.assign(node.style,{position:'fixed',left:'16px',right:'16px',bottom:'88px',zIndex:'9999',maxWidth:'760px',margin:'0 auto',padding:'14px 16px',borderRadius:'16px',background:'rgba(8,8,8,.96)',color:'#F5F2ED',border:'1px solid rgba(212,175,55,.45)',boxShadow:'0 18px 50px rgba(0,0,0,.45)',fontSize:'14px',lineHeight:'1.55',whiteSpace:'pre-wrap',maxHeight:'38vh',overflow:'auto',backdropFilter:'blur(14px)'});document.body.appendChild(node);}if(node)node.textContent=streamPreview;if(done){window.setTimeout(()=>document.getElementById('mkuu-stream-preview')?.remove(),120);streamPreview='';}}
+function needsArtifactRoute(params:ChatEngineParams){const text=String(params.message||'').toLowerCase();const hasImage=(params.attachments||[]).some((a:any)=>String(a?.mimeType||'').startsWith('image/'));return hasImage||/\b(pdf|docx?|word|excel|xlsx|csv|logo|banner|poster|cartoon|picha|image|background|document|proposal|ripoti)\b/i.test(text);}
+function needsImageRoute(params:ChatEngineParams){const text=String(params.message||'').toLowerCase();const hasImage=(params.attachments||[]).some((a:any)=>String(a?.mimeType||'').startsWith('image/'));const words=['picha','image','photo','logo','background','remove background','ondoa background','toa background','futa background','edit picha','hariri picha','hariri','edit image','tengeneza logo','tengeneza picha','generate image','create image','create logo','poster','banner','cartoon','transparent','png','2k','4k','hd','enhance','boresha'];return hasImage||words.some(w=>text.includes(w));}
+function needsLiveSearch(message:string){const lower=String(message||'').toLowerCase();const patterns=[/\bwaziri mkuu\b/,/\brais wa\b/,/\bmakamu wa rais\b/,/\bkiongozi wa sasa\b/,/\bmkuu wa nchi\b/,/\bmkuu wa serikali\b/,/\bmeya wa\b/,/\bnaibu\s+waziri\b/,/\bwaziri wa\b/,/\bserikali ya sasa\b/,/\bcurrent\b/,/\blatest\b/,/\bsasa\b/,/\bwa sasa\b/,/\bleo\b/,/\bhivi punde\b/,/\bhabari mpya\b/,/\bhabari za leo\b/,/\bbei ya\b/,/\bthamani ya\b/,/\bexchange rate\b/,/\brate ya\b/,/\bmatokeo ya\b/,/\bratiba ya\b/,/\bmsimamo wa\b/,/\bnani ameshinda\b/,/\bnani kashinda\b/,/\bwho is\b/,/\bwho won\b/,/\btoday\b/,/\btonight\b/,/\bthis week\b/,/\bthis month\b/,/\b2025\b/,/\b2026\b/];return patterns.some(p=>p.test(lower));}
+async function callImageStudio(params:ChatEngineParams):Promise<ChatEngineResult>{const attachments=params.attachments||[];const imageAttachment=attachments.find((a:any)=>String(a?.mimeType||'').startsWith('image/'));const imageBase64=imageAttachment?.base64Data||'';const mimeType=imageAttachment?.mimeType||'image/jpeg';const lower=String(params.message||'').toLowerCase();const isGeneration=!imageAttachment;const endpoint=isGeneration?'/api/image/generate':'/api/image/edit';const response=await apiFetch<any>(endpoint,{method:'POST',body:JSON.stringify({prompt:params.message,imageBase64:imageBase64||undefined,mimeType,filename:isGeneration?(lower.includes('logo')?'Logo_ya_Mkuu.png':'Picha_ya_Mkuu.png'):'Picha_Iliyohaririwa_Mkuu.png'})});if(!response?.success||!response?.file)throw new MkuuApiError({code:'IMAGE_GENERATION_FAILED',status:500,userMessage:'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA\nTafadhali jaribu tena.',technicalDetails:'Image Studio returned no generated file',targetUrl:getApiUrl(endpoint)});const file={...response.file,downloadUrl:response.file.downloadUrl?.startsWith('http')||response.file.downloadUrl?.startsWith('data:')?response.file.downloadUrl:getApiUrl(response.file.downloadUrl)};return{reply:response.reply||'Picha yako imetengenezwa na MKUU Image Studio na iko tayari hapa chini.',cleanSpeechText:(response.reply||'Picha yako imetengenezwa na MKUU Image Studio.').replace(/[#*`_~[\]()]/g,' ').replace(/\s+/g,' ').trim(),generatedFiles:[file],engineUsed:'server',aiProvider:response.aiProvider||'Puter Image Studio',chatModel:response.modelUsed||'gemini-3.1-flash-image-preview',intent:isGeneration?'image_generation':'image_edit'};}
+async function callDirectGemini(apiKey:string,params:ChatEngineParams):Promise<ChatEngineResult>{const peopleText=(params.people||[]).slice(0,20).map(p=>`- ${p.name}${p.nickname?` (${p.nickname})`:''}: ${p.relationship}; ${p.phone||''}; ${p.notes||''}`).join('\n');const liveSearchRequired=needsLiveSearch(params.message);const systemPrompt=`Wewe ni MKUU AI, msaidizi wa Max. Zungumza kwa Kiswahili fasaha. Tumia taarifa hizi za watu wa karibu inapohitajika:\n${peopleText||'Hakuna watu wa karibu waliosajiliwa.'}\n\nLIVE INFORMATION RULE: Kwa swali lolote linalohusu taarifa inayoweza kubadilika kwa muda (viongozi wa sasa, nyadhifa za serikali, habari, bei, viwango vya fedha, matokeo, ratiba, hali ya hewa, au mtu aliye kwenye nafasi fulani kwa sasa), lazima utumie Google Search grounding kabla ya kutoa jibu.`;const rawHistory=Array.isArray(params.conversationHistory)?params.conversationHistory.slice(-10):[];const contents:any[]=rawHistory.filter(h=>h.content||h.attachments?.length).map(h=>({role:h.role==='user'?'user':'model',parts:[{text:h.content||''}]}));const userPrompt=liveSearchRequired?`Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu: ${params.message}`:params.message;contents.push({role:'user',parts:[{text:userPrompt}]});const directModel=liveSearchRequired?'gemini-2.5-flash':'gemini-3.7-flash';const url=`https://generativelanguage.googleapis.com/v1beta/models/${directModel}:generateContent?key=${apiKey}`;const body:any={systemInstruction:{parts:[{text:systemPrompt}]},contents,generationConfig:{temperature:0.7,maxOutputTokens:1024}};if(liveSearchRequired)body.tools=[{google_search:{}}];const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok)throw new MkuuApiError({code:'GEMINI_UNAVAILABLE',status:response.status,userMessage:'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.',technicalDetails:`Gemini API error (${response.status})`,targetUrl:url});const data=await response.json();const rawText=data.candidates?.[0]?.content?.parts?.map((p:any)=>p?.text||'').join('')||'';if(!rawText.trim())throw new Error('Gemini returned an empty response');return{reply:rawText,cleanSpeechText:rawText.replace(/[#*`_~[\]()]/g,' ').replace(/\s+/g,' ').trim(),engineUsed:'direct_gemini',aiProvider:'Google Gemini',chatModel:directModel,intent:liveSearchRequired?'web_search':'chat'};}
+async function callNativeServerChat(params:ChatEngineParams):Promise<ChatEngineResult>{const serverRes=await apiFetch<any>('/api/chat',{method:'POST',body:JSON.stringify({conversationId:params.conversationId,message:params.message,isVoice:params.isVoice,attachments:params.attachments||[],conversationHistory:(params.conversationHistory||[]).slice(-10),people:params.people||[]})});if(!serverRes?.reply)throw new MkuuApiError({code:'BACKEND_UNREACHABLE',userMessage:'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:'Native Android chat returned an empty response payload',targetUrl:getApiUrl('/api/chat')});return{reply:serverRes.reply,cleanSpeechText:serverRes.cleanSpeechText||serverRes.reply,memoriesExtracted:serverRes.memoriesExtracted,peopleRecognized:serverRes.peopleRecognized,generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:serverRes.aiProvider||'Google Gemini',chatModel:serverRes.chatModel||'gemini-3.7-flash',intent:serverRes.intent||'chat'};}
+async function streamServerChat(params:ChatEngineParams):Promise<ChatEngineResult>{const url=getApiUrl('/api/chat/stream');const response=await fetch(url,{method:'POST',headers:{Accept:'text/event-stream','Content-Type':'application/json','Cache-Control':'no-cache'},body:JSON.stringify({message:params.message,conversationHistory:(params.conversationHistory||[]).slice(-10),people:params.people||[],attachments:params.attachments||[]})});if(!response.ok||!response.body)throw new MkuuApiError({code:'BACKEND_UNREACHABLE',status:response.status,userMessage:'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:`Streaming endpoint returned HTTP ${response.status}`,targetUrl:url});const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';let reply='';emitStream('',false);while(true){const{value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const events=buffer.split('\n\n');buffer=events.pop()||'';for(const event of events){const line=event.split('\n').find(l=>l.startsWith('data: '));if(!line)continue;try{const payload=JSON.parse(line.slice(6));if(payload.type==='delta'&&payload.text){reply+=payload.text;emitStream(payload.text,false);}if(payload.type==='error')throw new Error(payload.message||'Streaming error');}catch(error){if(error instanceof SyntaxError)continue;throw error;}}}emitStream('',true);if(!reply.trim())throw new Error('MKUU streaming returned an empty response');return{reply,cleanSpeechText:reply.replace(/[#*`_~[\]()]/g,' ').replace(/\s+/g,' ').trim(),engineUsed:'server',aiProvider:'Google Gemini',chatModel:'gemini-3.7-flash',intent:'chat'};}
+export async function executeMkuuChat(params:ChatEngineParams):Promise<ChatEngineResult>{const smsCommand=await handleDirectSmsCommand(params);if(smsCommand)return smsCommand;if(needsImageRoute(params))return callImageStudio(params);const directApiKey=getStoredGeminiApiKey();if(directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative())return callNativeServerChat(params);if(needsArtifactRoute(params)){const serverRes=await apiFetch<any>('/api/agent',{method:'POST',body:JSON.stringify({conversationId:params.conversationId,message:params.message,isVoice:params.isVoice,attachments:params.attachments,conversationHistory:(params.conversationHistory||[]).slice(-10),people:params.people||[]})});if(serverRes&&(serverRes.reply||serverRes.success))return{reply:serverRes.reply||'',cleanSpeechText:serverRes.cleanSpeechText||serverRes.reply||'',memoriesExtracted:serverRes.memoriesExtracted,peopleRecognized:serverRes.peopleRecognized,generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:serverRes.aiProvider||'Google Gemini',chatModel:serverRes.chatModel||'gemini-3.7-flash',intent:serverRes.intent};throw new MkuuApiError({code:'BACKEND_UNREACHABLE',userMessage:'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:'Empty Universal Agent response payload',targetUrl:'/api/agent'});}return streamServerChat(params);}
