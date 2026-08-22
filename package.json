@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "node scripts/fix-live-search-intent.cjs && node scripts/fix-voice-controls.cjs && node scripts/force-tavily-only-live-search.cjs && node scripts/ensure-live-sources.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "node scripts/fix-live-search-intent.cjs && node scripts/fix-voice-controls.cjs && node scripts/enable-stop-generation.cjs && node scripts/force-tavily-only-live-search.cjs && node scripts/ensure-live-sources.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
