@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 
 import com.getcapacitor.JSObject;
-import com.getcapacitor.Plugin;
 
 public class SmsDeliveryReceiver extends BroadcastReceiver {
     private static SmsSenderPlugin eventSink;
@@ -27,6 +26,6 @@ public class SmsDeliveryReceiver extends BroadcastReceiver {
         data.put("total", intent.getIntExtra("total", 1));
         data.put("resultCode", getResultCode());
         data.put("timestamp", System.currentTimeMillis());
-        eventSink.notifyListeners("smsStatus", data);
+        eventSink.emitSmsStatus(data);
     }
 }
