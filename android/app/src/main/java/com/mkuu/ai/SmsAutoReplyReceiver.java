@@ -22,12 +22,13 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/** Receives incoming SMS, asks MKUU/Gemini for a reply, then sends it through the SIM. */
+/** Receives incoming SMS and replies only to numbers registered in MKUU Watu Wangu. */
 public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String PREFS = "mkuu_autoreply";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_EMERGENCY_STOP = "emergencyStop";
     private static final String BACKEND_CHAT_URL = "https://mkuu-al-3.onrender.com/api/chat";
+    private static final String BACKEND_PEOPLE_URL = "https://mkuu-al-3.onrender.com/api/people";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -52,9 +53,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
                         ? SmsMessage.createFromPdu((byte[]) pdu)
                         : SmsMessage.createFromPdu((byte[]) pdu, format);
                 if (sms == null) continue;
-                if (sender.isEmpty() && sms.getOriginatingAddress() != null) {
-                    sender = sms.getOriginatingAddress();
-                }
+                if (sender.isEmpty() && sms.getOriginatingAddress() != null) sender = sms.getOriginatingAddress();
                 String part = sms.getMessageBody();
                 if (part != null) body.append(part);
             } catch (Exception e) {
@@ -70,12 +69,19 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
         new Thread(() -> {
             try {
+                // Security gate: only contacts saved in the app's Watu Wangu list may trigger auto-reply.
+                if (!isAllowedPerson(from)) {
+                    android.util.Log.i("MKUU_SMS", "Ignoring SMS from non-whitelisted number: " + from);
+                    return;
+                }
+
                 String reply = requestMkuuReply(from, message);
                 if (reply == null || reply.trim().isEmpty()) return;
                 if (appContext.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
                 SmsManager smsManager = SmsManager.getDefault();
-                String text = reply.trim();
+                String text = cleanSmsReply(reply);
+                if (text.isEmpty()) return;
                 if (text.length() <= 160) {
                     smsManager.sendTextMessage(from, null, text, null, null);
                 } else {
@@ -87,6 +93,70 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
                 pendingResult.finish();
             }
         }, "mkuu-sms-reply").start();
+    }
+
+    private static boolean isAllowedPerson(String sender) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(BACKEND_PEOPLE_URL);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+            connection.setRequestProperty("Accept", "application/json");
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) return false;
+
+            StringBuilder response = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) response.append(line);
+            }
+
+            JSONArray people;
+            JSONObject root = new JSONObject(response.toString());
+            if (root.has("people") && root.opt("people") instanceof JSONArray) {
+                people = root.getJSONArray("people");
+            } else if (root.has("data") && root.opt("data") instanceof JSONArray) {
+                people = root.getJSONArray("data");
+            } else if (root.has("results") && root.opt("results") instanceof JSONArray) {
+                people = root.getJSONArray("results");
+            } else if (root.has("phone")) {
+                people = new JSONArray().put(root);
+            } else {
+                return false;
+            }
+
+            String normalizedSender = normalizePhone(sender);
+            for (int i = 0; i < people.length(); i++) {
+                JSONObject person = people.optJSONObject(i);
+                if (person == null) continue;
+                String phone = person.optString("phone", "");
+                if (!phone.isEmpty() && normalizedSender.equals(normalizePhone(phone))) return true;
+            }
+        } catch (Exception e) {
+            // Fail closed: if the whitelist cannot be verified, never auto-reply.
+            android.util.Log.w("MKUU_SMS", "Could not verify SMS sender whitelist", e);
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+        return false;
+    }
+
+    private static String normalizePhone(String value) {
+        String digits = value == null ? "" : value.replaceAll("[^0-9]", "");
+        if (digits.startsWith("255")) return digits;
+        if (digits.startsWith("0") && digits.length() >= 9) return "255" + digits.substring(1);
+        return digits;
+    }
+
+    private static String cleanSmsReply(String reply) {
+        String text = reply == null ? "" : reply.trim();
+        text = text.replaceFirst("(?i)^MKUU AI\s*[:\-]\s*", "");
+        text = text.replaceFirst("(?i)^AI\s*[:\-]\s*", "");
+        text = text.replaceAll("\\*\\*", "");
+        text = text.replaceAll("(?m)^[-*]\\s+", "");
+        return text.trim();
     }
 
     private static String requestMkuuReply(String sender, String smsText) throws Exception {
@@ -103,25 +173,21 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
 
             JSONObject payload = new JSONObject();
             payload.put("userId", "user_max_owner");
-            payload.put("message", "Wewe ni MKUU AI. Jibu SMS hii kwa kifupi, kwa heshima, na kwa lugha ileile ya mtumaji. Usitaje kwamba wewe ni AI isipokuwa ukiulizwa. Mtumaji: " + sender + "\nSMS: " + smsText);
+            payload.put("message", "Jibu SMS hii kama mtu wa kawaida anayewasiliana kwa SMS. Jibu kwa kifupi, kwa heshima, na kwa lugha ileile ya mtumaji. Usijitambulishe kama AI, usitumie 'MKUU AI:', headings, bullets, markdown, au maelezo ya chatbot. Mtumaji: " + sender + "\nSMS: " + smsText);
             payload.put("isVoice", false);
             payload.put("conversationHistory", new JSONArray());
             payload.put("people", new JSONArray());
 
             byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(data);
-            }
+            try (OutputStream output = connection.getOutputStream()) { output.write(data); }
 
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) return null;
-            InputStream stream = connection.getInputStream();
             StringBuilder response = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) response.append(line);
             }
-
             JSONObject json = new JSONObject(response.toString());
             return json.optString("reply", "").trim();
         } finally {
