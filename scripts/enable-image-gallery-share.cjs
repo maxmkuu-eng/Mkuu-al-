@@ -57,10 +57,10 @@ async function saveImageToAndroidGallery(file: {
   const comma = dataUrl.indexOf(',');
   if (comma < 0) throw new Error('Muundo wa picha si sahihi.');
   const base64 = dataUrl.slice(comma + 1);
-  const safeName = sanitizeFilename(file.filename || 'mkuu_image') || `mkuu_image_${Date.now()}.png`;
+  const safeName = sanitizeFilename(file.filename || 'mkuu_image') || ('mkuu_image_' + Date.now() + '.png');
   const mimeType = file.mimeType || dataUrl.slice(5, comma).split(';')[0] || 'image/png';
   const extension = safeName.includes('.') ? safeName.split('.').pop() : (mimeType.split('/')[1] || 'png');
-  const filename = safeName.includes('.') ? safeName : `${safeName}.${extension}`;
+  const filename = safeName.includes('.') ? safeName : safeName + '.' + extension;
 
   const { Filesystem, Directory } = await import('@capacitor/filesystem');
   const result = await Filesystem.writeFile({
