@@ -37,6 +37,10 @@ public class SmsSenderPlugin extends Plugin {
         SmsDeliveryReceiver.setEventSink(this);
     }
 
+    void emitSmsStatus(JSObject data) {
+        notifyListeners("smsStatus", data);
+    }
+
     @com.getcapacitor.PluginMethod
     public void getSimCards(PluginCall call) {
         if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
@@ -53,7 +57,7 @@ public class SmsSenderPlugin extends Plugin {
                 JSObject sim = new JSObject();
                 sim.put("subscriptionId", info.getSubscriptionId());
                 sim.put("slotIndex", info.getSimSlotIndex());
-                sim.put("displayName", info.getDisplayName() == null ? "SIM ${info.getSimSlotIndex() + 1}" : info.getDisplayName().toString());
+                sim.put("displayName", info.getDisplayName() == null ? "SIM " + (info.getSimSlotIndex() + 1) : info.getDisplayName().toString());
                 sim.put("number", info.getNumber() == null ? "" : info.getNumber());
                 sims.put(sim);
             }
