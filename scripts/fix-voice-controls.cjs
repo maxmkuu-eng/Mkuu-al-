@@ -9,42 +9,64 @@ function patch(relative, transform) {
   if (next !== source) fs.writeFileSync(file, next);
 }
 
-// Normal spoken text: remove Markdown, URLs and punctuation/symbol noise.
-patch('src/components/ChatView.tsx', (source) => {
+function ensureCapacitorImport(source) {
+  if (source.includes("from '@capacitor/core'")) return source;
+  return source.replace(/^import React/m, "import { Capacitor } from '@capacitor/core';\nimport React");
+}
+
+// Normal response speaker: use Android native TTS first, with a safe language fallback.
+patch('src/components/ChatView.tsx', (original) => {
+  let source = ensureCapacitorImport(original);
   const marker = 'const playSpeech = async (msgId: string, text: string) => {';
-  const start = source.indexOf(marker);
-  if (start < 0) return source;
+  let start = source.indexOf(marker);
+  if (start < 0) {
+    const oldMarker = 'const playSpeech = (msgId: string, text: string) => {';
+    start = source.indexOf(oldMarker);
+    if (start < 0) return source;
+  }
   const end = source.indexOf('\n  };', start);
   if (end < 0) return source;
-  const tick = String.fromCharCode(96);
   const block = String.raw`const playSpeech = async (msgId: string, text: string) => {
     if (typeof window === 'undefined') return;
     const cleanText = text
       .replace(/https?:\/\/\S+/g, ' ')
       .replace(/\[[^\]]*\]\([^)]*\)/g, ' ')
-      .replace(/[*_~#${tick}>]+/g, ' ')
+      .replace(/[*_~#`>]+/g, ' ')
       .replace(/[|{}\[\]<>^=+\\/]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     if (!cleanText) return;
-    const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+
+    const isNative = Capacitor.isNativePlatform();
     if (playingMessageId === msgId) {
-      if (isNative) {
-        const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
-        await TextToSpeech.stop();
-      } else if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      try {
+        if (isNative) {
+          const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
+          await TextToSpeech.stop();
+        } else if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+        }
+      } catch (error) { console.warn('[MKUU] TTS stop failed:', error); }
       setPlayingMessageId(null);
       return;
     }
+
     try {
       if (isNative) {
         const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
         await TextToSpeech.stop();
         setPlayingMessageId(msgId);
-        await TextToSpeech.speak({ text: cleanText, lang: 'sw-TZ', rate: 0.95, pitch: 1, volume: 1 });
+        try {
+          await TextToSpeech.speak({ text: cleanText, lang: 'sw-TZ', rate: 0.95, pitch: 1, volume: 1 });
+        } catch (swError) {
+          console.warn('[MKUU] sw-TZ TTS unavailable; using Android default voice:', swError);
+          await TextToSpeech.stop();
+          await TextToSpeech.speak({ text: cleanText, lang: 'en-US', rate: 0.95, pitch: 1, volume: 1 });
+        }
         setPlayingMessageId(null);
         return;
       }
+
       if (!('speechSynthesis' in window)) return;
       window.speechSynthesis.cancel();
       setPlayingMessageId(msgId);
@@ -62,9 +84,12 @@ patch('src/components/ChatView.tsx', (source) => {
   return source.slice(0, start) + block + source.slice(end + 5);
 });
 
-// Live Voice: use native Android TTS for output, while keeping recognition unchanged.
-patch('src/components/VoiceModal.tsx', (source) => {
-  const start = source.indexOf('  const speakText = (text: string) => {');
+// Live Voice: native Android TTS first, with Swahili -> Android default voice fallback.
+patch('src/components/VoiceModal.tsx', (original) => {
+  let source = ensureCapacitorImport(original);
+  const start = source.indexOf('  const speakText = async (text: string) => {') >= 0
+    ? source.indexOf('  const speakText = async (text: string) => {')
+    : source.indexOf('  const speakText = (text: string) => {');
   if (start < 0) return source;
   const end = source.indexOf('\n  };', start);
   if (end < 0) return source;
@@ -72,22 +97,36 @@ patch('src/components/VoiceModal.tsx', (source) => {
     if (isMuted) { setVoiceState('ready'); return; }
     const cleaned = sanitizeTextForSpeech(text);
     if (!cleaned) { setVoiceState('ready'); return; }
-    const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
+    const isNative = Capacitor.isNativePlatform();
+
     try {
       if (isNative) {
         const { TextToSpeech } = await import('@capacitor-community/text-to-speech');
         await TextToSpeech.stop();
         setVoiceState('speaking');
-        await TextToSpeech.speak({
-          text: cleaned,
-          lang: selectedLangRef.current,
-          rate: selectedLangRef.current === 'sw-TZ' ? 0.95 : 1.0,
-          pitch: 1.0,
-          volume: 1.0,
-        });
+        try {
+          await TextToSpeech.speak({
+            text: cleaned,
+            lang: selectedLangRef.current,
+            rate: selectedLangRef.current === 'sw-TZ' ? 0.95 : 1.0,
+            pitch: 1.0,
+            volume: 1.0,
+          });
+        } catch (primaryError) {
+          console.warn('[MKUU] Selected TTS language unavailable; using Android default voice:', primaryError);
+          await TextToSpeech.stop();
+          await TextToSpeech.speak({
+            text: cleaned,
+            lang: 'en-US',
+            rate: 0.95,
+            pitch: 1.0,
+            volume: 1.0,
+          });
+        }
         setVoiceState('ready');
         return;
       }
+
       if (!('speechSynthesis' in window)) { setVoiceState('ready'); return; }
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(cleaned);
@@ -106,5 +145,5 @@ patch('src/components/VoiceModal.tsx', (source) => {
   return source.slice(0, start) + block + source.slice(end + 5);
 });
 
-console.log('MKUU: speaker punctuation cleanup and native Live Voice output enabled.');
+console.log('MKUU: Android native speaker and Live Voice TTS enabled with language fallback.');
 console.log('MKUU: Send/Stop remains handled by the existing cancellable chat patch.');
