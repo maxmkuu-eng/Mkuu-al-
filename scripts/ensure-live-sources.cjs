@@ -12,7 +12,11 @@ if (!gemini.includes('getLastTavilySources')) {
 }
 
 const oldRules = "- Prefer the newest credible source and pay attention to publication dates and event dates.\\n- For sports, report the exact latest result from the search evidence; do not substitute an older match.";
-const newRules = "- Prefer the newest credible source and pay attention to publication dates and event dates.\\n- NEVER treat a source publication date as the date an event happened. State an event date only when the evidence explicitly supports it; otherwise say that the source was published/reported on that date.\\n- When sources mention both an event date and a publication date, use the event date for the event and the publication date only to establish freshness.\\n- For sports in Tanzania, always report kickoff times in East Africa Time (EAT, UTC+3). If a Tanzanian source says \\"saa 12:00 jioni\\" or \\"12 jioni\\", that means 18:00 EAT, NOT 12:00 or 17:00. Never invent a timezone conversion. Prefer an official club/TFF fixture when available.\\n- For sports, report the exact latest result from the search evidence; do not substitute an older match.";
+const newRules = `- Prefer the newest credible source and pay attention to publication dates and event dates.
+- NEVER treat a source publication date as the date an event happened. State an event date only when the evidence explicitly supports it; otherwise say that the source was published/reported on that date.
+- When sources mention both an event date and a publication date, use the event date for the event and the publication date only to establish freshness.
+- For sports in Tanzania, always report kickoff times in East Africa Time (EAT, UTC+3). If a Tanzanian source says "saa 12:00 jioni" or "12 jioni", that means 18:00 EAT, NOT 12:00 or 17:00. If a source says "saa 1:00 usiku", that means 01:00 EAT. Never copy the numeric local phrase as an EAT clock time without converting it. Prefer an official club/TFF fixture when available.
+- For sports, report the exact latest result from the search evidence; do not substitute an older match.`;
 if (!gemini.includes('always report kickoff times in East Africa Time')) {
   gemini = gemini.replace(oldRules, newRules);
 }
@@ -21,18 +25,18 @@ const marker = "        console.log('[MKUU-BACKEND] [TAVILY_SEARCH_SUCCESS] Live
 if (!gemini.includes('const liveSources = getLastTavilySources()')) {
   const block = [
     marker,
-    "        // Keep the answer auditable while keeping sources together at the very bottom.",
-    "        const liveSources = getLastTavilySources().slice(0, 6);",
+    "        // Keep live sources together at the very bottom of the answer; show only four unique sources.",
+    "        const liveSources = getLastTavilySources().slice(0, 4);",
     "        if (liveSources.length > 0) {",
     "          const seen = new Set<string>();",
-    "          const sourceLines = liveSources.map((source, index) => {",
+    "          const sourceLines = liveSources.map((source) => {",
     "            const url = String(source.url || '').trim();",
     "            if (!url || seen.has(url)) return '';",
     "            seen.add(url);",
     "            const title = String(source.title || 'Chanzo cha Tavily').replace(/\\[/g, '(').replace(/\\]/g, ')').trim();",
-    "            return `${index + 1}. [${title}](${url})`;",
+    "            return `${seen.size}. [${title}](${url})`;",
     "          }).filter(Boolean).join('\\n');",
-    "          if (sourceLines) aiReplyText = `${aiReplyText.trim()}\\n\\n---\\n**Vyanzo vya taarifa (Tavily):**\\n${sourceLines}`;",
+    "          if (sourceLines) aiReplyText = `${aiReplyText.trim()}\\n\\n**Vyanzo:**\\n${sourceLines}`;",
     "        }"
   ].join('\n');
   gemini = gemini.replace(marker, block);
