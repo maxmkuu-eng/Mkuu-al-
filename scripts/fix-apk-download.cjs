@@ -25,25 +25,30 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
 
     if (isNative) {
-      let dataUrl: string | null = null;
+      const { Filesystem, Directory } = await import('@capacitor/filesystem');
 
-      if (file.base64Data?.startsWith('data:')) {
-        dataUrl = file.base64Data;
-      } else if (file.downloadUrl?.startsWith('data:')) {
-        dataUrl = file.downloadUrl;
-      } else {
-        const localFile = await localChatStorage.getFileData(file.filename);
-        if (localFile?.data?.startsWith('data:')) dataUrl = localFile.data;
+      // Prefer Capacitor's native download for real HTTP/HTTPS files. This avoids
+      // loading the whole file into a WebView/base64 buffer and prevents Android
+      // from exiting on large generated images/PDFs.
+      if (file.downloadUrl && !file.downloadUrl.startsWith('data:') && !file.downloadUrl.startsWith('blob:')) {
+        const fullUrl = getApiUrl(file.downloadUrl);
+        await Filesystem.downloadFile({
+          url: fullUrl,
+          path: filename,
+          directory: Directory.Documents,
+        });
+        console.log('[MKUU] Android native download saved:', filename);
+        return;
       }
 
-      if (!dataUrl && file.downloadUrl && !file.downloadUrl.startsWith('blob:')) {
-        try {
-          const fullUrl = getApiUrl(file.downloadUrl);
-          const response = await fetch(fullUrl);
-          if (response.ok) dataUrl = await blobToBase64(await response.blob());
-        } catch (error) {
-          console.warn('[MKUU] Android download fetch failed:', error);
-        }
+      // Generated/local files may only exist as data. Keep this path small and
+      // avoid recursive/nested native paths that can terminate some Android WebViews.
+      let dataUrl: string | null = null;
+      if (file.base64Data?.startsWith('data:')) dataUrl = file.base64Data;
+      else if (file.downloadUrl?.startsWith('data:')) dataUrl = file.downloadUrl;
+      else {
+        const localFile = await localChatStorage.getFileData(file.filename);
+        if (localFile?.data?.startsWith('data:')) dataUrl = localFile.data;
       }
 
       if (!dataUrl && file.content) {
@@ -58,17 +63,12 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
 
       const comma = dataUrl.indexOf(',');
       if (comma < 0) throw new Error('Muundo wa faili si sahihi.');
-      const base64 = dataUrl.slice(comma + 1);
-      const { Filesystem, Directory } = await import('@capacitor/filesystem');
-
       await Filesystem.writeFile({
-        path: 'MKUU AI/' + filename,
-        data: base64,
+        path: filename,
+        data: dataUrl.slice(comma + 1),
         directory: Directory.Documents,
-        recursive: true,
       });
-
-      console.log('[MKUU] Android download saved:', filename);
+      console.log('[MKUU] Android local download saved:', filename);
       return;
     }
 
@@ -119,13 +119,10 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
     }, 2000);
   } catch (error) {
     console.error('[MKUU] Download failed:', error);
-    if (!Boolean((window as any).Capacitor?.isNativePlatform?.()) && file.downloadUrl) {
-      window.open(getApiUrl(file.downloadUrl), '_blank');
-    }
   }
 }
 `;
 
 source = source.slice(0, start) + replacement;
 fs.writeFileSync(filePath, source);
-console.log('MKUU: existing Download button now uses Capacitor Filesystem on Android; web download unchanged.');
+console.log('MKUU: APK Download now prefers native Filesystem.downloadFile for remote files; web download unchanged.');
