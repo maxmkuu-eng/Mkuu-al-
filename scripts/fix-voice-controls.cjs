@@ -16,12 +16,13 @@ patch('src/components/ChatView.tsx', (source) => {
   if (start < 0) return source;
   const end = source.indexOf('\n  };', start);
   if (end < 0) return source;
+  const tick = String.fromCharCode(96);
   const block = String.raw`const playSpeech = async (msgId: string, text: string) => {
     if (typeof window === 'undefined') return;
     const cleanText = text
       .replace(/https?:\/\/\S+/g, ' ')
       .replace(/\[[^\]]*\]\([^)]*\)/g, ' ')
-      .replace(/[*_~#`>]+/g, ' ')
+      .replace(/[*_~#${tick}>]+/g, ' ')
       .replace(/[|{}\[\]<>^=+\\/]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
