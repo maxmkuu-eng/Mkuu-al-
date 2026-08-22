@@ -21,10 +21,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/**
- * Receives SMS and, when Auto Reply is enabled, asks MKUU/Gemini for a reply.
- * Replies are sent through the device SIM using SmsManager.
- */
+/** Receives incoming SMS, asks MKUU/Gemini for a reply, then sends it through the SIM. */
 public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String PREFS = "mkuu_autoreply";
     private static final String KEY_ENABLED = "enabled";
@@ -36,7 +33,8 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         if (!Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(intent.getAction())) return;
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (!prefs.getBoolean(KEY_ENABLED, false) || prefs.getBoolean(KEY_EMERGENCY_STOP, false)) return;
+        // The SMS mode is enabled by default. It can be stopped immediately with Emergency Stop.
+        if (!prefs.getBoolean(KEY_ENABLED, true) || prefs.getBoolean(KEY_EMERGENCY_STOP, false)) return;
         if (context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
         Bundle bundle = intent.getExtras();
@@ -92,7 +90,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
 
             JSONObject payload = new JSONObject();
-            payload.put("message", "Jibu SMS hii kwa kifupi na kwa lugha ileile ya mtumaji. Usitaje kwamba wewe ni mfumo wa AI isipokuwa ukiulizwa. Mtumaji: " + sender + "\nSMS: " + smsText);
+            payload.put("message", "Wewe ni MKUU AI. Jibu SMS hii kwa kifupi, kwa heshima, na kwa lugha ileile ya mtumaji. Usitaje kwamba wewe ni AI isipokuwa ukiulizwa. Mtumaji: " + sender + "\nSMS: " + smsText);
             payload.put("isVoice", false);
             payload.put("conversationHistory", new org.json.JSONArray());
             payload.put("people", new org.json.JSONArray());
