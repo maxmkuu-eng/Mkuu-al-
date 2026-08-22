@@ -17,20 +17,21 @@ function patch(filePath, transform, label) {
 }
 
 patch('server/geminiService.ts', (s) => {
-  // Add the streaming callback to the public chat params once.
   if (!s.includes('onChunk?: (text: string) => void;')) {
-    const marker = '  people?: Person[];\n';
-    if (!s.includes(marker)) throw new Error('MKUU streaming patch: ProcessChatParams marker not found.');
+    const markers = [
+      '  attachments?: Array<{ filename: string; fileType: string; mimeType: string; size?: number; base64Data?: string }>;\n',
+      '  attachments?: any[];\n',
+    ];
+    const marker = markers.find((m) => s.includes(m));
+    if (!marker) throw new Error('MKUU streaming patch: ProcessChatParams marker not found.');
     s = s.replace(marker, marker + '  onChunk?: (text: string) => void;\n');
   }
 
-  // Make processChat accept the callback and pass it to every Gemini generation path.
   s = s.replace(
     'const { userId, message, conversationHistory = [], isVoice = false, attachments = [] } = params;',
     'const { userId, message, conversationHistory = [], isVoice = false, attachments = [], onChunk } = params;'
   );
 
-  // Make the low-level Gemini call capable of yielding real chunks.
   s = s.replace(
     'private async executeGeminiCallWithFallback(params: { contents: any; config?: any; preferredModel?: string }): Promise<string> {',
     'private async executeGeminiCallWithFallback(params: { contents: any; config?: any; preferredModel?: string; onChunk?: (text: string) => void }): Promise<string> {'
@@ -40,7 +41,6 @@ patch('server/geminiService.ts', (s) => {
   const replacement = `let text = '';\n        if (params.onChunk) {\n          const stream = await client.models.generateContentStream({ model, contents: params.contents, config: params.config });\n          for await (const chunk of stream) {\n            const piece = chunk.text || '';\n            if (piece) {\n              text += piece;\n              params.onChunk(piece);\n            }\n          }\n        } else {\n          const response = await client.models.generateContent({ model, contents: params.contents, config: params.config });\n          text = response.text || '';\n        }\n        if (text?.trim()) return text;`;
   if (s.includes(old)) s = s.replace(old, replacement);
 
-  // Ensure all Gemini calls made by processChat can receive the stream callback.
   s = s.replace(
     'preferredModel: PERSONAL_CHAT_MODEL,\n        });',
     'preferredModel: PERSONAL_CHAT_MODEL,\n          onChunk,\n        });'
@@ -78,18 +78,15 @@ patch('server.ts', (s) => {
 }, 'backend SSE token streaming');
 
 patch('src/services/aiEngine.ts', (s) => {
-  // Android must use the actual SSE route; the old native route waits for the full response.
   s = s.replace(
     'if (isCapacitorNative()) return callNativeServerChat(params);',
     'if (isCapacitorNative()) return streamServerChat(params);'
   );
 
-  // Preserve conversation persistence and metadata through the streaming endpoint.
   const oldBody = 'body: JSON.stringify({ message: params.message, conversationHistory: (params.conversationHistory || []).slice(-10), people: params.people || [], attachments: params.attachments || [] })';
   const newBody = 'body: JSON.stringify({ conversationId: params.conversationId, message: params.message, conversationHistory: (params.conversationHistory || []).slice(-10), people: params.people || [], attachments: params.attachments || [] })';
   s = s.replace(oldBody, newBody);
 
-  // Parse the final SSE event so the native result retains server metadata.
   s = s.replace(
     "let reply = '';\n  emitStream('', false);",
     "let reply = '';\n  let finalPayload: any = null;\n  emitStream('', false);"
