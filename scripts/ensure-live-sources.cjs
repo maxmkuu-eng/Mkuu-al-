@@ -31,7 +31,7 @@ if (!source.includes('const liveSources = getLastTavilySources()')) {
     "          }).join('\\n');",
     "          aiReplyText = `${aiReplyText.trim()}\\n\\n**Vyanzo vya taarifa (Tavily):**\\n${sourceLines}`;",
     "        }"
-  ].join('\\n');
+  ].join('\n');
   source = source.replace(marker, block);
 }
 
