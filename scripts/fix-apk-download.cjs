@@ -25,17 +25,27 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
 
     if (isNative) {
-      const dataUrl = file.base64Data || file.downloadUrl || '';
+      // APK: resolve the file to base64 first, then write one file to Documents.
+      // Do not use browser downloads, windows, share sheets, recursive folders,
+      // or legacy storage permissions.
+      let dataUrl = file.base64Data || file.downloadUrl || '';
+
       if (!dataUrl.startsWith('data:')) {
-        throw new Error('Picha haijapatikana kwenye kifaa.');
+        if (!file.downloadUrl) throw new Error('Faili halikupatikana.');
+        const remoteUrl = getApiUrl(file.downloadUrl);
+        const response = await fetch(remoteUrl);
+        if (!response.ok) throw new Error('Picha haikuweza kupakuliwa kutoka seva.');
+        dataUrl = await blobToBase64(await response.blob());
       }
 
       const comma = dataUrl.indexOf(',');
-      if (comma < 0) throw new Error('Muundo wa picha si sahihi.');
+      if (comma < 0) throw new Error('Muundo wa faili si sahihi.');
 
+      const header = dataUrl.slice(0, comma);
       const payload = dataUrl.slice(comma + 1);
-      const isBase64 = dataUrl.slice(0, comma).includes(';base64');
-      const data = isBase64 ? payload : btoa(unescape(encodeURIComponent(payload)));
+      const data = header.includes(';base64')
+        ? payload
+        : btoa(unescape(encodeURIComponent(decodeURIComponent(payload))));
 
       const { Filesystem, Directory } = await import('@capacitor/filesystem');
       await Filesystem.writeFile({
@@ -44,7 +54,7 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
         directory: Directory.Documents,
       });
 
-      console.log('[MKUU] Android download saved:', filename);
+      console.log('[MKUU] APK download saved:', filename);
       return;
     }
 
@@ -58,6 +68,7 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
     link.click();
     setTimeout(() => document.body.removeChild(link), 1500);
   } catch (error) {
+    // A failed save must never terminate the APK/WebView process.
     console.error('[MKUU] Download failed:', error);
   }
 }
@@ -65,4 +76,4 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
 
 source = source.slice(0, start) + replacement;
 fs.writeFileSync(filePath, source);
-console.log('MKUU: Image Download uses a single safe Android Documents file; button remains enabled and web download is unchanged.');
+console.log('MKUU: image Download button uses safe Android Documents save; Smart Share/Export remains disabled.');
