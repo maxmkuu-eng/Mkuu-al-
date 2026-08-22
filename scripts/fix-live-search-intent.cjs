@@ -74,7 +74,7 @@ patchFile('src/services/aiEngine.ts', (source) => {
   return source;
 });
 
-// UI: Stop the active response and use native Android TTS when available.
+// UI: expose a dedicated Stop action while the AI request is running.
 patchFile('src/components/ChatView.tsx', (source) => {
   if (!source.includes("import { cancelMkuuChat } from '../services/aiEngine';")) {
     source = source.replace(
@@ -96,7 +96,7 @@ patchFile('src/components/ChatView.tsx', (source) => {
   );
   const speechRegex = /  const playSpeech = \(msgId: string, text: string\) => \{.*?\n  \};/s;
   if (speechRegex.test(source) && !source.includes("@capacitor-community/text-to-speech")) {
-    const speechBlock = `  const playSpeech = async (msgId: string, text: string) => {\n    if (typeof window === 'undefined') return;\n    const cleanText = text.replace(/#{1,6}\\s+/g, '').replace(/\\*\\*(.*?)\\*\\*/g, '$1').replace(/\\*(.*?)\\*/g, '$1').replace(/\\`(.*?)\\`/g, '$1').replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1').trim();\n    if (!cleanText) return;\n    const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());\n    if (isNative) {\n      try {\n        const { TextToSpeech } = await import('@capacitor-community/text-to-speech');\n        if (playingMessageId === msgId) { await TextToSpeech.stop(); setPlayingMessageId(null); return; }\n        await TextToSpeech.stop();\n        setPlayingMessageId(msgId);\n        await TextToSpeech.speak({ text: cleanText, lang: 'sw-TZ', rate: 0.95, pitch: 1.0, volume: 1.0 });\n        setPlayingMessageId(null);\n      } catch (error) {\n        console.warn('[MKUU] Native text-to-speech failed:', error);\n        setPlayingMessageId(null);\n      }\n      return;\n    }\n    if (!('speechSynthesis' in window)) return;\n    if (playingMessageId === msgId) { window.speechSynthesis.cancel(); setPlayingMessageId(null); return; }\n    window.speechSynthesis.cancel(); setPlayingMessageId(msgId);\n    const utterance = new SpeechSynthesisUtterance(cleanText); utterance.lang = 'sw-TZ'; utterance.rate = 0.95;\n    utterance.onend = () => setPlayingMessageId(null); utterance.onerror = () => setPlayingMessageId(null); window.speechSynthesis.speak(utterance);\n  };`;
+    const speechBlock = `  const playSpeech = async (msgId: string, text: string) => {\n    if (typeof window === 'undefined') return;\n    const cleanText = text.replace(/#{1,6}\\s+/g, '').replace(/\\*\\*(.*?)\\*\\*/g, '$1').replace(/\\*(.*?)\\*/g, '$1').replace(new RegExp(String.fromCharCode(96) + '(.*?)' + String.fromCharCode(96), 'g'), '$1').replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1').trim();\n    if (!cleanText) return;\n    const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());\n    if (isNative) {\n      try {\n        const { TextToSpeech } = await import('@capacitor-community/text-to-speech');\n        if (playingMessageId === msgId) { await TextToSpeech.stop(); setPlayingMessageId(null); return; }\n        await TextToSpeech.stop();\n        setPlayingMessageId(msgId);\n        await TextToSpeech.speak({ text: cleanText, lang: 'sw-TZ', rate: 0.95, pitch: 1.0, volume: 1.0 });\n        setPlayingMessageId(null);\n      } catch (error) {\n        console.warn('[MKUU] Native text-to-speech failed:', error);\n        setPlayingMessageId(null);\n      }\n      return;\n    }\n    if (!('speechSynthesis' in window)) return;\n    if (playingMessageId === msgId) { window.speechSynthesis.cancel(); setPlayingMessageId(null); return; }\n    window.speechSynthesis.cancel(); setPlayingMessageId(msgId);\n    const utterance = new SpeechSynthesisUtterance(cleanText); utterance.lang = 'sw-TZ'; utterance.rate = 0.95;\n    utterance.onend = () => setPlayingMessageId(null); utterance.onerror = () => setPlayingMessageId(null); window.speechSynthesis.speak(utterance);\n  };`;
     source = source.replace(speechRegex, speechBlock);
   }
   return source;
@@ -129,4 +129,4 @@ patchFile('src/services/apiConfig.ts', (source) => {
 });
 
 console.log('MKUU: current public-figure and social-information questions now route through Tavily.');
-console.log('MKUU: response Stop control and Android/native response speaker Play/Stop controls patched without changing other features.');
+console.log('MKUU: response Stop control and response speaker Play/Stop controls patched without changing other features.');
