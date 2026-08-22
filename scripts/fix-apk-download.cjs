@@ -19,7 +19,7 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
 }): Promise<void> {
   if (typeof window === 'undefined') return;
 
-  const filename = sanitizeFilename(file.filename || `mkuu_file_${Date.now()}`);
+  const filename = sanitizeFilename(file.filename || 'mkuu_file_' + Date.now());
 
   try {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
@@ -62,7 +62,7 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
       const { Filesystem, Directory } = await import('@capacitor/filesystem');
 
       await Filesystem.writeFile({
-        path: `MKUU AI/${filename}`,
+        path: 'MKUU AI/' + filename,
         data: base64,
         directory: Directory.Documents,
         recursive: true,
