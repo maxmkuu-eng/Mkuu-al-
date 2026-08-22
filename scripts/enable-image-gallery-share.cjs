@@ -64,7 +64,7 @@ async function saveImageToAndroidGallery(file: {
 
   const { Filesystem, Directory } = await import('@capacitor/filesystem');
   const result = await Filesystem.writeFile({
-    path: `MKUU AI/${filename}`,
+    path: 'MKUU AI/' + filename,
     data: base64,
     directory: Directory.Pictures,
     recursive: true,
@@ -154,7 +154,7 @@ export async function shareFileHelper(file: {
   if (!s.includes('share-file-${file.id}')) {
     const start = s.indexOf(downloadMarker);
     if (start < 0) throw new Error('MKUU: image download button marker not found.');
-    const shareButton = `<button id={\`share-file-\${file.id}\`} onClick={() => shareFileHelper(file)} className="px-2.5 py-1.5 rounded-lg glass hover:bg-white/10 text-xs font-semibold text-[#CCCCCC] hover:text-white flex items-center space-x-1 border border-[#333333] transition cursor-pointer" title="Shiriki Picha">{<Share2 className="w-3.5 h-3.5 text-[#D4AF37]" />}<span>SHIRIKI</span></button>`;
+    const shareButton = `<button id={\\`share-file-\\${file.id}\\`} onClick={() => shareFileHelper(file)} className="px-2.5 py-1.5 rounded-lg glass hover:bg-white/10 text-xs font-semibold text-[#CCCCCC] hover:text-white flex items-center space-x-1 border border-[#333333] transition cursor-pointer" title="Shiriki Picha">{<Share2 className="w-3.5 h-3.5 text-[#D4AF37]" />}<span>SHIRIKI</span></button>`;
     s = s.slice(0, start) + `{isImage && ${shareButton}}` + s.slice(start);
   }
   write(file, s);
