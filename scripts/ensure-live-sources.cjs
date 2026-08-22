@@ -16,7 +16,8 @@ const newRules = `- Prefer the newest credible source and pay attention to publi
 - NEVER treat a source publication date as the date an event happened. State an event date only when the evidence explicitly supports it; otherwise say that the source was published/reported on that date.
 - When sources mention both an event date and a publication date, use the event date for the event and the publication date only to establish freshness.
 - For sports in Tanzania, always report kickoff times in East Africa Time (EAT, UTC+3). If a Tanzanian source says "saa 12:00 jioni" or "12 jioni", that means 18:00 EAT, NOT 12:00 or 17:00. If a source says "saa 1:00 usiku", that means 01:00 EAT. Never copy the numeric local phrase as an EAT clock time without converting it. Prefer an official club/TFF fixture when available.
-- For sports, report the exact latest result from the search evidence; do not substitute an older match.`;
+- For sports, report the exact latest result from the search evidence; do not substitute an older match.
+- Do NOT generate a separate source/citation list in the answer. The backend will append exactly four numbered Tavily sources at the very bottom.`;
 if (!gemini.includes('always report kickoff times in East Africa Time')) {
   gemini = gemini.replace(oldRules, newRules);
 }
@@ -34,7 +35,7 @@ if (!gemini.includes('const liveSources = getLastTavilySources()')) {
     "            if (!url || seen.has(url)) return '';",
     "            seen.add(url);",
     "            const title = String(source.title || 'Chanzo cha Tavily').replace(/\\[/g, '(').replace(/\\]/g, ')').trim();",
-    "            return `${seen.size}. [${title}](${url})`;",
+    "            return `${seen.size}. Source — [${title}](${url})`;",
     "          }).filter(Boolean).join('\\n');",
     "          if (sourceLines) aiReplyText = `${aiReplyText.trim()}\\n\\n**Vyanzo:**\\n${sourceLines}`;",
     "        }"
