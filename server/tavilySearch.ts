@@ -1,4 +1,4 @@
-export interface TavilySearchResult { title: string; url: string; content: string; score?: number; }
+export interface TavilySearchResult { title: string; url: string; content: string; score?: number; published_date?: string; }
 export interface TavilySource { title: string; url: string; }
 let lastTavilySources: TavilySource[] = [];
 export function getLastTavilySources(): TavilySource[] { return [...lastTavilySources]; }
@@ -15,12 +15,20 @@ function isGovernmentQuery(q:string){const l=String(q||'').toLowerCase();return 
 function isSocialQuery(q:string){const l=String(q||'').toLowerCase();return SOCIAL_TERMS.some(t=>l.includes(t));}
 function getTanzaniaDate(offsetDays=0){const now=new Date();const d=new Date(now.getTime()+offsetDays*86400000);return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Dar_es_Salaam',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);}
 function containsRelativeDay(q:string,d:'jana'|'leo'|'kesho'){return q.toLowerCase().includes(d);}
+function getFreshnessRange(query:string,topic:'general'|'news',explicit?:'day'|'week'|'month'|'year'):'day'|'week'|'month'|'year'{
+ const l=query.toLowerCase();
+ if(explicit)return explicit;
+ if(/\b(leo|today|sasa|hivi sasa|sasa hivi|current|right now|live|breaking|latest today)\b/i.test(l))return 'day';
+ if(/\b(jana|yesterday|latest|hivi punde|hivi karibuni|recent|recently|new|mpya|update|updates)\b/i.test(l))return 'week';
+ return topic==='news'?'week':'month';
+}
 
-async function runTavilySearch(query:string,topic:'general'|'news',includeDomains?:string[]):Promise<TavilySearchResult[]>{
+async function runTavilySearch(query:string,topic:'general'|'news',includeDomains?:string[],timeRange?:'day'|'week'|'month'|'year'):Promise<TavilySearchResult[]>{
  const apiKey=process.env.TAVILY_API_KEY?.trim();if(!apiKey)throw new Error('TAVILY_API_KEY is not configured on MKUU Backend.');
- const body:any={api_key:apiKey,query,search_depth:'advanced',topic,max_results:8,include_answer:false,include_raw_content:false};
+ const freshness=getFreshnessRange(query,topic,timeRange);
+ const body:any={api_key:apiKey,query,search_depth:'advanced',topic,max_results:8,include_answer:false,include_raw_content:false,time_range:freshness};
  if(includeDomains?.length)body.include_domains=includeDomains;
- const response=await fetch('https://api.tavily.com/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const response=await fetch('https://api.tavily.com/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'} as any);
  if(!response.ok){const text=await response.text().catch(()=> '');throw new Error(`Tavily Search HTTP ${response.status}${text?`: ${text.slice(0,500)}`:''}`);}
  const data=await response.json() as {results?:TavilySearchResult[]};return Array.isArray(data.results)?data.results:[];
 }
@@ -38,37 +46,48 @@ async function getOfficialCabinetSnapshot():Promise<string>{
  return `[LIVE OFFICIAL IKULU CABINET SNAPSHOT — FETCHED ${new Date().toISOString()}]\nSource: https://www.ikulu.go.tz/index.php/cabinet\n${extracted.join('\n')}\nIMPORTANT: This is the primary authoritative current-government evidence. Older information must not override it.`;
 }
 
-function formatResults(results:TavilySearchResult[],offset=1){return results.map((r,i)=>`[CHANZO ${i+offset}]\nKichwa: ${String(r?.title||'').trim()}\nURL: ${String(r?.url||'').trim()}\nTaarifa: ${String(r?.content||'').trim()}`).join('\n\n');}
+function formatResults(results:TavilySearchResult[],offset=1){return results.map((r,i)=>`[CHANZO ${i+offset}]\nKichwa: ${String(r?.title||'').trim()}\nURL: ${String(r?.url||'').trim()}${r?.published_date?`\nTarehe ya kuchapishwa: ${String(r.published_date).trim()}`:''}\nTaarifa: ${String(r?.content||'').trim()}`).join('\n\n');}
+
+function rankResults(results:TavilySearchResult[]):TavilySearchResult[]{
+ const now=Date.now();
+ return [...results].sort((a,b)=>{
+  const scoreA=Number(a?.score||0),scoreB=Number(b?.score||0);
+  const dateA=a?.published_date?Date.parse(a.published_date):NaN,dateB=b?.published_date?Date.parse(b.published_date):NaN;
+  const recencyA=Number.isFinite(dateA)?Math.max(0,1-Math.min(1,(now-dateA)/(30*86400000))):0;
+  const recencyB=Number.isFinite(dateB)?Math.max(0,1-Math.min(1,(now-dateB)/(30*86400000))):0;
+  return (scoreB*0.7+recencyB*0.3)-(scoreA*0.7+recencyA*0.3);
+ });
+}
 
 export async function searchWithTavily(query:string):Promise<string>{
  lastTavilySources=[];
  const sports=isSportsQuery(query),standings=isStandingsQuery(query),government=isGovernmentQuery(query),social=isSocialQuery(query);
  if(government){
   let snapshot:string;try{snapshot=await getOfficialCabinetSnapshot();}catch(err){console.error('[MKUU-BACKEND] [OFFICIAL_GOVERNMENT_SOURCE_FAILED]',err);throw new Error('AUTHORITATIVE_GOVERNMENT_SOURCE_UNAVAILABLE: Ikulu current Cabinet could not be verified; refusing to answer from stale information.');}
-  const searches=await Promise.allSettled([runTavilySearch(`${query} current Tanzania government official`,'general',['tanzania.go.tz']),runTavilySearch(`${query} current cabinet Tanzania`,'general',['ikulu.go.tz']),runTavilySearch(`${query} current Tanzania official`,'general',['parliament.go.tz']),runTavilySearch(`${query} current Tanzania ministry official`,'general',['go.tz']),runTavilySearch(`${query} Tanzania current cabinet`,'general',['cia.gov'])]);
+  const searches=await Promise.allSettled([runTavilySearch(`${query} current Tanzania government official`,'general',['tanzania.go.tz'],'month'),runTavilySearch(`${query} current cabinet Tanzania`,'general',['ikulu.go.tz'],'month'),runTavilySearch(`${query} current Tanzania official`,'general',['parliament.go.tz'],'month'),runTavilySearch(`${query} current Tanzania ministry official`,'general',['go.tz'],'month'),runTavilySearch(`${query} Tanzania current cabinet`,'general',['cia.gov'],'month')]);
   const secondary=searches.flatMap(r=>r.status==='fulfilled'?r.value:[]);const unique=new Map<string,TavilySearchResult>();for(const r of secondary){const u=String(r?.url||'').trim();if(u&&!unique.has(u))unique.set(u,r);}
-  const results=Array.from(unique.values()).slice(0,15);lastTavilySources=[{title:'Ikulu — Baraza la Mawaziri (primary)',url:'https://www.ikulu.go.tz/index.php/cabinet'},...results.map(r=>({title:String(r?.title||''),url:String(r?.url||'')})).filter(s=>s.url).slice(0,8)];
+  const results=rankResults(Array.from(unique.values())).slice(0,15);lastTavilySources=[{title:'Ikulu — Baraza la Mawaziri (primary)',url:'https://www.ikulu.go.tz/index.php/cabinet'},...results.map(r=>({title:String(r?.title||''),url:String(r?.url||'')})).filter(s=>s.url).slice(0,8)];
   return snapshot+'\n\n'+(results.length?formatResults(results):'[CHANZO ZAIDI] Hakuna chanzo cha pili kilichopatikana.')+'\n\n[GOVERNMENT SOURCE RULES]\n- Ikulu live snapshot is primary.\n- Prefer newer authoritative evidence.\n- Never revive an older office holder from an old article.\n- If sources conflict and the newer position cannot be established, say so instead of guessing.';
  }
  const searches:Promise<TavilySearchResult[]>[]=[];
- // WORLDWIDE WEB: current/factual questions receive broad web + news evidence.
- searches.push(runTavilySearch(`${query} latest current update 2026`,'general'));
- searches.push(runTavilySearch(`${query} latest current news today 2026`,'news'));
+ // Freshness is now enforced at the Tavily API level, not only by adding the word "latest" to the query.
+ searches.push(runTavilySearch(`${query} current update 2026`,'general',undefined,'week'));
+ searches.push(runTavilySearch(`${query} latest current news today 2026`,'news',undefined,'day'));
  // SOCIAL MEDIA: explicitly search public social platforms for public-figure/entertainment claims and social-media questions.
  if(social || /zuchu|diamond|wasanii|msanii|celebrity|artist|singer|actor|actress|baby|pregnan|amejifungua|ameoa|ameolewa|relationship|marriage|breakup|ujauzito|mtoto|kujifungua/i.test(query)){
-   searches.push(runTavilySearch(`${query} latest official social media post statement 2026`,'general',SOCIAL_DOMAINS));
-   searches.push(runTavilySearch(`${query} latest Instagram TikTok YouTube Facebook X post 2026`,'news',SOCIAL_DOMAINS));
+   searches.push(runTavilySearch(`${query} latest official social media post statement 2026`,'general',SOCIAL_DOMAINS,'week'));
+   searches.push(runTavilySearch(`${query} latest Instagram TikTok YouTube Facebook X post 2026`,'news',SOCIAL_DOMAINS,'week'));
  }
  if(sports){
-  searches.push(runTavilySearch(`${query} final score FT full time result completed match`,'news'));
-  if(containsRelativeDay(query,'jana'))searches.push(runTavilySearch(`${query} Tanzania ${getTanzaniaDate(-1)} final score completed`,'news'));
-  if(containsRelativeDay(query,'leo'))searches.push(runTavilySearch(`${query} Tanzania ${getTanzaniaDate(0)} final score completed`,'news'));
-  if(containsRelativeDay(query,'kesho'))searches.push(runTavilySearch(`${query} Tanzania ${getTanzaniaDate(1)} fixture kickoff schedule`,'news'));
+  searches.push(runTavilySearch(`${query} final score FT full time result completed match`,'news',undefined,'week'));
+  if(containsRelativeDay(query,'jana'))searches.push(runTavilySearch(`${query} Tanzania ${getTanzaniaDate(-1)} final score completed`,'news',undefined,'week'));
+  if(containsRelativeDay(query,'leo'))searches.push(runTavilySearch(`${query} Tanzania ${getTanzaniaDate(0)} final score completed`,'news',undefined,'day'));
+  if(containsRelativeDay(query,'kesho'))searches.push(runTavilySearch(`${query} Tanzania ${getTanzaniaDate(1)} fixture kickoff schedule`,'news',undefined,'week'));
  }
- if(standings){const today=getTanzaniaDate(0);searches.push(runTavilySearch(`Tanzania NBC Premier League 2026/2027 current standings ${today} points latest`,'general'));}
+ if(standings){const today=getTanzaniaDate(0);searches.push(runTavilySearch(`Tanzania NBC Premier League 2026/2027 current standings ${today} points latest`,'general',undefined,'week'));}
  const settled=await Promise.allSettled(searches);const merged=settled.flatMap(r=>r.status==='fulfilled'?r.value:[]);const unique=new Map<string,TavilySearchResult>();
  for(const r of merged){const u=String(r?.url||'').trim();if(!u)continue;const old=unique.get(u);if(!old||Number(r.score||0)>Number(old.score||0))unique.set(u,r);}
- const results=Array.from(unique.values()).sort((a,b)=>Number(b.score||0)-Number(a.score||0)).slice(0,30);
+ const results=rankResults(Array.from(unique.values())).slice(0,30);
  if(!results.length)throw new Error('Tavily Search returned no results.');
  lastTavilySources=results.map(r=>({title:String(r?.title||'').trim(),url:String(r?.url||'').trim()})).filter(s=>s.url).slice(0,10);
  return formatResults(results);
