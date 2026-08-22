@@ -86,15 +86,13 @@ patchFile('src/components/ChatView.tsx', (source) => {
     "if ((!inputText.trim() && selectedAttachments.length === 0) || isLoading) return;",
     "if (isLoading) { cancelMkuuChat(); window.dispatchEvent(new Event('mkuu-stop-generation')); return; }\n    if (!inputText.trim() && selectedAttachments.length === 0) return;"
   );
-  // The existing response speaker already has cancel-on-second-tap behavior; make the state visually explicit.
-  source = source.replace(
-    "<Volume2 className=\"w-3.5 h-3.5\" />",
-    "<Volume2 className=\"w-3.5 h-3.5\" />"
-  );
-  // Change only the composer submit icon/label: Send while idle, Stop while generating.
   source = source.replace(
     "<Send className=\"w-5 h-5\" />",
     "{isLoading ? <X className=\"w-5 h-5\" /> : <Send className=\"w-5 h-5\" />}"
+  );
+  source = source.replace(
+    "catch (err: any) { setErrorMessage(err.message || 'Ujumbe haukuweza kutumwa.'); }",
+    "catch (err: any) { if (err?.name === 'AbortError' || err?.code === 'CHAT_CANCELLED') return; setErrorMessage(err.message || 'Ujumbe haukuweza kutumwa.'); }"
   );
   return source;
 });
@@ -112,6 +110,15 @@ patchFile('src/App.tsx', (source) => {
     const block = `  useEffect(() => {\n    const stopGeneration = () => {\n      cancelMkuuChat();\n      setIsLoading(false);\n    };\n    window.addEventListener('mkuu-stop-generation', stopGeneration);\n    return () => window.removeEventListener('mkuu-stop-generation', stopGeneration);\n  }, []);\n\n`;
     if (!source.includes(marker)) throw new Error('MKUU: App insertion marker not found.');
     source = source.replace(marker, block + marker);
+  }
+  return source;
+});
+
+// apiFetch already accepts RequestInit.signal; preserve AbortError instead of retrying it so Stop is immediate.
+patchFile('src/services/apiConfig.ts', (source) => {
+  const marker = "    }catch(e:any){clearTimeout(t);last=e instanceof MkuuApiError?e:new MkuuApiError";
+  if (source.includes(marker) && !source.includes("if(options?.signal?.aborted)throw e;")) {
+    source = source.replace(marker, "    }catch(e:any){if(options?.signal?.aborted)throw e;clearTimeout(t);last=e instanceof MkuuApiError?e:new MkuuApiError");
   }
   return source;
 });
