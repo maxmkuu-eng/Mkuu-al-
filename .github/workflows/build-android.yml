@@ -31,18 +31,15 @@ jobs:
           java-version: '21'
       - name: 6. Configure Android SDK & Build Tools
         uses: android-actions/setup-android@v3
-      - name: 7. Setup Gradle
+      - name: 7. Setup Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
         with:
           validate-wrappers: false
-          gradle-version: wrapper
-      - name: 8. Verify Gradle Wrapper
-        run: |
-          chmod +x android/gradlew
-          cd android
-          ./gradlew --version
+          gradle-version: '8.13'
+      - name: 8. Verify Installed Gradle
+        run: gradle --version
       - name: 9. Build Production Android APK (:app:assembleRelease)
-        run: cd android && ./gradlew clean :app:assembleRelease --no-daemon --stacktrace
+        run: cd android && gradle clean :app:assembleRelease --no-daemon --stacktrace
       - name: 10. Align and Sign Production Release APK
         run: |
           mkdir -p release-output
