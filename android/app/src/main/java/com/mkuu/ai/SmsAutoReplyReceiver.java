@@ -7,10 +7,11 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.provider.Telephony;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
+import android.provider.Telephony;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -33,9 +34,9 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         if (!Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(intent.getAction())) return;
 
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        // The SMS mode is enabled by default. It can be stopped immediately with Emergency Stop.
         if (!prefs.getBoolean(KEY_ENABLED, true) || prefs.getBoolean(KEY_EMERGENCY_STOP, false)) return;
-        if (context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
+        if (context.checkSelfPermission(Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED
+                || context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
         Bundle bundle = intent.getExtras();
         if (bundle == null) return;
@@ -46,28 +47,39 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         StringBuilder body = new StringBuilder();
         String sender = "";
         for (Object pdu : pdus) {
-            SmsMessage sms;
             try {
-                sms = SmsMessage.createFromPdu((byte[]) pdu, format);
+                SmsMessage sms = format == null
+                        ? SmsMessage.createFromPdu((byte[]) pdu)
+                        : SmsMessage.createFromPdu((byte[]) pdu, format);
+                if (sms == null) continue;
+                if (sender.isEmpty() && sms.getOriginatingAddress() != null) {
+                    sender = sms.getOriginatingAddress();
+                }
+                String part = sms.getMessageBody();
+                if (part != null) body.append(part);
             } catch (Exception e) {
-                continue;
+                android.util.Log.w("MKUU_SMS", "Could not decode SMS part", e);
             }
-            if (sms == null) continue;
-            if (sender.isEmpty()) sender = sms.getOriginatingAddress();
-            body.append(sms.getMessageBody());
         }
 
         final String message = body.toString().trim();
-        final String from = sender == null ? "" : sender.trim();
+        final String from = sender.trim();
         if (message.isEmpty() || from.isEmpty()) return;
 
         final PendingResult pendingResult = goAsync();
+        Context appContext = context.getApplicationContext();
         new Thread(() -> {
             try {
                 String reply = requestMkuuReply(from, message);
-                if (reply != null && !reply.trim().isEmpty()
-                        && context.checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
-                    SmsManager.getDefault().sendTextMessage(from, null, reply.trim(), null, null);
+                if (reply == null || reply.trim().isEmpty()) return;
+                if (appContext.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
+
+                SmsManager smsManager = SmsManager.getDefault();
+                String text = reply.trim();
+                if (text.length() <= 160) {
+                    smsManager.sendTextMessage(from, null, text, null, null);
+                } else {
+                    smsManager.sendMultipartTextMessage(from, null, smsManager.divideMessage(text), null, null);
                 }
             } catch (Exception e) {
                 android.util.Log.e("MKUU_SMS", "SMS auto reply failed", e);
@@ -83,17 +95,18 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
             URL url = new URL(BACKEND_CHAT_URL);
             connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("POST");
-            connection.setConnectTimeout(10000);
-            connection.setReadTimeout(30000);
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(8000);
             connection.setDoOutput(true);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
 
             JSONObject payload = new JSONObject();
+            payload.put("userId", "user_max_owner");
             payload.put("message", "Wewe ni MKUU AI. Jibu SMS hii kwa kifupi, kwa heshima, na kwa lugha ileile ya mtumaji. Usitaje kwamba wewe ni AI isipokuwa ukiulizwa. Mtumaji: " + sender + "\nSMS: " + smsText);
             payload.put("isVoice", false);
-            payload.put("conversationHistory", new org.json.JSONArray());
-            payload.put("people", new org.json.JSONArray());
+            payload.put("conversationHistory", new JSONArray());
+            payload.put("people", new JSONArray());
 
             byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
             try (OutputStream output = connection.getOutputStream()) {
@@ -101,10 +114,8 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
             }
 
             int status = connection.getResponseCode();
-            InputStream stream = status >= 200 && status < 300
-                    ? connection.getInputStream() : connection.getErrorStream();
-            if (stream == null || status < 200 || status >= 300) return null;
-
+            if (status < 200 || status >= 300) return null;
+            InputStream stream = connection.getInputStream();
             StringBuilder response = new StringBuilder();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                 String line;
