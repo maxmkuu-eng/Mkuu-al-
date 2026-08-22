@@ -19,42 +19,39 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
 }): Promise<void> {
   if (typeof window === 'undefined') return;
 
-  const filename = sanitizeFilename(file.filename || 'mkuu_file_' + Date.now());
+  const filename = sanitizeFilename(file.filename || 'mkuu_image_' + Date.now() + '.png');
 
   try {
     const isNative = Boolean((window as any).Capacitor?.isNativePlatform?.());
 
-    if (isNative) {
-      // APK: resolve the file to base64 first, then write one file to Documents.
-      // Do not use browser downloads, windows, share sheets, recursive folders,
-      // or legacy storage permissions.
+    if (isNative && (file.fileType === 'image' || (file.mimeType || '').startsWith('image/'))) {
       let dataUrl = file.base64Data || file.downloadUrl || '';
 
       if (!dataUrl.startsWith('data:')) {
-        if (!file.downloadUrl) throw new Error('Faili halikupatikana.');
-        const remoteUrl = getApiUrl(file.downloadUrl);
-        const response = await fetch(remoteUrl);
+        if (!file.downloadUrl) throw new Error('Picha haikupatikana.');
+        const response = await fetch(getApiUrl(file.downloadUrl));
         if (!response.ok) throw new Error('Picha haikuweza kupakuliwa kutoka seva.');
         dataUrl = await blobToBase64(await response.blob());
       }
 
       const comma = dataUrl.indexOf(',');
-      if (comma < 0) throw new Error('Muundo wa faili si sahihi.');
+      if (comma < 0) throw new Error('Muundo wa picha si sahihi.');
 
       const header = dataUrl.slice(0, comma);
       const payload = dataUrl.slice(comma + 1);
-      const data = header.includes(';base64')
+      const base64 = header.includes(';base64')
         ? payload
         : btoa(unescape(encodeURIComponent(decodeURIComponent(payload))));
 
-      const { Filesystem, Directory } = await import('@capacitor/filesystem');
-      await Filesystem.writeFile({
-        path: filename,
-        data,
-        directory: Directory.Documents,
+      const { registerPlugin } = await import('@capacitor/core');
+      const GallerySaver = registerPlugin<{ saveImage(options: { filename: string; base64: string; mimeType: string }): Promise<{ uri: string }> }>('GallerySaver');
+      await GallerySaver.saveImage({
+        filename,
+        base64,
+        mimeType: file.mimeType || 'image/png',
       });
 
-      console.log('[MKUU] APK download saved:', filename);
+      console.log('[MKUU] Image saved directly to Android Gallery:', filename);
       return;
     }
 
@@ -68,7 +65,6 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
     link.click();
     setTimeout(() => document.body.removeChild(link), 1500);
   } catch (error) {
-    // A failed save must never terminate the APK/WebView process.
     console.error('[MKUU] Download failed:', error);
   }
 }
@@ -76,4 +72,4 @@ const replacement = String.raw`export async function downloadFileHelper(file: {
 
 source = source.slice(0, start) + replacement;
 fs.writeFileSync(filePath, source);
-console.log('MKUU: image Download button uses safe Android Documents save; Smart Share/Export remains disabled.');
+console.log('MKUU: image Download button saves directly to Android Gallery; other downloads remain unchanged.');
