@@ -109,7 +109,9 @@ patchFile('server.ts', (source) => {
 // direct Google Search. They must go to the MKUU backend/Tavily route first.
 // ---------------------------------------------------------------------------
 patchFile('src/services/aiEngine.ts', (source) => {
-  if (!source.includes('function needsLiveSearch(message: string): boolean')) {
+  // The live-search detector has existed in both typed and compact forms.
+  // Accept either form so this build-time patch remains idempotent.
+  if (!/function\s+needsLiveSearch\s*\(\s*message\s*:\s*string\s*\)/.test(source)) {
     throw new Error('MKUU: client live-search detector not found.');
   }
 
@@ -120,7 +122,7 @@ patchFile('src/services/aiEngine.ts', (source) => {
   }
 
   const routeMarker = "  const directApiKey = getStoredGeminiApiKey();\n  if (directApiKey && directApiKey.trim().length > 10) return callDirectGemini(directApiKey.trim(), params);";
-  if (source.includes(routeMarker) && !source.includes('if (needsLiveSearch(params.message)) {')) {
+  if (source.includes(routeMarker) && !source.includes('LIVE/CURRENT QUESTIONS: force the server/Tavily path')) {
     const route = "  // LIVE/CURRENT QUESTIONS: force the server/Tavily path before any stored Gemini API key.\n  // This prevents Google Search grounding and stale direct-model memory from bypassing Tavily.\n  if (needsLiveSearch(params.message)) {\n    return isCapacitorNative() ? callNativeServerChat(params) : streamServerChat(params);\n  }\n\n";
     source = source.replace(routeMarker, route + routeMarker, 1);
   }
@@ -143,8 +145,6 @@ patchFile('src/services/aiEngine.ts', (source) => {
     source = source.replace(streamReturn, "  return { reply, cleanSpeechText: (donePayload?.cleanSpeechText || reply).replace(/[#*`_~[\\]()]/g, ' ').replace(/\\s+/g, ' ').trim(), engineUsed: 'server', aiProvider: donePayload?.aiProvider || 'Google Gemini', chatModel: donePayload?.chatModel || 'gemini-3.7-flash', intent: donePayload?.intent || 'web_search', webSources: donePayload?.webSources || [] };", 1);
   }
 
-  // Direct Gemini is allowed only for non-live chat. Keep this explicit so a
-  // future route change cannot silently re-enable Google Search for live facts.
   if (!source.includes('LIVE/CURRENT QUESTIONS: force the server/Tavily path')) {
     throw new Error('MKUU: client Tavily-first live route was not installed.');
   }
