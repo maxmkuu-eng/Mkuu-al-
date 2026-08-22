@@ -12,64 +12,57 @@ jobs:
     if: ${{ !contains(github.event.head_commit.message, 'fix: Tavily authoritative runtime flow') }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-
-      - name: Apply Tavily-only runtime fix
+      - name: Patch runtime
         shell: python
         run: |
           from pathlib import Path
           import re
 
-          # Gemini service: Tavily is the only search authority.
+          # 1) Backend: make Tavily the only web-search authority.
           p = Path('server/geminiService.ts')
           s = p.read_text()
-          s = s.replace(
-              "// Live-search path: Tavily -> Gemini without tools; Google Search is retained as a secondary fallback",
-              "// Live-search path: Tavily -> Gemini synthesis only; Gemini never performs the web search",
-          )
           s = s.replace("export const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';", "export const LIVE_SEARCH_MODEL = PERSONAL_CHAT_MODEL;")
 
-          # Detect public-figure/social/current-information questions even when they do not contain 'latest'.
-          anchor = "  private isInsufficientKnowledgeResponse(reply: string): boolean {"
-          if "private detectCurrentInformationIntent" not in s:
-              method = '''  private detectCurrentInformationIntent(message: string): boolean {\n    const lower = String(message || '').toLowerCase();\n    return /\\b(leo|jana|kesho|today|yesterday|tomorrow|latest|current|sasa|hivi punde|habari|amejifungua|amepata mtoto|ujauzito|pregnan|baby|birth|zuchu|diamond|msanii|celebrity|social media|instagram|facebook|tiktok|youtube|twitter|x.com|official statement|nani ni|who is|what happened|price|cost|salary|appointed|resigned|died|death)\\b/i.test(lower);\n  }\n\n'''
-              if anchor not in s:
-                  raise SystemExit('Gemini service insertion anchor not found')
-              s = s.replace(anchor, method + anchor, 1)
-          s = s.replace(
-              "const isSearchQuery = this.detectSearchIntent(message);",
-              "const isSearchQuery = this.detectSearchIntent(message) || this.detectCurrentInformationIntent(message);",
-              1,
-          )
+          # Current/social terms that were missing from search intent.
+          m = re.search(r"const searchKeywords = \[(.*?)\];", s, re.S)
+          if not m:
+              raise SystemExit('searchKeywords array not found')
+          extra = "'amejifungua','amepata mtoto','mtoto wa','ujauzito','pregnancy','pregnant','baby','birth','zuchu','diamond','msanii','celebrity','artist','singer','actor','actress','social media','instagram','facebook','tiktok','youtube','twitter','x.com','official statement','post ya','statement ya','today','yesterday','tomorrow','what happened','nani ni','who is','price','cost','salary','appointed','resigned','died','death'"
+          body = m.group(1)
+          if 'amejifungua' not in body:
+              s = s[:m.start(1)] + body + ',' + extra + s[m.end(1):]
 
-          # For live search, give Gemini ONLY the user question + Tavily evidence.
-          start = s.find("        const groundedSystemPrompt =")
-          end = s.find("        if (!aiReplyText?.trim())", start)
+          s = s.replace("const isSearchQuery = this.detectSearchIntent(message);", "const isSearchQuery = this.detectSearchIntent(message);", 1)
+
+          # Live synthesis must not receive old conversation history or MAX memory.
+          start = s.find('        const groundedSystemPrompt =')
+          end = s.find('        if (!aiReplyText?.trim())', start)
           if start < 0 or end < 0:
-              raise SystemExit('Tavily synthesis boundaries not found')
-          live_block = '''        const groundedSystemPrompt = `Wewe ni MKUU AI. Unasanifisha ushahidi wa Tavily pekee.\n\nLIVE SEARCH RULES:\n- LIVE TAVILY EVIDENCE ndiyo chanzo pekee cha taarifa za sasa.\n- Usitumie conversation history, MAX memory, au maarifa ya zamani ya model kuthibitisha current facts.\n- Usifanye Google Search, browsing, au search tool nyingine.\n- Usibuni jina, tarehe, bei, matokeo, tukio au dai lisilothibitishwa na evidence.\n- Kama evidence haitoshi, sema wazi kuwa ushahidi wa kuaminika haujatosha badala ya kukisia.\n- Chagua chanzo kipya na chenye mamlaka zaidi pale vyanzo vinapotofautiana.\n- Jibu kwa Kiswahili fasaha isipokuwa mtumiaji aulize kwa lugha nyingine.\n\nMUDA WA SERVER: ${getCurrentTanzaniaTimeContext().formattedString}`;\n        const groundedContents = [{\n          role: 'user' as const,\n          parts: [{ text: `${message}\\n\\n[LIVE TAVILY EVIDENCE — USE THIS ONLY]\\n${tavilyResults}` }],\n        }];\n        aiReplyText = await this.executeGeminiCallWithFallback({\n          contents: groundedContents,\n          config: { systemInstruction: groundedSystemPrompt, temperature: 0.2 },\n          preferredModel: LIVE_SEARCH_MODEL,\n          authoritativeTavily: true,\n        });\n'''
-          s = s[:start] + live_block + s[end:]
+              raise SystemExit('Tavily synthesis block not found')
+          replacement = '''        const groundedSystemPrompt = `Wewe ni MKUU AI. LIVE TAVILY EVIDENCE ndiyo chanzo pekee cha taarifa za sasa. Usitumie conversation history, MAX memory, Google Search, browsing, au maarifa ya zamani ya model kuthibitisha current facts. Usibuni dai lisilothibitishwa na evidence. Kama evidence haitoshi, sema wazi kuwa ushahidi wa kuaminika haujatosha. Chagua chanzo kipya na chenye mamlaka zaidi pale vyanzo vinapotofautiana. Jibu kwa Kiswahili fasaha. Muda wa server: ${getCurrentTanzaniaTimeContext().formattedString}`;
+        const groundedContents = [{ role: 'user' as const, parts: [{ text: `${message}\\n\\n[LIVE TAVILY EVIDENCE — USE THIS ONLY]\\n${tavilyResults}` }] }];
+        aiReplyText = await this.executeGeminiCallWithFallback({ contents: groundedContents, config: { systemInstruction: groundedSystemPrompt, temperature: 0.2 }, preferredModel: LIVE_SEARCH_MODEL, authoritativeTavily: true });
+'''
+          s = s[:start] + replacement + s[end:]
 
-          # Delete Google Search fallback from Tavily failure path.
-          pattern = re.compile(r"\\n        // Secondary fallback: Google Search grounding\\.[\\s\\S]*?\\n      }\\n\\n      console\\.log", re.M)
-          s, n = pattern.subn("\\n        throw new Error(`LIVE_SEARCH_UNAVAILABLE: Tavily search failed; MKUU will not answer this current-information question from Gemini memory. ${tavilyMsg}`);\\n      }\\n\\n      console.log", s, count=1)
-          if n != 1:
-              raise SystemExit('Google Search fallback was not removed')
+          # No Google Search fallback after Tavily failure.
+          start = s.find('        // Secondary fallback: Google Search grounding.')
+          end = s.find('      }\n\n      console.log', start)
+          if start < 0 or end < 0:
+              raise SystemExit('Tavily Google fallback block not found')
+          s = s[:start] + "        throw new Error(`LIVE_SEARCH_UNAVAILABLE: Tavily search failed; refusing stale Gemini answer. ${tavilyMsg}`);\n" + s[end:]
 
-          # Delete Google Search retry from ordinary Gemini replies.
-          pattern = re.compile(r"\\n        if \\(this\\.isInsufficientKnowledgeResponse\\(aiReplyText\\)\\) \\{[\\s\\S]*?\\n        \\}\\n        console\\.log\\(\\`\\[MKUU-BACKEND\\] \\[GEMINI_RESPONSE_RECEIVED\\]", re.M)
-          s, n = pattern.subn("\\n        console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED]", s, count=1)
-          if n != 1:
-              raise SystemExit('Ordinary Google Search retry was not removed')
+          # No Google Search retry for ordinary chat either.
+          start = s.find('        if (this.isInsufficientKnowledgeResponse(aiReplyText)) {')
+          end = s.find('        console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED]', start)
+          if start >= 0 and end >= 0:
+              s = s[:start] + s[end:]
 
           s = s.replace(
               "private async executeGeminiCallWithFallback(params: { contents: any; config?: any; preferredModel?: string }): Promise<string> {",
@@ -83,7 +76,7 @@ jobs:
           )
           p.write_text(s)
 
-          # API server: do not rewrite the user's question into a Google-search instruction.
+          # 2) API server: never rewrite current questions into Google Search prompts; return Tavily sources.
           p = Path('server.ts')
           s = p.read_text()
           if "getLastTavilySources" not in s:
@@ -92,34 +85,29 @@ jobs:
                   "import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from './server/geminiService.js';\nimport { getLastTavilySources } from './server/tavilySearch.js';",
                   1,
               )
-          start = s.find("    // Current/changing facts must be grounded with live Google Search.")
-          end = s.find("    const result=await geminiService.processChat", start)
-          if start < 0 or end < 0:
-              raise SystemExit('server.ts Google-search prefix block not found')
-          s = s[:start] + s[end:]
+          start = s.find('    // Current/changing facts must be grounded with live Google Search.')
+          end = s.find('    const result=await geminiService.processChat', start)
+          if start >= 0 and end >= 0:
+              s = s[:start] + s[end:]
+          s = s.replace('message:searchMessage,conversationHistory:effectiveHistory', 'message,conversationHistory:effectiveHistory', 1)
           s = s.replace(
-              "const result=await geminiService.processChat({userId:DEFAULT_USER_ID,message:searchMessage,conversationHistory:effectiveHistory,isVoice,attachments});",
-              "const result=await geminiService.processChat({userId:DEFAULT_USER_ID,message,conversationHistory:effectiveHistory,isVoice,attachments});",
-              1,
-          )
-          s = s.replace(
-              "return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};",
-              "return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs,webSources:getLastTavilySources()};",
+              'latencyMs:result.latencyMs};',
+              'latencyMs:result.latencyMs,webSources:getLastTavilySources()};',
               1,
           )
           p.write_text(s)
 
-          # Client: live/current questions must never use the stored direct Gemini API key.
+          # 3) Client: live/current questions must bypass any stored direct Gemini key.
           p = Path('src/services/aiEngine.ts')
           s = p.read_text()
           s = s.replace(
-              "  intent?: string;\n}",
-              "  intent?: string;\n  webSources?: Array<{ title: string; url: string }>;\n}",
+              "  if (directApiKey && directApiKey.trim().length > 10) return callDirectGemini(directApiKey.trim(), params);",
+              "  if (directApiKey && directApiKey.trim().length > 10 && !needsLiveSearch(params.message)) return callDirectGemini(directApiKey.trim(), params);",
               1,
           )
           s = s.replace(
-              "  if (directApiKey && directApiKey.trim().length > 10) return callDirectGemini(directApiKey.trim(), params);",
-              "  if (directApiKey && directApiKey.trim().length > 10 && !needsLiveSearch(params.message)) return callDirectGemini(directApiKey.trim(), params);",
+              "  intent?: string;\n}",
+              "  intent?: string;\n  webSources?: Array<{ title: string; url: string }>;\n}",
               1,
           )
           s = s.replace(
@@ -128,17 +116,16 @@ jobs:
               1,
           )
           p.write_text(s)
-      - name: Validate build
+      - name: Validate
         run: |
           npm ci
           npm run build
-
-      - name: Commit and push
+      - name: Commit runtime fix
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add server/geminiService.ts server.ts src/services/aiEngine.ts .github/workflows/apply-live-search-fix.yml
+          git add server/geminiService.ts server.ts src/services/aiEngine.ts
           git diff --cached --quiet && exit 0
           git commit -m "fix: Tavily authoritative runtime flow"
           git push
