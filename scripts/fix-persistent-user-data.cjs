@@ -22,38 +22,18 @@ patch(storagePath, 'mkuu_local_data_initialized_v3', (storage) => {
 
   const seedReplacement = `    // Seed only once on a genuinely fresh installation.\n    // After the owner has used or deleted data, an empty collection is valid state\n    // and must never cause the original sample data to come back.\n    const initialized = localStorage.getItem(LS_KEYS.DATA_INITIALIZED) === '1';\n    if (!initialized) {\n      const hasLegacyState = [\n        LS_KEYS.CONVERSATIONS,\n        LS_KEYS.MEMORIES,\n        LS_KEYS.PEOPLE,\n        LS_KEYS.FILES,\n        LS_KEYS.SETTINGS,\n        LS_KEYS.USER,\n      ].some((key) => localStorage.getItem(key) !== null);\n\n      if (!hasLegacyState) {\n        saveToLocalStorage(LS_KEYS.USER, DEFAULT_USER);\n        for (const m of DEFAULT_MEMORIES) await this.saveMemory(m);\n        for (const p of DEFAULT_PEOPLE) await this.savePerson(p);\n        saveToLocalStorage(LS_KEYS.SETTINGS, DEFAULT_SETTINGS);\n      } else if (!localStorage.getItem(LS_KEYS.USER)) {\n        saveToLocalStorage(LS_KEYS.USER, DEFAULT_USER);\n      }\n\n      localStorage.setItem(LS_KEYS.DATA_INITIALIZED, '1');\n    }\n\n    // Welcome conversation is created only on a genuinely fresh installation.\n    const convs = await this.getAllConversations();\n    if (convs.length === 0 && !localStorage.getItem(LS_KEYS.CONVERSATIONS)) {`;
 
-  if (!storage.includes(seedStart)) {
-    throw new Error('[PERSISTENCE] localChatStorage init seed block not found');
-  }
+  if (!storage.includes(seedStart)) throw new Error('[PERSISTENCE] localChatStorage init seed block not found');
   storage = storage.replace(seedStart, seedReplacement);
 
-  storage = storage.replace(
-    'const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES);',
-    'const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);'
-  );
+  storage = storage.replace('const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES);', 'const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);');
   storage = storage.replace('resolve(combined.length > 0 ? combined : DEFAULT_MEMORIES);', 'resolve(combined);');
-  storage = storage.replace(
-    'resolve(getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES));',
-    'resolve(getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []));'
-  );
-  storage = storage.replace(
-    'return getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES);',
-    'return getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);'
-  );
+  storage = storage.replace('resolve(getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES));', 'resolve(getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []));');
+  storage = storage.replace('return getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES);', 'return getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);');
 
-  storage = storage.replace(
-    'const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE);',
-    'const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);'
-  );
+  storage = storage.replace('const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE);', 'const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);');
   storage = storage.replace('resolve(combined.length > 0 ? combined : DEFAULT_PEOPLE);', 'resolve(combined);');
-  storage = storage.replace(
-    'resolve(getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE));',
-    'resolve(getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []));'
-  );
-  storage = storage.replace(
-    'return getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE);',
-    'return getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);'
-  );
+  storage = storage.replace('resolve(getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE));', 'resolve(getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []));');
+  storage = storage.replace('return getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE);', 'return getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);');
 
   return storage;
 });
@@ -73,14 +53,8 @@ patch(appPath, 'MKUU_PERSISTENCE_V3', (app) => {
   if (!app.includes(peopleEnd)) throw new Error('[PERSISTENCE] App people block end not found');
   app = app.replace(peopleEnd, "  ]);\n  */\n  const [files, setFiles] = useState<GeneratedFileSummary[]>([]);");
 
-  app = app.replace(
-    "      if (localMems && localMems.length > 0) {\n        setMemories(localMems);\n      }",
-    "      setMemories(localMems || []);"
-  );
-  app = app.replace(
-    "      if (localPeople && localPeople.length > 0) {\n        setPeople(localPeople);\n      }",
-    "      setPeople(localPeople || []);"
-  );
+  app = app.replace("      if (localMems && localMems.length > 0) {\n        setMemories(localMems);\n      }", "      setMemories(localMems || []);");
+  app = app.replace("      if (localPeople && localPeople.length > 0) {\n        setPeople(localPeople);\n      }", "      setPeople(localPeople || []);");
 
   const localInitAnchor = `      await localChatStorage.init();\n      \n      // Load local files`;
   const localInitReplacement = `      await localChatStorage.init();\n\n      // MKUU_PERSISTENCE_V3: restore owner-controlled settings/logs locally.\n      setAutoReplySettings(localChatStorage.getAutoReplySettings());\n      setAutoReplyLogs(localChatStorage.getAutoReplyLogs());\n      \n      // Load local files`;
@@ -94,7 +68,7 @@ patch(appPath, 'MKUU_PERSISTENCE_V3', (app) => {
   // The backend filesystem may be ephemeral. Never let its startup snapshot resurrect
   // deleted samples or overwrite the owner's latest local IndexedDB/LocalStorage state.
   const remoteBlockStart = "      // Memories\n      const memData = await fetchJson<Memory[]>('/api/memories');";
-  const remoteBlockEnd = "      // Auto Reply Logs\n      const logsData = await fetchJson<AutoReplyLog[]>('/api/autoreply/logs');";
+  const remoteBlockEnd = "      // Fetch conversations from server and merge into local DB";
   if (!app.includes(remoteBlockStart) || !app.includes(remoteBlockEnd)) {
     throw new Error('[PERSISTENCE] App remote user-data sync block not found');
   }
