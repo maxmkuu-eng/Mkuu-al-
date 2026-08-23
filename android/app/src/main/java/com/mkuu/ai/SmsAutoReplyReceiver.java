@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
 import android.provider.Telephony;
@@ -28,7 +29,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String KEY_EMERGENCY_STOP = "emergencyStop";
     private static final String KEY_AUTO_REPLY_SUBSCRIPTION_ID = "autoReplySubscriptionId";
     private static final String BACKEND_CHAT_URL = "https://mkuu-al-3.onrender.com/api/chat";
-    // SMS auto-reply is intentionally fixed: every incoming SMS receives this message only.
+    // Every incoming SMS gets this fixed reply; there is no keyword/sender filter.
     private static final String FIXED_AUTO_REPLY = "Habari, mimi ni MKUU AI, msaidizi wa Boss Max. Kwa sasa yupo busy, atakutafuta akiwa free. Asante.";
 
     @Override
@@ -46,28 +47,34 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         if (pdus == null || pdus.length == 0) return;
 
         String format = bundle.getString("format");
-        StringBuilder body = new StringBuilder();
         String sender = "";
         for (Object pdu : pdus) {
             try {
                 SmsMessage sms = format == null
                         ? SmsMessage.createFromPdu((byte[]) pdu)
                         : SmsMessage.createFromPdu((byte[]) pdu, format);
-                if (sms == null) continue;
-                if (sender.isEmpty() && sms.getOriginatingAddress() != null) sender = sms.getOriginatingAddress();
-                String part = sms.getMessageBody();
-                if (part != null) body.append(part);
+                if (sms != null && sender.isEmpty() && sms.getOriginatingAddress() != null) {
+                    sender = sms.getOriginatingAddress();
+                }
             } catch (Exception e) {
                 android.util.Log.w("MKUU_SMS", "Could not decode SMS part", e);
             }
         }
 
-        final String message = body.toString().trim();
         final String from = sender.trim();
-        if (message.isEmpty() || from.isEmpty()) return;
+        // Do not inspect or filter the SMS text. Any SMS with a valid sender is eligible.
+        if (from.isEmpty()) return;
 
         final PendingResult pendingResult = goAsync();
         Context appContext = context.getApplicationContext();
+        PowerManager powerManager = (PowerManager) appContext.getSystemService(Context.POWER_SERVICE);
+        PowerManager.WakeLock wakeLock = powerManager == null ? null
+                : powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MKUU:SmsAutoReply");
+        if (wakeLock != null) {
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire(15000L);
+        }
+
         new Thread(() -> {
             try {
                 String text = cleanSmsReply(FIXED_AUTO_REPLY);
@@ -75,7 +82,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
                 if (appContext.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
                 int selectedSubscriptionId = prefs.getInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, -1);
-                // Never silently fall back to SIM 1. Auto Reply must use the SIM explicitly selected by the owner.
+                // Never silently fall back to SIM 1. Use only the SIM explicitly selected by the owner.
                 if (selectedSubscriptionId < 0) {
                     android.util.Log.w("MKUU_SMS", "Auto Reply skipped: no SIM has been selected by the owner.");
                     return;
@@ -90,6 +97,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
             } catch (Exception e) {
                 android.util.Log.e("MKUU_SMS", "SMS auto reply failed", e);
             } finally {
+                if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
                 pendingResult.finish();
             }
         }, "mkuu-sms-reply").start();
