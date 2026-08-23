@@ -67,7 +67,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
         new Thread(() -> {
             try {
-                // No whitelist check: every incoming SMS is routed to MKUU AI.
+                // Deliberately no contact/people whitelist: every incoming SMS is eligible.
                 String reply = requestMkuuReply(from, message);
                 if (reply == null || reply.trim().isEmpty()) return;
                 if (appContext.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
@@ -92,7 +92,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         String text = reply == null ? "" : reply.trim();
         text = text.replaceFirst("(?i)^MKUU AI\\s*[:\\-]\\s*", "");
         text = text.replaceFirst("(?i)^AI\\s*[:\\-]\\s*", "");
-        text = text.replaceAll("\\\\*\\\\*", "");
+        text = text.replace("**", "");
         text = text.replaceAll("(?m)^[-*]\\s+", "");
         return text.trim();
     }
