@@ -2,9 +2,14 @@ package com.mkuu.ai;
 
 import android.Manifest;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 
@@ -56,7 +61,10 @@ public class MainActivity extends BridgeActivity {
         try {
             SubscriptionManager manager = (SubscriptionManager) getSystemService(TELEPHONY_SUBSCRIPTION_SERVICE);
             List<SubscriptionInfo> infos = manager.getActiveSubscriptionInfoList();
-            if (infos == null || infos.isEmpty()) return;
+            if (infos == null || infos.isEmpty()) {
+                ensureSmsBackgroundAccess();
+                return;
+            }
 
             SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
             int savedId = prefs.getInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, -1);
@@ -80,12 +88,48 @@ public class MainActivity extends BridgeActivity {
                     .setPositiveButton("Hifadhi", (dialog, which) -> {
                         SubscriptionInfo chosen = infos.get(selected[0]);
                         prefs.edit().putInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, chosen.getSubscriptionId()).apply();
+                        ensureSmsBackgroundAccess();
                     })
                     .show();
         } catch (SecurityException e) {
             android.util.Log.w("MKUU_SMS", "SIM list unavailable without phone permission", e);
         } catch (Exception e) {
             android.util.Log.e("MKUU_SMS", "Could not show SIM picker", e);
+        }
+    }
+
+    /**
+     * SMS auto-reply is a task-automation feature and must be allowed to run while
+     * the screen is off. Ask once through Android's battery-optimization UI when
+     * the device is still applying Doze/App Standby restrictions to MKUU AI.
+     */
+    private void ensureSmsBackgroundAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        try {
+            PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+            if (powerManager == null || powerManager.isIgnoringBatteryOptimizations(getPackageName())) return;
+
+            new AlertDialog.Builder(this)
+                    .setTitle("Auto Reply ya SMS")
+                    .setMessage("Ili MKUU AI ijibu SMS hata ukiwa nje ya app au screen ikiwa imezimwa, ruhusu MKUU AI kufanya Auto Reply bila battery optimization kuizuia.")
+                    .setNegativeButton("Baadaye", null)
+                    .setPositiveButton("Ruhusu", (dialog, which) -> {
+                        try {
+                            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                            intent.setData(Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                        } catch (Exception error) {
+                            android.util.Log.w("MKUU_SMS", "Direct battery optimization request unavailable", error);
+                            try {
+                                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                            } catch (Exception ignored) {
+                                android.util.Log.w("MKUU_SMS", "Battery optimization settings unavailable", ignored);
+                            }
+                        }
+                    })
+                    .show();
+        } catch (Exception error) {
+            android.util.Log.w("MKUU_SMS", "Could not check battery optimization state", error);
         }
     }
 }
