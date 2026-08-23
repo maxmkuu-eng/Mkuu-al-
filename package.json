@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "node scripts/enable-real-streaming.cjs && node scripts/enable-smart-share-export.cjs && node scripts/enable-image-gallery-share.cjs && node scripts/fix-live-search-intent.cjs && node scripts/fix-voice-controls.cjs && node scripts/fix-markdown-tables.cjs && node scripts/enable-stop-generation.cjs && node scripts/enable-notifications.cjs && node scripts/force-tavily-only-live-search.cjs && node scripts/ensure-live-sources.cjs && node scripts/fix-apk-download.cjs && node scripts/enable-native-sms.cjs && node scripts/enable-sms-screen.cjs && vite build && npm install @capacitor/filesystem@8.0.0 --no-save --no-package-lock && npx cap sync android && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "node scripts/enable-real-streaming.cjs && node scripts/enable-smart-share-export.cjs && node scripts/enable-image-gallery-share.cjs && node scripts/fix-live-search-intent.cjs && node scripts/fix-voice-controls.cjs && node scripts/fix-markdown-tables.cjs && node scripts/fix-persistent-user-data.cjs && node scripts/enable-stop-generation.cjs && node scripts/enable-notifications.cjs && node scripts/force-tavily-only-live-search.cjs && node scripts/ensure-live-sources.cjs && node scripts/fix-apk-download.cjs && node scripts/enable-native-sms.cjs && node scripts/enable-sms-screen.cjs && vite build && npm install @capacitor/filesystem@8.0.0 --no-save --no-package-lock && npx cap sync android && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -27,7 +27,7 @@
     "docx": "^9.7.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
-    "openai": "^5.12.2",
+    "openai": "^5.12.0",
     "pdf-lib": "^1.17.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
