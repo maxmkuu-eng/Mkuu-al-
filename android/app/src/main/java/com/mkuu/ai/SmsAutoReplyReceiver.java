@@ -28,6 +28,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String KEY_EMERGENCY_STOP = "emergencyStop";
     private static final String KEY_AUTO_REPLY_SUBSCRIPTION_ID = "autoReplySubscriptionId";
     private static final String BACKEND_CHAT_URL = "https://mkuu-al-3.onrender.com/api/chat";
+    // SMS auto-reply is intentionally fixed: every incoming SMS receives this message only.
     private static final String FIXED_AUTO_REPLY = "Habari, mimi ni MKUU AI, msaidizi wa Boss Max. Kwa sasa yupo busy, atakutafuta akiwa free. Asante.";
 
     @Override
