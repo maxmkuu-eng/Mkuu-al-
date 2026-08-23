@@ -56,8 +56,6 @@ public class MainActivity extends BridgeActivity {
         boolean receiveGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED;
         boolean phoneStateGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
         boolean sendGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
-        // RECEIVE_SMS is mandatory for the native SMS_RECEIVED BroadcastReceiver.
-        // Do not present Auto Reply as configured when this permission is missing.
         if (receiveGranted && phoneStateGranted && sendGranted) {
             showAutoReplySimPicker();
         } else {
@@ -99,6 +97,7 @@ public class MainActivity extends BridgeActivity {
                                 .putInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, chosen.getSubscriptionId())
                                 .putBoolean(KEY_ENABLED, true)
                                 .apply();
+                        startSmsAutoReplyService();
                         ensureSmsBackgroundAccess();
                     })
                     .show();
@@ -106,6 +105,19 @@ public class MainActivity extends BridgeActivity {
             android.util.Log.w("MKUU_SMS", "SIM list unavailable without phone permission", e);
         } catch (Exception e) {
             android.util.Log.e("MKUU_SMS", "Could not show SIM picker", e);
+        }
+    }
+
+    private void startSmsAutoReplyService() {
+        try {
+            Intent serviceIntent = new Intent(this, SmsAutoReplyService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+        } catch (Exception error) {
+            android.util.Log.e("MKUU_SMS", "Could not start persistent SMS auto-reply service", error);
         }
     }
 
