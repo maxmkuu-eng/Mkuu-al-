@@ -25,7 +25,7 @@ import java.util.List;
 @CapacitorPlugin(
     name = "SmsSender",
     permissions = {
-        @Permission(strings = { Manifest.permission.SEND_SMS }, alias = "sms"),
+        @Permission(strings = { Manifest.permission.SEND_SMS, Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_PHONE_STATE }, alias = "autoreply"),
         @Permission(strings = { Manifest.permission.READ_PHONE_STATE }, alias = "phone")
     }
 )
@@ -66,10 +66,66 @@ public class SmsSenderPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    // MKUU_AUTO_REPLY_SIM_SELECTOR_V1
+    // These settings are stored in native SharedPreferences, not in the WebView.
+    // Therefore SmsAutoReplyReceiver can use them when the MKUU AI UI is closed.
+    @com.getcapacitor.PluginMethod
+    public void getAutoReplySim(PluginCall call) {
+        android.content.SharedPreferences prefs = getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE);
+        int subscriptionId = prefs.getInt("autoReplySubscriptionId", -1);
+        JSObject ret = new JSObject();
+        ret.put("subscriptionId", subscriptionId);
+        call.resolve(ret);
+    }
+
+    @com.getcapacitor.PluginMethod
+    public void setAutoReplySim(PluginCall call) {
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED
+                || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED
+                || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissionForAlias("autoreply", call, "setAutoReplySim");
+            return;
+        }
+
+        int subscriptionId = call.getInt("subscriptionId", -1);
+        if (subscriptionId < 0) {
+            call.reject("Invalid SIM subscription ID");
+            return;
+        }
+
+        SubscriptionManager manager = (SubscriptionManager) getContext().getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+        List<SubscriptionInfo> infos = manager.getActiveSubscriptionInfoList();
+        boolean exists = false;
+        if (infos != null) {
+            for (SubscriptionInfo info : infos) {
+                if (info.getSubscriptionId() == subscriptionId) {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+        if (!exists) {
+            call.reject("Selected SIM is not active");
+            return;
+        }
+
+        getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE)
+                .edit()
+                .putInt("autoReplySubscriptionId", subscriptionId)
+                .putBoolean("enabled", true)
+                .apply();
+
+        JSObject ret = new JSObject();
+        ret.put("subscriptionId", subscriptionId);
+        ret.put("saved", true);
+        ret.put("backgroundReady", true);
+        call.resolve(ret);
+    }
+
     @com.getcapacitor.PluginMethod
     public void sendSms(PluginCall call) {
         if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissionForAlias("sms", call, "sendSms");
+            requestPermissionForAlias("autoreply", call, "sendSms");
             return;
         }
         String to = call.getString("to", "").trim();
