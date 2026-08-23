@@ -21,7 +21,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_EMERGENCY_STOP = "emergencyStop";
     private static final String KEY_AUTO_REPLY_SUBSCRIPTION_ID = "autoReplySubscriptionId";
-    private static final String FIXED_AUTO_REPLY = "Habari, mimi ni MKUU AI, msaidizi wa Boss Max. Kwa sasa yupo busy, atakutafuta akiwa free. Asante.";
+    private static final String FIXED_AUTO_REPLY = "Habari, mimi ni MKUU AI, msaidizi wa Boss Chii. Kwa sasa yupo busy, atakutafuta akiwa free. Asante.";
 
     @Override
     public void onReceive(Context context, Intent intent) {
