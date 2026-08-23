@@ -27,7 +27,7 @@ patchFile(
   UI,
   'MKUU_AUTO_REPLY_SIM_SELECTOR_UI_V1',
   "import { apiFetch } from '../services/apiConfig';",
-  `import { apiFetch } from '../services/apiConfig';\nimport { registerPlugin } from '@capacitor/core';\n\ninterface AutoReplySimInfo {\n  subscriptionId: number;\n  slotIndex: number;\n  displayName: string;\n  number: string;\n}\n\ninterface SmsSenderNativePlugin {\n  getSimCards(): Promise<{ sims: AutoReplySimInfo[] }>;\n  getAutoReplySim(): Promise<{ subscriptionId: number }>;\n  setAutoReplySim(options: { subscriptionId: number }): Promise<{ saved: boolean; subscriptionId: number }>;\n}\n\nconst SmsSenderNative = registerPlugin<SmsSenderNativePlugin>('SmsSender');`
+  `import { apiFetch } from '../services/apiConfig';\nimport { registerPlugin } from '@capacitor/core';\n\ninterface AutoReplySimInfo {\n  subscriptionId: number;\n  slotIndex: number;\n  displayName: string;\n  number: string;\n}\n\n// Keep the native plugin surface untyped here so repeated/idempotent build patches\n// can never create a duplicate TypeScript interface declaration.\nconst SmsSenderNative = registerPlugin<any>('SmsSender');`
 );
 
 patchFile(
@@ -58,14 +58,11 @@ patchFile(
   `    // MKUU_AUTO_REPLY_KILLSWITCH_NATIVE_V1\n    @com.getcapacitor.PluginMethod\n    public void getEmergencyStop(PluginCall call) {\n        android.content.SharedPreferences prefs = getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE);\n        JSObject ret = new JSObject();\n        ret.put("emergencyStop", prefs.getBoolean("emergencyStop", false));\n        call.resolve(ret);\n    }\n\n    @com.getcapacitor.PluginMethod\n    public void setEmergencyStop(PluginCall call) {\n        boolean emergencyStop = call.getBoolean("enabled", false);\n        getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE)\n                .edit().putBoolean("emergencyStop", emergencyStop).apply();\n        JSObject ret = new JSObject();\n        ret.put("emergencyStop", emergencyStop);\n        ret.put("saved", true);\n        call.resolve(ret);\n    }\n\n`
 );
 
-// The native methods are intentionally accessed through the existing plugin object as any,
-// so this patch remains compatible with the existing TypeScript interface and does not alter
-// any other SMS feature.
 patchFile(
   UI,
   'MKUU_AUTO_REPLY_KILLSWITCH_UI_V1',
   "  const notify = (type: 'success' | 'error' | 'info', text: string) => {",
-  `  // MKUU_AUTO_REPLY_KILLSWITCH_UI_V1\n  const syncNativeEmergencyStop = async (enabled: boolean) => {\n    try {\n      await (SmsSenderNative as any).setEmergencyStop({ enabled });\n      console.log('[SMS-KILLSWITCH] Native SMS receiver emergencyStop =', enabled);\n    } catch (error) {\n      console.error('[SMS-KILLSWITCH] Failed to sync native emergencyStop', error);\n      throw error;\n    }\n  };\n\n  useEffect(() => {\n    syncNativeEmergencyStop(Boolean(settings.emergencyStop)).catch(() => undefined);\n  }, [settings.emergencyStop]);\n\n  const handleEmergencyStopClick = async () => {\n    const nextState = !settings.emergencyStop;\n    try {\n      await syncNativeEmergencyStop(nextState);\n      onEmergencyStopToggle();\n    } catch (error) {\n      notify('error', 'Killswitch haikuweza kuunganishwa na SMS receiver ya simu.');\n    }\n  };\n\n`
+  `  // MKUU_AUTO_REPLY_KILLSWITCH_UI_V1\n  const syncNativeEmergencyStop = async (enabled: boolean) => {\n    try {\n      await SmsSenderNative.setEmergencyStop({ enabled });\n      console.log('[SMS-KILLSWITCH] Native SMS receiver emergencyStop =', enabled);\n    } catch (error) {\n      console.error('[SMS-KILLSWITCH] Failed to sync native emergencyStop', error);\n      throw error;\n    }\n  };\n\n  useEffect(() => {\n    syncNativeEmergencyStop(Boolean(settings.emergencyStop)).catch(() => undefined);\n  }, [settings.emergencyStop]);\n\n  const handleEmergencyStopClick = async () => {\n    const nextState = !settings.emergencyStop;\n    try {\n      await syncNativeEmergencyStop(nextState);\n      onEmergencyStopToggle();\n    } catch (error) {\n      notify('error', 'Killswitch haikuweza kuunganishwa na SMS receiver ya simu.');\n    }\n  };\n\n`
 );
 
 patchFile(
