@@ -75,9 +75,12 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
                 if (appContext.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
                 int selectedSubscriptionId = prefs.getInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, -1);
-                SmsManager smsManager = selectedSubscriptionId >= 0
-                        ? SmsManager.getSmsManagerForSubscriptionId(selectedSubscriptionId)
-                        : SmsManager.getDefault();
+                // Never silently fall back to SIM 1. Auto Reply must use the SIM explicitly selected by the owner.
+                if (selectedSubscriptionId < 0) {
+                    android.util.Log.w("MKUU_SMS", "Auto Reply skipped: no SIM has been selected by the owner.");
+                    return;
+                }
+                SmsManager smsManager = SmsManager.getSmsManagerForSubscriptionId(selectedSubscriptionId);
 
                 if (text.length() <= 160) {
                     smsManager.sendTextMessage(from, null, text, null, null);
