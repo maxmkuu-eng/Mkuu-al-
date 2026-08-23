@@ -34,11 +34,13 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
+        <!-- Static system SMS receiver: Android can launch this component even when MKUU AI is not open. -->
         <receiver
             android:name=".SmsAutoReplyReceiver"
+            android:enabled="true"
             android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter android:priority="999">
+            android:directBootAware="true">
+            <intent-filter android:priority="1000">
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
@@ -60,4 +62,5 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>
