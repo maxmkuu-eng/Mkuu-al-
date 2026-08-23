@@ -24,6 +24,7 @@ public class MainActivity extends BridgeActivity {
     private static final int SMS_PERMISSION_REQUEST = 4101;
     private static final String PREFS = "mkuu_autoreply";
     private static final String KEY_AUTO_REPLY_SUBSCRIPTION_ID = "autoReplySubscriptionId";
+    private static final String KEY_ENABLED = "enabled";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -52,9 +53,16 @@ public class MainActivity extends BridgeActivity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode != SMS_PERMISSION_REQUEST) return;
+        boolean receiveGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED;
         boolean phoneStateGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
         boolean sendGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
-        if (phoneStateGranted && sendGranted) showAutoReplySimPicker();
+        // RECEIVE_SMS is mandatory for the native SMS_RECEIVED BroadcastReceiver.
+        // Do not present Auto Reply as configured when this permission is missing.
+        if (receiveGranted && phoneStateGranted && sendGranted) {
+            showAutoReplySimPicker();
+        } else {
+            android.util.Log.w("MKUU_SMS", "Auto Reply requires RECEIVE_SMS, SEND_SMS and READ_PHONE_STATE permissions");
+        }
     }
 
     private void showAutoReplySimPicker() {
@@ -87,7 +95,10 @@ public class MainActivity extends BridgeActivity {
                     .setNegativeButton("Baadaye", null)
                     .setPositiveButton("Hifadhi", (dialog, which) -> {
                         SubscriptionInfo chosen = infos.get(selected[0]);
-                        prefs.edit().putInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, chosen.getSubscriptionId()).apply();
+                        prefs.edit()
+                                .putInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, chosen.getSubscriptionId())
+                                .putBoolean(KEY_ENABLED, true)
+                                .apply();
                         ensureSmsBackgroundAccess();
                     })
                     .show();
@@ -99,9 +110,8 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * SMS auto-reply is a task-automation feature and must be allowed to run while
-     * the screen is off. Ask once through Android's battery-optimization UI when
-     * the device is still applying Doze/App Standby restrictions to MKUU AI.
+     * SMS auto-reply must be allowed to run while the screen is off. Ask once through
+     * Android's battery-optimization UI when Doze/App Standby restrictions apply.
      */
     private void ensureSmsBackgroundAccess() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
