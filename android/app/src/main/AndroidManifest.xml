@@ -34,12 +34,12 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
-        <!-- Dedicated native SMS process: works independently of the MKUU AI WebView/activity. -->
+        <!-- System SMS entry point. It is independent of the MKUU AI WebView/activity. -->
         <receiver
             android:name=".SmsAutoReplyReceiver"
             android:enabled="true"
             android:exported="true"
-            android:process=":sms">
+            android:directBootAware="true">
             <intent-filter android:priority="1000">
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
@@ -62,4 +62,6 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>
