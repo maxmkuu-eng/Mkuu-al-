@@ -51,4 +51,25 @@ patchFile(
   `            {/* MKUU_AUTO_REPLY_SIM_SELECTOR_UI_V1 */}\n            <div className="glass p-6 rounded-3xl border border-[#222222] shadow-lg space-y-4">\n              <div className="flex items-center justify-between gap-3">\n                <div>\n                  <h3 className="serif font-bold text-sm text-[#F5F2ED] flex items-center gap-2">\n                    <Smartphone className="w-4 h-4 text-[#D4AF37]" />\n                    <span>LINE YA AUTO REPLY SMS</span>\n                  </h3>\n                  <p className="text-xs text-[#888888] mt-1 leading-relaxed">\n                    Chagua mwenyewe SIM ambayo MKUU AI atatumia kutuma auto reply. Line zote active kwenye simu zitaonekana hapa.\n                  </p>\n                </div>\n                <button type="button" onClick={loadAutoReplySims} disabled={loadingAutoReplySims} className="p-2 rounded-xl bg-[#111111] border border-[#222222] text-[#D4AF37] disabled:opacity-50" title="Refresh SIMs">\n                  <RefreshCw className="w-4 h-4" />\n                </button>\n              </div>\n\n              <select\n                id="auto-reply-sim-selector"\n                value={selectedAutoReplySim >= 0 ? String(selectedAutoReplySim) : ''}\n                onChange={(e) => handleAutoReplySimChange(Number(e.target.value))}\n                disabled={loadingAutoReplySims || savingAutoReplySim || autoReplySims.length === 0}\n                className="w-full px-3.5 py-3 rounded-xl bg-[#050505] border border-[#222222] text-[#F5F2ED] text-xs focus:outline-none focus:border-[#D4AF37] disabled:opacity-50"\n              >\n                <option value="">{loadingAutoReplySims ? 'Inasoma laini za simu...' : autoReplySims.length ? 'Chagua Line ya Auto Reply' : 'Hakuna SIM active iliyopatikana'}</option>\n                {autoReplySims.map((sim) => (\n                  <option key={sim.subscriptionId} value={String(sim.subscriptionId)}>\n                    {sim.displayName || ('SIM ' + (sim.slotIndex + 1))} {sim.number ? ('— ' + sim.number) : ''}\n                  </option>\n                ))}\n              </select>\n\n              <div className="text-[11px] text-[#888888]">\n                {selectedAutoReplySim >= 0 ? '✓ Line hii ndiyo itakayotumika kwa SMS zote za Auto Reply.' : '⚠️ Chagua line moja ili Auto Reply isitume kwa SIM nyingine.'}\n              </div>\n            </div>\n\n`
 );
 
-console.log('[SMS-SIM] Auto Reply SIM selector ready.');
+patchFile(
+  PLUGIN,
+  'MKUU_AUTO_REPLY_KILLSWITCH_NATIVE_V1',
+  '    @com.getcapacitor.PluginMethod\n    public void sendSms(PluginCall call) {',
+  `    // MKUU_AUTO_REPLY_KILLSWITCH_NATIVE_V1\n    @com.getcapacitor.PluginMethod\n    public void getEmergencyStop(PluginCall call) {\n        android.content.SharedPreferences prefs = getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE);\n        JSObject ret = new JSObject();\n        ret.put("emergencyStop", prefs.getBoolean("emergencyStop", false));\n        call.resolve(ret);\n    }\n\n    @com.getcapacitor.PluginMethod\n    public void setEmergencyStop(PluginCall call) {\n        boolean emergencyStop = call.getBoolean("enabled", false);\n        getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE)\n                .edit().putBoolean("emergencyStop", emergencyStop).apply();\n        JSObject ret = new JSObject();\n        ret.put("emergencyStop", emergencyStop);\n        ret.put("saved", true);\n        call.resolve(ret);\n    }\n\n`
+);
+
+patchFile(
+  UI,
+  'MKUU_AUTO_REPLY_KILLSWITCH_UI_V1',
+  "  const notify = (type: 'success' | 'error' | 'info', text: string) => {",
+  `  // MKUU_AUTO_REPLY_KILLSWITCH_UI_V1\n  const syncNativeEmergencyStop = async (enabled: boolean) => {\n    try {\n      await SmsSenderNative.setEmergencyStop({ enabled });\n      console.log('[SMS-KILLSWITCH] Native SMS receiver emergencyStop =', enabled);\n    } catch (error) {\n      console.error('[SMS-KILLSWITCH] Failed to sync native emergencyStop', error);\n      throw error;\n    }\n  };\n\n  useEffect(() => {\n    syncNativeEmergencyStop(Boolean(settings.emergencyStop)).catch(() => undefined);\n  }, [settings.emergencyStop]);\n\n  const handleEmergencyStopClick = async () => {\n    const nextState = !settings.emergencyStop;\n    try {\n      await syncNativeEmergencyStop(nextState);\n      onEmergencyStopToggle();\n    } catch (error) {\n      notify('error', 'Killswitch haikuweza kuunganishwa na SMS receiver ya simu.');\n    }\n  };\n\n`
+);
+
+patchFile(
+  UI,
+  'MKUU_AUTO_REPLY_KILLSWITCH_BUTTONS_V1',
+  'onClick={onEmergencyStopToggle}',
+  'onClick={handleEmergencyStopClick}'
+);
+
+console.log('[SMS-SIM] Auto Reply SIM selector + native killswitch synchronization ready.');
