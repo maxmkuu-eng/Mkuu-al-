@@ -60,6 +60,13 @@ patchFile(
 
 patchFile(
   UI,
+  'MKUU_AUTO_REPLY_KILLSWITCH_INTERFACE_V1',
+  'interface SmsSenderNativePlugin {',
+  `interface SmsSenderNativePlugin {\n  getEmergencyStop(): Promise<{ emergencyStop: boolean }>;\n  setEmergencyStop(options: { enabled: boolean }): Promise<{ saved: boolean; emergencyStop: boolean }>;`
+);
+
+patchFile(
+  UI,
   'MKUU_AUTO_REPLY_KILLSWITCH_UI_V1',
   "  const notify = (type: 'success' | 'error' | 'info', text: string) => {",
   `  // MKUU_AUTO_REPLY_KILLSWITCH_UI_V1\n  const syncNativeEmergencyStop = async (enabled: boolean) => {\n    try {\n      await SmsSenderNative.setEmergencyStop({ enabled });\n      console.log('[SMS-KILLSWITCH] Native SMS receiver emergencyStop =', enabled);\n    } catch (error) {\n      console.error('[SMS-KILLSWITCH] Failed to sync native emergencyStop', error);\n      throw error;\n    }\n  };\n\n  useEffect(() => {\n    syncNativeEmergencyStop(Boolean(settings.emergencyStop)).catch(() => undefined);\n  }, [settings.emergencyStop]);\n\n  const handleEmergencyStopClick = async () => {\n    const nextState = !settings.emergencyStop;\n    try {\n      await syncNativeEmergencyStop(nextState);\n      onEmergencyStopToggle();\n    } catch (error) {\n      notify('error', 'Killswitch haikuweza kuunganishwa na SMS receiver ya simu.');\n    }\n  };\n\n`
