@@ -21,12 +21,14 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/** Receives every incoming SMS and asks MKUU AI to generate the reply. */
+/** Receives every incoming SMS and sends the configured MKUU auto-reply using the selected SIM. */
 public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String PREFS = "mkuu_autoreply";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_EMERGENCY_STOP = "emergencyStop";
+    private static final String KEY_AUTO_REPLY_SUBSCRIPTION_ID = "autoReplySubscriptionId";
     private static final String BACKEND_CHAT_URL = "https://mkuu-al-3.onrender.com/api/chat";
+    private static final String FIXED_AUTO_REPLY = "Habari, mimi ni MKUU AI, msaidizi wa Boss Max. Kwa sasa yupo busy, atakutafuta akiwa free. Asante.";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -67,14 +69,15 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
         new Thread(() -> {
             try {
-                // Deliberately no contact/people whitelist: every incoming SMS is eligible.
-                String reply = requestMkuuReply(from, message);
-                if (reply == null || reply.trim().isEmpty()) return;
+                String text = cleanSmsReply(FIXED_AUTO_REPLY);
+                if (text.isEmpty()) return;
                 if (appContext.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
-                SmsManager smsManager = SmsManager.getDefault();
-                String text = cleanSmsReply(reply);
-                if (text.isEmpty()) return;
+                int selectedSubscriptionId = prefs.getInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, -1);
+                SmsManager smsManager = selectedSubscriptionId >= 0
+                        ? SmsManager.getSmsManagerForSubscriptionId(selectedSubscriptionId)
+                        : SmsManager.getDefault();
+
                 if (text.length() <= 160) {
                     smsManager.sendTextMessage(from, null, text, null, null);
                 } else {
@@ -97,6 +100,8 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         return text.trim();
     }
 
+    // Kept available for the existing server-backed SMS flow; auto-reply itself uses the fixed owner message above.
+    @SuppressWarnings("unused")
     private static String requestMkuuReply(String sender, String smsText) throws Exception {
         HttpURLConnection connection = null;
         try {
@@ -111,14 +116,13 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
 
             JSONObject payload = new JSONObject();
             payload.put("userId", "user_max_owner");
-            payload.put("message", "Jibu SMS hii kama mtu wa kawaida anayewasiliana kwa SMS. Jibu kwa kifupi, kwa heshima, na kwa lugha ileile ya mtumaji. Usijitambulishe kama AI, usitumie 'MKUU AI:', headings, bullets, markdown, au maelezo ya chatbot. Mtumaji: " + sender + "\nSMS: " + smsText);
+            payload.put("message", "Jibu SMS hii kama mtu wa kawaida anayewasiliana kwa SMS.");
             payload.put("isVoice", false);
             payload.put("conversationHistory", new JSONArray());
             payload.put("people", new JSONArray());
 
             byte[] data = payload.toString().getBytes(StandardCharsets.UTF_8);
             try (OutputStream output = connection.getOutputStream()) { output.write(data); }
-
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) return null;
             StringBuilder response = new StringBuilder();
@@ -126,8 +130,7 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
                 String line;
                 while ((line = reader.readLine()) != null) response.append(line);
             }
-            JSONObject json = new JSONObject(response.toString());
-            return json.optString("reply", "").trim();
+            return new JSONObject(response.toString()).optString("reply", "").trim();
         } finally {
             if (connection != null) connection.disconnect();
         }
