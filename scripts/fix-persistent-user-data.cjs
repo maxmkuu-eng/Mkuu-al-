@@ -25,15 +25,30 @@ patch(storagePath, 'mkuu_local_data_initialized_v3', (storage) => {
   if (!storage.includes(seedStart)) throw new Error('[PERSISTENCE] localChatStorage init seed block not found');
   storage = storage.replace(seedStart, seedReplacement);
 
+  // Once LocalStorage has been initialized, it is the authoritative copy. This prevents
+  // a stale IndexedDB record from resurrecting something the owner deleted.
+  storage = storage.replace(
+    "          const localList = getFromLocalStorage<Conversation[]>(LS_KEYS.CONVERSATIONS, []);\n\n          const map = new Map<string, Conversation>();",
+    "          const localList = getFromLocalStorage<Conversation[]>(LS_KEYS.CONVERSATIONS, []);\n          if (localStorage.getItem(LS_KEYS.CONVERSATIONS) !== null) {\n            resolve(localList.sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()));\n            return;\n          }\n\n          const map = new Map<string, Conversation>();"
+  );
+
   storage = storage.replace('const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES);', 'const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);');
   storage = storage.replace('resolve(combined.length > 0 ? combined : DEFAULT_MEMORIES);', 'resolve(combined);');
   storage = storage.replace('resolve(getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES));', 'resolve(getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []));');
   storage = storage.replace('return getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, DEFAULT_MEMORIES);', 'return getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);');
+  storage = storage.replace(
+    "          const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);\n\n          const map = new Map<string, Memory>();",
+    "          const localList = getFromLocalStorage<Memory[]>(LS_KEYS.MEMORIES, []);\n          if (localStorage.getItem(LS_KEYS.MEMORIES) !== null) {\n            resolve(localList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));\n            return;\n          }\n\n          const map = new Map<string, Memory>();"
+  );
 
   storage = storage.replace('const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE);', 'const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);');
   storage = storage.replace('resolve(combined.length > 0 ? combined : DEFAULT_PEOPLE);', 'resolve(combined);');
   storage = storage.replace('resolve(getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE));', 'resolve(getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []));');
   storage = storage.replace('return getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, DEFAULT_PEOPLE);', 'return getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);');
+  storage = storage.replace(
+    "          const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);\n\n          const map = new Map<string, Person>();",
+    "          const localList = getFromLocalStorage<Person[]>(LS_KEYS.PEOPLE, []);\n          if (localStorage.getItem(LS_KEYS.PEOPLE) !== null) {\n            resolve(localList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));\n            return;\n          }\n\n          const map = new Map<string, Person>();"
+  );
 
   return storage;
 });
