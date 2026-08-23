@@ -122,6 +122,30 @@ public class SmsSenderPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    // MKUU_AUTO_REPLY_KILLSWITCH_NATIVE_V1
+    // This is the same native SharedPreferences state consumed by SmsAutoReplyReceiver.
+    // The receiver checks this flag before processing every incoming SMS.
+    @com.getcapacitor.PluginMethod
+    public void getEmergencyStop(PluginCall call) {
+        android.content.SharedPreferences prefs = getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE);
+        JSObject ret = new JSObject();
+        ret.put("emergencyStop", prefs.getBoolean("emergencyStop", false));
+        call.resolve(ret);
+    }
+
+    @com.getcapacitor.PluginMethod
+    public void setEmergencyStop(PluginCall call) {
+        boolean emergencyStop = call.getBoolean("enabled", false);
+        getContext().getSharedPreferences("mkuu_autoreply", Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("emergencyStop", emergencyStop)
+                .apply();
+        JSObject ret = new JSObject();
+        ret.put("emergencyStop", emergencyStop);
+        ret.put("saved", true);
+        call.resolve(ret);
+    }
+
     @com.getcapacitor.PluginMethod
     public void sendSms(PluginCall call) {
         if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
