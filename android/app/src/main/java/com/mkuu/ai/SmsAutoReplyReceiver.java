@@ -22,14 +22,17 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-/** Receives every incoming SMS and sends the configured MKUU auto-reply using the selected SIM. */
+/**
+ * Manifest-declared SMS receiver. Android starts this component for SMS_RECEIVED even
+ * when the MKUU AI activity/process is not open. The reply is sent natively without
+ * depending on the WebView, React, or a running foreground screen.
+ */
 public class SmsAutoReplyReceiver extends BroadcastReceiver {
     private static final String PREFS = "mkuu_autoreply";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_EMERGENCY_STOP = "emergencyStop";
     private static final String KEY_AUTO_REPLY_SUBSCRIPTION_ID = "autoReplySubscriptionId";
     private static final String BACKEND_CHAT_URL = "https://mkuu-al-3.onrender.com/api/chat";
-    // Every incoming SMS gets this fixed reply; there is no keyword/sender filter.
     private static final String FIXED_AUTO_REPLY = "Habari, mimi ni MKUU AI, msaidizi wa Boss Max. Kwa sasa yupo busy, atakutafuta akiwa free. Asante.";
 
     @Override
@@ -41,66 +44,62 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         if (context.checkSelfPermission(Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED
                 || context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
-        Bundle bundle = intent.getExtras();
-        if (bundle == null) return;
-        Object[] pdus = (Object[]) bundle.get("pdus");
-        if (pdus == null || pdus.length == 0) return;
+        final SmsMessage[] messages;
+        try {
+            messages = Telephony.Sms.Intents.getMessagesFromIntent(intent);
+        } catch (Exception error) {
+            android.util.Log.e("MKUU_SMS", "Could not decode incoming SMS broadcast", error);
+            return;
+        }
+        if (messages == null || messages.length == 0) return;
 
-        String format = bundle.getString("format");
         String sender = "";
-        for (Object pdu : pdus) {
-            try {
-                SmsMessage sms = format == null
-                        ? SmsMessage.createFromPdu((byte[]) pdu)
-                        : SmsMessage.createFromPdu((byte[]) pdu, format);
-                if (sms != null && sender.isEmpty() && sms.getOriginatingAddress() != null) {
-                    sender = sms.getOriginatingAddress();
-                }
-            } catch (Exception e) {
-                android.util.Log.w("MKUU_SMS", "Could not decode SMS part", e);
+        for (SmsMessage sms : messages) {
+            if (sms != null && sms.getOriginatingAddress() != null && !sms.getOriginatingAddress().trim().isEmpty()) {
+                sender = sms.getOriginatingAddress().trim();
+                break;
             }
         }
+        if (sender.isEmpty()) return;
 
-        final String from = sender.trim();
-        // Do not inspect or filter the SMS text. Any SMS with a valid sender is eligible.
-        if (from.isEmpty()) return;
-
+        // Keep the receiver alive while the short native SMS send is completed.
         final PendingResult pendingResult = goAsync();
-        Context appContext = context.getApplicationContext();
-        PowerManager powerManager = (PowerManager) appContext.getSystemService(Context.POWER_SERVICE);
-        PowerManager.WakeLock wakeLock = powerManager == null ? null
+        final Context appContext = context.getApplicationContext();
+        final PowerManager powerManager = (PowerManager) appContext.getSystemService(Context.POWER_SERVICE);
+        final PowerManager.WakeLock wakeLock = powerManager == null ? null
                 : powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MKUU:SmsAutoReply");
         if (wakeLock != null) {
             wakeLock.setReferenceCounted(false);
-            wakeLock.acquire(15000L);
+            wakeLock.acquire(10000L);
         }
 
+        final String recipient = sender;
         new Thread(() -> {
             try {
-                String text = cleanSmsReply(FIXED_AUTO_REPLY);
-                if (text.isEmpty()) return;
                 if (appContext.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return;
 
+                // Only the SIM explicitly selected by the owner is allowed. Never fall back to SIM 1.
                 int selectedSubscriptionId = prefs.getInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, -1);
-                // Never silently fall back to SIM 1. Use only the SIM explicitly selected by the owner.
                 if (selectedSubscriptionId < 0) {
-                    android.util.Log.w("MKUU_SMS", "Auto Reply skipped: no SIM has been selected by the owner.");
+                    android.util.Log.w("MKUU_SMS", "Auto Reply skipped: no SIM selected by owner");
                     return;
                 }
-                SmsManager smsManager = SmsManager.getSmsManagerForSubscriptionId(selectedSubscriptionId);
 
+                SmsManager smsManager = SmsManager.getSmsManagerForSubscriptionId(selectedSubscriptionId);
+                String text = cleanSmsReply(FIXED_AUTO_REPLY);
                 if (text.length() <= 160) {
-                    smsManager.sendTextMessage(from, null, text, null, null);
+                    smsManager.sendTextMessage(recipient, null, text, null, null);
                 } else {
-                    smsManager.sendMultipartTextMessage(from, null, smsManager.divideMessage(text), null, null);
+                    smsManager.sendMultipartTextMessage(recipient, null, smsManager.divideMessage(text), null, null);
                 }
-            } catch (Exception e) {
-                android.util.Log.e("MKUU_SMS", "SMS auto reply failed", e);
+                android.util.Log.i("MKUU_SMS", "Background auto-reply sent to " + recipient + " using subscription " + selectedSubscriptionId);
+            } catch (Exception error) {
+                android.util.Log.e("MKUU_SMS", "Background SMS auto reply failed", error);
             } finally {
                 if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
                 pendingResult.finish();
             }
-        }, "mkuu-sms-reply").start();
+        }, "mkuu-sms-background-reply").start();
     }
 
     private static String cleanSmsReply(String reply) {
@@ -112,7 +111,8 @@ public class SmsAutoReplyReceiver extends BroadcastReceiver {
         return text.trim();
     }
 
-    // Kept available for the existing server-backed SMS flow; auto-reply itself uses the fixed owner message above.
+    // Kept available for the existing server-backed SMS flow; the automatic background
+    // reply above intentionally does not depend on the network or Gemini/WebView.
     @SuppressWarnings("unused")
     private static String requestMkuuReply(String sender, String smsText) throws Exception {
         HttpURLConnection connection = null;
