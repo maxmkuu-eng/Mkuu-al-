@@ -1,6 +1,7 @@
 /** MKUU AI production API configuration. */
-// Faable serves the React app and Express API from the same production origin.
-// Native Android uses the absolute Faable URL; web uses the current origin.
+// Faable hosts the production Express backend at the same public deployment URL.
+// Use the explicit Faable URL for both web and native clients so API calls never
+// fall back to a stale/custom origin or a frontend-only route.
 export const DEFAULT_PUBLIC_BACKEND_URL = 'https://mkuu-al-7ejzi.faable.link';
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
 export const STORAGE_SERVER_KEY_CUSTOM = 'mkuu_backend_api_url_v1';
@@ -17,14 +18,11 @@ export function isCapacitorNative(): boolean {
   const cap=(window as any).Capacitor;
   return !!(cap?.isNativePlatform?.() || window.location.protocol==='capacitor:' || window.location.protocol==='file:' || (window.location.hostname==='localhost'&&!window.location.port));
 }
+
 export function getApiBaseUrl(): string {
-  if (typeof window === 'undefined') return DEFAULT_PUBLIC_BACKEND_URL;
-  if (isCapacitorNative()) return DEFAULT_PUBLIC_BACKEND_URL;
-  // Never reuse a stale Render/custom URL in the production web build.
-  const env=(import.meta as any).env?.VITE_PUBLIC_API_URL;
-  if(typeof env==='string'&&env.trim().startsWith('http')) return env.trim().replace(/\/+$/,'');
-  return window.location.origin;
+  return DEFAULT_PUBLIC_BACKEND_URL;
 }
+
 export const PRODUCTION_API_BASE_URL=DEFAULT_PUBLIC_BACKEND_URL;
 export function getRemoteServerUrl(){return getApiBaseUrl();}
 export function setRemoteServerUrl(url:string){if(typeof window==='undefined')return;if(!url?.trim())localStorage.removeItem(STORAGE_SERVER_URL_KEY);else localStorage.setItem(STORAGE_SERVER_URL_KEY,url.trim().replace(/\/+$/,''));}
