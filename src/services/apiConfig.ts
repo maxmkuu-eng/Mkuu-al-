@@ -1,5 +1,8 @@
 /** MKUU AI production API configuration. */
-export const DEFAULT_PUBLIC_BACKEND_URL = 'https://mkuu-al-3.onrender.com';
+// Faable serves the React app and Express API from the same production origin.
+// Keep the absolute URL for Capacitor/Android, while web can also resolve /api/*
+// against the current Faable origin.
+export const DEFAULT_PUBLIC_BACKEND_URL = 'https://mkuu-al-7ejzi.faable.link';
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
 export const STORAGE_SERVER_KEY_CUSTOM = 'mkuu_backend_api_url_v1';
 
@@ -22,7 +25,9 @@ export function getApiBaseUrl(): string {
   if(custom?.trim().startsWith('http')) return custom.trim().replace(/\/+$/,'');
   const env=(import.meta as any).env?.VITE_PUBLIC_API_URL;
   if(typeof env==='string'&&env.trim().startsWith('http')) return env.trim().replace(/\/+$/,'');
-  return DEFAULT_PUBLIC_BACKEND_URL;
+  // Same-origin production web fallback. This avoids stale Render URLs and
+  // keeps the browser on the exact Faable deployment serving the UI.
+  return window.location.origin;
 }
 export const PRODUCTION_API_BASE_URL=DEFAULT_PUBLIC_BACKEND_URL;
 export function getRemoteServerUrl(){return getApiBaseUrl();}
@@ -46,15 +51,7 @@ export async function apiFetch<T>(endpoint:string,options?:RequestInit,timeoutMs
       if(ct.includes('application/json')){try{body=await r.json();}catch{body={};}}else{body=await r.text();}
       if(!r.ok){
         const detail=typeof body==='string'?body:(body?.message||body?.error||`HTTP ${r.status}`);
-        if(isImageEndpoint){
-          throw new MkuuApiError({
-            code:'IMAGE_GENERATION_FAILED',
-            status:r.status,
-            userMessage:'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali hakikisha Image Studio imeunganishwa na jaribu tena.',
-            technicalDetails:String(detail),
-            targetUrl:url,
-          });
-        }
+        if(isImageEndpoint)throw new MkuuApiError({code:'IMAGE_GENERATION_FAILED',status:r.status,userMessage:'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali hakikisha Image Studio imeunganishwa na jaribu tena.',technicalDetails:String(detail),targetUrl:url});
         throw new MkuuApiError({code:r.status===429||r.status===503?'GEMINI_UNAVAILABLE':'BACKEND_UNREACHABLE',status:r.status,userMessage:r.status===429||r.status===503?'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:String(detail),targetUrl:url});
       }
       return body as T;
