@@ -6,6 +6,7 @@ const path = require('path');
 const file = path.join(process.cwd(), 'server', 'geminiService.ts');
 let source = fs.readFileSync(file, 'utf8');
 source = source.replace(/import \{ searchWithTavily \} from '\.\/tavilySearch\.js';\n/, '');
+source = source.replace("export const LIVE_SEARCH_MODEL = 'gemini-3.6-flash';", "export const LIVE_SEARCH_MODEL = PERSONAL_CHAT_MODEL;");
 source = source.replace(/\/\/ Live-search path:[^\n]*/g, '// Live-search path: Gemini native Google Search grounding');
 
 const start = source.indexOf('    if (isSearchQuery) {');
