@@ -24,7 +24,7 @@ replaceOnce(gemini,
   'Gemini 90s upstream timeout');
 replaceOnce(gemini,
   "const response = await client.models.generateContent({ model, contents: params.contents, config: params.config });",
-  "const response = await Promise.race([\n          client.models.generateContent({ model, contents: params.contents, config: params.config }),\n          new Promise((_, reject) => setTimeout(() => reject(new Error(`Gemini request timeout after 90000ms (${model})`)), 90000)),\n        ]);",
+  "const response = await Promise.race([\n          client.models.generateContent({ model, contents: params.contents, config: params.config }),\n          new Promise((_, reject) => setTimeout(() => reject(new Error(`Gemini request timeout after 90000ms (${model})`)), 90000)),\n        ]) as any;",
   'Gemini request timeout guard');
 
 const client = 'src/services/aiEngine.ts';
