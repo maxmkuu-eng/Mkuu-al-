@@ -31,7 +31,7 @@ const replacement = `async function streamServerChat(params:ChatEngineParams):Pr
    await new Promise(resolve=>setTimeout(resolve,28));
  }
  emitStream('',true);
- return {reply,cleanSpeechText:serverRes.cleanSpeechText||reply.replace(/[#*\\`_~[\\]()]/g,' ').replace(/\\s+/g,' ').trim(),memoriesExtracted:serverRes.memoriesExtracted,peopleRecognized:serverRes.peopleRecognized,generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:serverRes.aiProvider||'Google Gemini',chatModel:serverRes.chatModel||'gemini-3.7-flash',intent:serverRes.intent||'chat'};
+ return {reply,cleanSpeechText:serverRes.cleanSpeechText||reply.replace(/[#*_~[\\]()]/g,' ').replace(/\\s+/g,' ').trim(),memoriesExtracted:serverRes.memoriesExtracted,peopleRecognized:serverRes.peopleRecognized,generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:serverRes.aiProvider||'Google Gemini',chatModel:serverRes.chatModel||'gemini-3.7-flash',intent:serverRes.intent||'chat'};
 }
 `;
 
