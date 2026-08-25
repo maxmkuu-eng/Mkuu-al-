@@ -29,7 +29,7 @@ const replacement = `    if (isSearchQuery) {
       // LIVE WEB SEARCH: Gemini native Google Search grounding only.
       try {
         console.log('[MKUU-BACKEND] [GOOGLE_SEARCH_STARTED] Gemini native Google Search grounding.');
-        const livePrompt = \`${systemPrompt}\\n\\nLIVE WEB SEARCH RULES:\\n- Use Google Search grounding for current-information questions.\\n- Prefer the newest credible evidence and verify dates.\\n- Do not rely on stale model memory when web evidence is available.\\n- For current public officials, use the newest authoritative source.\\n- For sports, verify the latest result or fixture and exact event date.\\n- If sources conflict, briefly explain and prefer the newest authoritative source.\\n- Never invent names, scores, dates, prices, or events.\\n- Current Tanzania server time: ${getCurrentTanzaniaTimeContext().formattedString}\`;
+        const livePrompt = \`\${systemPrompt}\\n\\nLIVE WEB SEARCH RULES:\\n- Use Google Search grounding for current-information questions.\\n- Prefer the newest credible evidence and verify dates.\\n- Do not rely on stale model memory when web evidence is available.\\n- For current public officials, use the newest authoritative source.\\n- For sports, verify the latest result or fixture and exact event date.\\n- If sources conflict, briefly explain and prefer the newest authoritative source.\\n- Never invent names, scores, dates, prices, or events.\\n- Current Tanzania server time: \${getCurrentTanzaniaTimeContext().formattedString}\`;
         const groundedContents = this.buildConversationHistory(conversationHistory, message, attachments);
         aiReplyText = await this.executeGeminiCallWithFallback({
           contents: groundedContents,
