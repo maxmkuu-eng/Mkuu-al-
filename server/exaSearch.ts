@@ -1,16 +1,25 @@
-export interface ExaSearchResult {
-  title: string;
+export interface ExaCitation {
+  title?: string;
   url: string;
   publishedDate?: string;
   author?: string;
-  text?: string;
 }
 
+export interface ExaAnswerResponse {
+  answer?: string;
+  citations?: ExaCitation[];
+}
+
+/**
+ * Exclusive live-search provider for MKUU.
+ * Exa /answer performs the web retrieval and answer synthesis itself.
+ * Gemini is deliberately NOT called on this path.
+ */
 export async function searchWithExa(query: string): Promise<string> {
   const apiKey = process.env.EXA_API_KEY;
   if (!apiKey) throw new Error('EXA_API_KEY is not configured on MKUU Backend.');
 
-  const response = await fetch('https://api.exa.ai/search', {
+  const response = await fetch('https://api.exa.ai/answer', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -18,11 +27,10 @@ export async function searchWithExa(query: string): Promise<string> {
     },
     body: JSON.stringify({
       query,
-      type: 'fast',
-      numResults: 8,
-      contents: { text: { maxCharacters: 4000 } },
+      text: true,
+      model: 'exa',
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!response.ok) {
@@ -30,16 +38,20 @@ export async function searchWithExa(query: string): Promise<string> {
     throw new Error(`EXA_SEARCH_FAILED: HTTP ${response.status}${body ? ` - ${body.slice(0, 300)}` : ''}`);
   }
 
-  const data = await response.json() as { results?: ExaSearchResult[] };
-  const results = Array.isArray(data.results) ? data.results : [];
-  if (!results.length) throw new Error('EXA_SEARCH_EMPTY: Exa returned no search results.');
+  const data = await response.json() as ExaAnswerResponse;
+  const answer = typeof data.answer === 'string' ? data.answer.trim() : '';
+  if (!answer) throw new Error('EXA_SEARCH_EMPTY: Exa returned no answer.');
 
-  return results.map((item, index) => {
-    const title = (item.title || 'Untitled').trim();
-    const url = (item.url || '').trim();
-    const published = item.publishedDate ? `\nPublished: ${item.publishedDate}` : '';
-    const author = item.author ? `\nAuthor: ${item.author}` : '';
-    const text = (item.text || '').trim();
-    return `[${index + 1}] ${title}\nURL: ${url}${published}${author}\n${text.slice(0, 4000)}`;
-  }).join('\n\n');
+  const citations = Array.isArray(data.citations) ? data.citations : [];
+  const sources = citations
+    .filter((item) => item?.url)
+    .slice(0, 8)
+    .map((item, index) => {
+      const title = (item.title || item.url).trim();
+      const date = item.publishedDate ? ` — ${item.publishedDate.slice(0, 10)}` : '';
+      return `[${index + 1}] ${title}${date}\n${item.url}`;
+    })
+    .join('\n\n');
+
+  return sources ? `${answer}\n\n### Sources\n${sources}` : answer;
 }
