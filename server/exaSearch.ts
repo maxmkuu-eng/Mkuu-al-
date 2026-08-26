@@ -13,11 +13,19 @@ export interface ExaAnswerResponse {
 /**
  * Exclusive live-search provider for MKUU.
  * Exa /answer performs the web retrieval and answer synthesis itself.
- * Gemini is deliberately NOT called on this path.
+ * Gemini and Tavily are deliberately NOT called on this path.
  */
 export async function searchWithExa(query: string): Promise<string> {
-  const apiKey = process.env.EXA_API_KEY;
-  if (!apiKey) throw new Error('EXA_API_KEY is not configured on MKUU Backend.');
+  // Faable's deployment log may display environment names with backticks.
+  // Accept both forms defensively, without ever logging the secret value.
+  const apiKey = (
+    process.env.EXA_API_KEY ||
+    process.env['`EXA_API_KEY`']
+  )?.trim();
+
+  if (!apiKey) {
+    throw new Error('EXA_API_KEY is not configured on MKUU Backend.');
+  }
 
   const response = await fetch('https://api.exa.ai/answer', {
     method: 'POST',
