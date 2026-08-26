@@ -31,6 +31,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(GallerySaverPlugin.class);
         registerPlugin(SmsSenderPlugin.class);
         super.onCreate(savedInstanceState);
+        // Do this independently of SMS permissions so MKUU appears in Android's
+        // battery/background controls even when SMS Auto Reply is not configured.
+        ensureSmsBackgroundAccess();
         requestSmsPermissions();
     }
 
@@ -39,11 +42,9 @@ public class MainActivity extends BridgeActivity {
         boolean send = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
         boolean phoneState = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
         if (!receive || !send || !phoneState) {
-            ActivityCompat.requestPermissions(
-                    this,
+            ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.RECEIVE_SMS, Manifest.permission.SEND_SMS, Manifest.permission.READ_PHONE_STATE},
-                    SMS_PERMISSION_REQUEST
-            );
+                    SMS_PERMISSION_REQUEST);
         } else {
             showAutoReplySimPicker();
         }
@@ -56,27 +57,19 @@ public class MainActivity extends BridgeActivity {
         boolean receiveGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED;
         boolean phoneStateGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
         boolean sendGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED;
-        if (receiveGranted && phoneStateGranted && sendGranted) {
-            showAutoReplySimPicker();
-        } else {
-            android.util.Log.w("MKUU_SMS", "Auto Reply requires RECEIVE_SMS, SEND_SMS and READ_PHONE_STATE permissions");
-        }
+        if (receiveGranted && phoneStateGranted && sendGranted) showAutoReplySimPicker();
+        else android.util.Log.w("MKUU_SMS", "Auto Reply requires RECEIVE_SMS, SEND_SMS and READ_PHONE_STATE permissions");
     }
 
     private void showAutoReplySimPicker() {
         try {
             SubscriptionManager manager = (SubscriptionManager) getSystemService(TELEPHONY_SUBSCRIPTION_SERVICE);
             List<SubscriptionInfo> infos = manager.getActiveSubscriptionInfoList();
-            if (infos == null || infos.isEmpty()) {
-                ensureSmsBackgroundAccess();
-                return;
-            }
-
+            if (infos == null || infos.isEmpty()) { ensureSmsBackgroundAccess(); return; }
             SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
             int savedId = prefs.getInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, -1);
             String[] labels = new String[infos.size()];
             int checked = 0;
-
             for (int i = 0; i < infos.size(); i++) {
                 SubscriptionInfo info = infos.get(i);
                 String name = info.getDisplayName() == null ? "SIM " + (info.getSimSlotIndex() + 1) : info.getDisplayName().toString();
@@ -84,7 +77,6 @@ public class MainActivity extends BridgeActivity {
                 labels[i] = name + (number.isEmpty() ? "" : " — " + number);
                 if (info.getSubscriptionId() == savedId) checked = i;
             }
-
             final int[] selected = {checked};
             new AlertDialog.Builder(this)
                     .setTitle("Line ya Auto Reply")
@@ -93,14 +85,10 @@ public class MainActivity extends BridgeActivity {
                     .setNegativeButton("Baadaye", null)
                     .setPositiveButton("Hifadhi", (dialog, which) -> {
                         SubscriptionInfo chosen = infos.get(selected[0]);
-                        prefs.edit()
-                                .putInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, chosen.getSubscriptionId())
-                                .putBoolean(KEY_ENABLED, true)
-                                .apply();
+                        prefs.edit().putInt(KEY_AUTO_REPLY_SUBSCRIPTION_ID, chosen.getSubscriptionId()).putBoolean(KEY_ENABLED, true).apply();
                         startSmsAutoReplyService();
                         ensureSmsBackgroundAccess();
-                    })
-                    .show();
+                    }).show();
         } catch (SecurityException e) {
             android.util.Log.w("MKUU_SMS", "SIM list unavailable without phone permission", e);
         } catch (Exception e) {
@@ -111,29 +99,26 @@ public class MainActivity extends BridgeActivity {
     private void startSmsAutoReplyService() {
         try {
             Intent serviceIntent = new Intent(this, SmsAutoReplyService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent);
-            } else {
-                startService(serviceIntent);
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent);
+            else startService(serviceIntent);
         } catch (Exception error) {
             android.util.Log.e("MKUU_SMS", "Could not start persistent SMS auto-reply service", error);
         }
     }
 
     /**
-     * SMS auto-reply must be allowed to run while the screen is off. Ask once through
-     * Android's battery-optimization UI when Doze/App Standby restrictions apply.
+     * Request Android's battery-optimization exemption directly on first launch.
+     * Previously this was reached only through the SMS/SIM setup path, which meant
+     * a normal MKUU installation never appeared in battery/background controls.
      */
     private void ensureSmsBackgroundAccess() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         try {
             PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
             if (powerManager == null || powerManager.isIgnoringBatteryOptimizations(getPackageName())) return;
-
             new AlertDialog.Builder(this)
-                    .setTitle("Auto Reply ya SMS")
-                    .setMessage("Ili MKUU AI ijibu SMS hata ukiwa nje ya app au screen ikiwa imezimwa, ruhusu MKUU AI kufanya Auto Reply bila battery optimization kuizuia.")
+                    .setTitle("MKUU AI — Background Access")
+                    .setMessage("Ili MKUU AI iendelee kufanya kazi ukiwa kwenye app nyingine au screen ikiwa imezimwa, ruhusu MKUU AI kutotumia battery optimization.")
                     .setNegativeButton("Baadaye", null)
                     .setPositiveButton("Ruhusu", (dialog, which) -> {
                         try {
@@ -141,17 +126,13 @@ public class MainActivity extends BridgeActivity {
                             intent.setData(Uri.parse("package:" + getPackageName()));
                             startActivity(intent);
                         } catch (Exception error) {
-                            android.util.Log.w("MKUU_SMS", "Direct battery optimization request unavailable", error);
-                            try {
-                                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-                            } catch (Exception ignored) {
-                                android.util.Log.w("MKUU_SMS", "Battery optimization settings unavailable", ignored);
-                            }
+                            android.util.Log.w("MKUU_BACKGROUND", "Direct battery optimization request unavailable", error);
+                            try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+                            catch (Exception ignored) { android.util.Log.w("MKUU_BACKGROUND", "Battery optimization settings unavailable", ignored); }
                         }
-                    })
-                    .show();
+                    }).show();
         } catch (Exception error) {
-            android.util.Log.w("MKUU_SMS", "Could not check battery optimization state", error);
+            android.util.Log.w("MKUU_BACKGROUND", "Could not check battery optimization state", error);
         }
     }
 }
