@@ -18,21 +18,12 @@ function swNumber(n: number): string {
 
 function normalizeDatesAndNumbers(text: string): string {
   let out = text;
-  // Remove source/citation markers such as [1], [2], [7] so they are never spoken.
   out = out.replace(/\[\d+(?:,\s*\d+)*\]/g, ' ');
-  // Month-name dates: "Agosti 2, 2026" -> "Agosti mbili mwaka elfu mbili ishirini na sita".
   const monthPattern = MONTH_NAMES.join('|');
   out = out.replace(new RegExp(`\\b(${monthPattern})\\s+(\\d{1,2}),?\\s+(20\\d{2})\\b`, 'gi'), (_m, month, day, year) => `${month} ${swNumber(Number(day))} mwaka ${swNumber(Number(year))}`);
-  // ISO dates / YYYY-MM-DD -> natural Swahili date, avoiding digit-by-digit speech.
-  out = out.replace(/\b(20\d{2})[-\/](\d{1,2})[-\/](\d{1,2})\b/g, (_m, y, m, d) => {
-    const year = Number(y), month = String(m).padStart(2,'0'), day = Number(d);
-    return `${swNumber(day)} ${MONTHS[month] || month} mwaka ${swNumber(year)}`;
-  });
-  // Common DD/MM/YYYY and DD-MM-YYYY forms.
+  out = out.replace(/\b(20\d{2})[-\/](\d{1,2})[-\/](\d{1,2})\b/g, (_m, y, m, d) => `${swNumber(Number(d))} ${MONTHS[String(m).padStart(2,'0')] || m} mwaka ${swNumber(Number(y))}`);
   out = out.replace(/\b(\d{1,2})[-\/](\d{1,2})[-\/](20\d{2})\b/g, (_m, d, m, y) => `${swNumber(Number(d))} ${MONTHS[String(m).padStart(2,'0')] || m} mwaka ${swNumber(Number(y))}`);
-  // Standalone four-digit years such as 2026.
   out = out.replace(/\b(20\d{2})\b/g, (m) => swNumber(Number(m)));
-  // Avoid reading ordinary numeric values digit-by-digit.
   out = out.replace(/\b\d{1,3}\b/g, (m) => swNumber(Number(m)));
   return out;
 }
@@ -82,26 +73,65 @@ function splitForNaturalSpeech(text: string, fallback: 'sw-TZ' | 'en-US'): Speec
       if (body.trim()) chunks.push({ text: body.trim(), lang: detectLanguage(body, fallback) });
       chunks.push({ text: sourceName.trim(), lang: 'en-US' });
       if (datePart.trim()) chunks.push({ text: datePart.trim(), lang: 'sw-TZ' });
-    } else if (line) {
-      chunks.push({ text: line, lang: detectLanguage(line, fallback) });
-    }
+    } else if (line) chunks.push({ text: line, lang: detectLanguage(line, fallback) });
   }
   return chunks;
 }
 
-async function nativeSpeak(text: string, lang: 'sw-TZ' | 'en-US'): Promise<void> {
-  await TextToSpeech.speak({ text, lang, rate: lang === 'sw-TZ' ? 0.9 : 0.98, pitch: 1.0, volume: 1.0, category: 'playback' });
+// One global speech session. A new request invalidates every older request,
+// preventing queued/duplicated speech and making Stop authoritative.
+let speechGeneration = 0;
+
+async function nativeSpeak(text: string, lang: 'sw-TZ' | 'en-US', generation: number): Promise<void> {
+  if (generation !== speechGeneration) return;
+  try {
+    await TextToSpeech.speak({ text, lang, rate: lang === 'sw-TZ' ? 0.9 : 0.98, pitch: 1.0, volume: 1.0, category: 'playback' });
+  } catch (error) {
+    if (generation === speechGeneration) throw error;
+  }
 }
-export async function stopSmartSpeech(): Promise<void> { try { await TextToSpeech.stop(); } catch {} if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel(); }
+
+export async function stopSmartSpeech(): Promise<void> {
+  // Increment first so any pending speakSmart loop becomes stale immediately.
+  speechGeneration += 1;
+  try { await TextToSpeech.stop(); } catch {}
+  try {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  } catch {}
+}
+
 export async function speakSmart(text: string, fallback: 'sw-TZ' | 'en-US' = 'sw-TZ'): Promise<void> {
-  const clean = sanitizeSpeechText(text); if (!clean) return;
-  const chunks = splitForNaturalSpeech(clean, fallback);
-  if (Capacitor.isNativePlatform()) { for (const chunk of chunks) await nativeSpeak(chunk.text, chunk.lang); return; }
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  const clean = sanitizeSpeechText(text);
+  if (!clean) return;
   await stopSmartSpeech();
-  for (const chunk of chunks) await new Promise<void>(resolve => {
-    const u = new SpeechSynthesisUtterance(chunk.text); u.lang = chunk.lang; u.rate = chunk.lang === 'sw-TZ' ? 0.92 : 1.0; u.pitch = 1.0;
-    const voices = window.speechSynthesis.getVoices(); const voice = voices.find(v=>v.lang.toLowerCase()===chunk.lang.toLowerCase()) || voices.find(v=>v.lang.toLowerCase().startsWith(chunk.lang.slice(0,2).toLowerCase())); if (voice) u.voice=voice;
-    u.onend=()=>resolve(); u.onerror=()=>resolve(); window.speechSynthesis.speak(u);
-  });
+  const generation = speechGeneration;
+  const chunks = splitForNaturalSpeech(clean, fallback);
+  if (!chunks.length) return;
+
+  if (Capacitor.isNativePlatform()) {
+    for (const chunk of chunks) {
+      if (generation !== speechGeneration) return;
+      await nativeSpeak(chunk.text, chunk.lang, generation);
+    }
+    return;
+  }
+
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  for (const chunk of chunks) {
+    if (generation !== speechGeneration) return;
+    await new Promise<void>(resolve => {
+      if (generation !== speechGeneration) return resolve();
+      const u = new SpeechSynthesisUtterance(chunk.text);
+      u.lang = chunk.lang;
+      u.rate = chunk.lang === 'sw-TZ' ? 0.92 : 1.0;
+      u.pitch = 1.0;
+      const voices = window.speechSynthesis.getVoices();
+      const voice = voices.find(v => v.lang.toLowerCase() === chunk.lang.toLowerCase()) || voices.find(v => v.lang.toLowerCase().startsWith(chunk.lang.slice(0, 2).toLowerCase()));
+      if (voice) u.voice = voice;
+      const finish = () => resolve();
+      u.onend = finish;
+      u.onerror = finish;
+      window.speechSynthesis.speak(u);
+    });
+  }
 }
