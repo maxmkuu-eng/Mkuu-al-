@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "node scripts/enable-gemini-live-search.cjs && node scripts/enable-real-streaming.cjs && node scripts/enable-fast-response.cjs && node scripts/enable-smart-share-export.cjs && node scripts/enable-image-gallery-share.cjs && node scripts/fix-live-search-intent.cjs && node scripts/fix-voice-controls.cjs && node scripts/fix-markdown-tables.cjs && node scripts/fix-persistent-user-data.cjs && node scripts/enable-stop-generation.cjs && node scripts/enable-notifications.cjs && node scripts/fix-apk-download.cjs && node scripts/enable-native-sms.cjs && node scripts/fix-sms-sim-selector.cjs && node scripts/enable-sms-screen.cjs && node scripts/enable-word-streaming.cjs && node scripts/fix-streaming-ui.cjs && node scripts/fix-production-stream.cjs && vite build && npx cap sync android && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "node scripts/enable-gemini-live-search.cjs && node scripts/enable-real-streaming.cjs && node scripts/enable-fast-response.cjs && node scripts/enable-smart-share-export.cjs && node scripts/enable-image-gallery-share.cjs && node scripts/fix-live-search-intent.cjs && node scripts/fix-voice-controls.cjs && node scripts/fix-markdown-tables.cjs && node scripts/fix-persistent-user-data.cjs && node scripts/enable-stop-generation.cjs && node scripts/enable-notifications.cjs && node scripts/fix-apk-download.cjs && node scripts/enable-native-sms.cjs && node scripts/fix-sms-sim-selector.cjs && node scripts/enable-sms-screen.cjs && node scripts/enable-word-streaming.cjs && node scripts/fix-streaming-ui.cjs && node scripts/fix-production-stream.cjs && node scripts/enable-exa-live-search.cjs && vite build && npx cap sync android && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -42,7 +42,6 @@
     "@types/node": "^22.14.0",
     "@types/express": "^4.17.21",
     "esbuild": "^0.25.0",
-    "tsx": "^4.21.0",
     "typescript": "~5.8.2"
   }
 }
