@@ -15,13 +15,35 @@ export interface ExaAnswerResponse {
  * Exa /answer performs the web retrieval and answer synthesis itself.
  * Gemini and Tavily are deliberately NOT called on this path.
  */
+function resolveExaApiKey(): string {
+  // Faable has shown EXA_API_KEY in deployment environment listings with
+  // surrounding backticks. Resolve the canonical name plus safely-normalized
+  // variants without ever logging the secret value.
+  const env = process.env as Record<string, string | undefined>;
+  const direct = [
+    env.EXA_API_KEY,
+    env['`EXA_API_KEY`'],
+    env['EXA_API_KEY '],
+    env[' EXA_API_KEY'],
+    env['"EXA_API_KEY"'],
+    env["'EXA_API_KEY'"],
+  ];
+
+  const normalized = Object.entries(env).find(([name, value]) => {
+    const normalizedName = name.trim().replace(/^['"`]+|['"`]+$/g, '').toUpperCase();
+    return normalizedName === 'EXA_API_KEY' && typeof value === 'string' && value.trim();
+  })?.[1];
+
+  const value = [...direct, normalized].find((item) => typeof item === 'string' && item.trim());
+  if (!value) return '';
+
+  // Also tolerate accidental quoting around the value when entered in a
+  // deployment dashboard. Never print this value to logs.
+  return value.trim().replace(/^['"`]+|['"`]+$/g, '').trim();
+}
+
 export async function searchWithExa(query: string): Promise<string> {
-  // Faable's deployment log may display environment names with backticks.
-  // Accept both forms defensively, without ever logging the secret value.
-  const apiKey = (
-    process.env.EXA_API_KEY ||
-    process.env['`EXA_API_KEY`']
-  )?.trim();
+  const apiKey = resolveExaApiKey();
 
   if (!apiKey) {
     throw new Error('EXA_API_KEY is not configured on MKUU Backend.');
