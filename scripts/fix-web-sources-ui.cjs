@@ -16,6 +16,7 @@ if (!appSource.includes('webSources: chatResult.webSources')) {
 
 // -----------------------------------------------------------------------------
 // 2) Carry Exa sources from the backend response into ChatEngineResult.
+// This supports both the older SSE client and the current JSON/word-reveal path.
 // -----------------------------------------------------------------------------
 const engineFile = path.join(process.cwd(), 'src/services/aiEngine.ts');
 let engineSource = fs.readFileSync(engineFile, 'utf8');
@@ -26,34 +27,77 @@ if (!engineSource.includes('webSources?: { title: string; url: string }[];')) {
   engineSource = engineSource.replace(resultMarker, resultMarker + " webSources?: { title: string; url: string }[];");
 }
 
+// Native /api/chat path.
 if (!engineSource.includes('webSources:serverRes.webSources||[]')) {
   const nativeMarker = "generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:";
-  if (!engineSource.includes(nativeMarker)) throw new Error('MKUU: Native server web-sources insertion point not found.');
-  engineSource = engineSource.replace(nativeMarker, "generatedFiles:serverRes.generatedFiles,webSources:serverRes.webSources||[],engineUsed:'server',aiProvider:");
+  if (engineSource.includes(nativeMarker)) {
+    engineSource = engineSource.replace(nativeMarker, "generatedFiles:serverRes.generatedFiles,webSources:serverRes.webSources||[],engineUsed:'server',aiProvider:");
+  }
 }
 
-if (!engineSource.includes('let webSources:{title:string;url:string}[]=[];')) {
-  const streamMarker = "let buffer='';let reply='';emitStream('',false);";
-  if (!engineSource.includes(streamMarker)) throw new Error('MKUU: Streaming web-sources insertion point not found.');
-  engineSource = engineSource.replace(streamMarker, "let buffer='';let reply='';let webSources:{title:string;url:string}[]=[];emitStream('',false);");
+// Current production stream is actually JSON /api/chat with a word-by-word UI reveal.
+// Do not require an SSE insertion point here; that implementation was intentionally removed.
+const streamStartMarker = 'async function streamServerChat(params:ChatEngineParams):Promise<ChatEngineResult>{';
+const streamEndMarker = 'export async function executeMkuuChat';
+const streamStart = engineSource.indexOf(streamStartMarker);
+const streamEnd = engineSource.indexOf(streamEndMarker, streamStart);
+if (streamStart !== -1 && streamEnd !== -1) {
+  let streamSource = engineSource.slice(streamStart, streamEnd);
+
+  if (!streamSource.includes('const webSources:Array<{title:string;url:string}>')) {
+    const jsonReplyMarker = "const reply=String(serverRes?.reply||'');";
+    if (streamSource.includes(jsonReplyMarker)) {
+      streamSource = streamSource.replace(
+        jsonReplyMarker,
+        "const webSources:Array<{title:string;url:string}>=Array.isArray(serverRes?.webSources)?serverRes.webSources:[];\n const reply=String(serverRes?.reply||'');",
+      );
+    } else {
+      const sseMarker = "let buffer='';let reply='';emitStream('',false);";
+      if (streamSource.includes(sseMarker)) {
+        streamSource = streamSource.replace(
+          sseMarker,
+          "let buffer='';let reply='';let webSources:Array<{title:string;url:string}>=[];emitStream('',false);",
+        );
+        const eventMarker = "if(payload.type==='delta'&&payload.text){reply+=payload.text;emitStream(payload.text,false);}if(payload.type==='error')";
+        if (streamSource.includes(eventMarker)) {
+          streamSource = streamSource.replace(
+            eventMarker,
+            "if(payload.type==='delta'&&payload.text){reply+=payload.text;emitStream(payload.text,false);}if(payload.type==='done'&&Array.isArray(payload.webSources))webSources=payload.webSources;if(payload.type==='error')",
+          );
+        }
+      }
+    }
+  }
+
+  if (!streamSource.includes('webSources,engineUsed:')) {
+    const returnMarker = "generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:";
+    if (streamSource.includes(returnMarker)) {
+      streamSource = streamSource.replace(
+        returnMarker,
+        "generatedFiles:serverRes.generatedFiles,webSources,engineUsed:'server',aiProvider:",
+      );
+    }
+  }
+
+  if (!streamSource.includes('webSources};') && streamSource.includes('let webSources:Array<{title:string;url:string}>')) {
+    const oldSseReturn = "chatModel:'gemini-3.7-flash',intent:'chat'};}";
+    if (streamSource.includes(oldSseReturn)) {
+      streamSource = streamSource.replace(
+        oldSseReturn,
+        "chatModel:'gemini-3.7-flash',intent:'chat',webSources};}",
+      );
+    }
+  }
+
+  engineSource = engineSource.slice(0, streamStart) + streamSource + engineSource.slice(streamEnd);
+} else {
+  console.warn('MKUU: streamServerChat function not found; preserving current chat engine implementation.');
 }
 
-if (!engineSource.includes("if(payload.type==='done'&&Array.isArray(payload.webSources))webSources=payload.webSources;")) {
-  const streamEventMarker = "if(payload.type==='delta'&&payload.text){reply+=payload.text;emitStream(payload.text,false);}if(payload.type==='error')";
-  if (!engineSource.includes(streamEventMarker)) throw new Error('MKUU: Streaming event insertion point not found.');
-  engineSource = engineSource.replace(streamEventMarker, "if(payload.type==='delta'&&payload.text){reply+=payload.text;emitStream(payload.text,false);}if(payload.type==='done'&&Array.isArray(payload.webSources))webSources=payload.webSources;if(payload.type==='error')");
-}
-
-if (!engineSource.includes("chatModel:'gemini-3.7-flash',intent:'chat',webSources")) {
-  const streamReturnMarker = "engineUsed:'server',aiProvider:'Google Gemini',chatModel:'gemini-3.7-flash',intent:'chat'};}\nexport async function executeMkuuChat";
-  if (!engineSource.includes(streamReturnMarker)) throw new Error('MKUU: Streaming return web-sources insertion point not found.');
-  engineSource = engineSource.replace(streamReturnMarker, "engineUsed:'server',aiProvider:'Google Gemini',chatModel:'gemini-3.7-flash',intent:'chat',webSources};}\nexport async function executeMkuuChat");
-}
 fs.writeFileSync(engineFile, engineSource);
 
 // -----------------------------------------------------------------------------
 // 3) Expose structured Exa citations from /api/chat and /api/chat/stream.
-// enable-exa-live-search.cjs adds webSources to GeminiService's result.
 // -----------------------------------------------------------------------------
 const serverFile = path.join(process.cwd(), 'server.ts');
 let serverSource = fs.readFileSync(serverFile, 'utf8');
@@ -77,8 +121,8 @@ if (source.includes('id="mkuu-web-sources"')) {
 
 const marker = '<div className="flex items-center space-x-3 px-2 text-[10px] text-[#888888]"><span>MKUU AI • {new Date(msg.timestamp).toLocaleTimeString([], { hour: \'2-digit\', minute: \'2-digit\' })}</span>';
 if (!source.includes(marker)) {
-  console.error('MKUU: Web sources UI insertion point not found.');
-  process.exit(1);
+  console.error('MKUU: Web sources UI insertion point not found; preserving current ChatView.');
+  process.exit(0);
 }
 
 const block = `{msg.webSources && msg.webSources.length > 0 && <div id="mkuu-web-sources" className="mt-4 pt-3 border-t border-[#222222] not-italic font-sans w-full"><div className="flex items-center justify-between mb-2.5"><span className="text-[11px] font-bold text-[#D4AF37] uppercase tracking-wider">Vyanzo</span><span className="text-[9px] text-[#666666] uppercase tracking-wider">{msg.webSources.length} source{msg.webSources.length === 1 ? '' : 's'}</span></div><div className="space-y-2">{msg.webSources.map((source, idx) => <a key={idx} href={source.url} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-3 p-2.5 rounded-xl bg-[#111111]/80 border border-[#222222] hover:border-[#D4AF37]/40 hover:bg-white/[0.03] transition-colors no-underline"><span className="w-7 h-7 rounded-lg bg-[#D4AF37]/10 border border-[#D4AF37]/25 text-[#D4AF37] flex items-center justify-center text-[11px] font-bold flex-shrink-0">{idx + 1}</span><span className="min-w-0 flex-1"><span className="block text-[11px] font-semibold text-[#F5F2ED] group-hover:text-[#D4AF37] truncate">{source.title || source.url}</span><span className="block text-[9px] text-[#666666] truncate mt-0.5">{source.url.replace(/^https?:\\/\\//, '').split('/')[0]}</span></span><span className="text-[#666666] group-hover:text-[#D4AF37] text-sm flex-shrink-0">↗</span></a>)}</div></div>}`;
