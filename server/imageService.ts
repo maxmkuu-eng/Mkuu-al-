@@ -2,86 +2,90 @@ import { GeneratedFileSummary } from './db.js';
 import { generateRealFile } from './files.js';
 
 // MKUU IMAGE STUDIO
-// Provider: PixelAPI. No browser SDK, Puter popup, or user login.
-export const PRIMARY_IMAGE_MODEL = 'PixelAPI Image Studio';
-export const EDIT_IMAGE_MODEL = 'PixelAPI /v1/image/edit';
+// Provider: Sikasio Image Gen API.
+// Text-to-image generation is handled server-side; the API key is never exposed to the client.
+export const PRIMARY_IMAGE_MODEL = 'Sikasio Image Gen (flash)';
+export const EDIT_IMAGE_MODEL = 'Sikasio Image Gen (generation only)';
 
 export interface ProcessImageParams { userId: string; prompt: string; attachments?: Array<{ filename: string; fileType: string; mimeType: string; size?: number; base64Data?: string; }>; }
 export interface ImageProcessResult { file: GeneratedFileSummary; explanation: string; modelUsed: string; }
 
-const BASE_URL = 'https://api.pixelapi.dev';
-function getApiKey(): string { return (process.env.PIXELAPI_API_KEY || '').trim(); }
-function stripDataUrl(value: string): string { const comma = value.indexOf(','); return comma >= 0 ? value.slice(comma + 1) : value; }
-function toDataUri(base64: string, mimeType = 'image/png'): string { return base64.startsWith('data:') ? base64 : `data:${mimeType};base64,${base64}`; }
+const BASE_URL = 'https://img-gen-api.sikasio.com';
+const MODEL = 'flash';
 
-function makePrompt(prompt: string, hasImage: boolean, isBgRemoval: boolean, isObjectRemoval: boolean, isClothingChange: boolean, isHd: boolean): string {
-  const requested = String(prompt || '').trim();
-  const base = requested || 'Create a high-quality professional image.';
-  if (!hasImage) return base;
-  if (isBgRemoval) return `${base}\n\nEDITING RULE: Remove only the background. Preserve the exact subject, identity, face, hair, clothing, body proportions, pose and important details. Do not redesign or regenerate the subject.`;
-  if (isObjectRemoval) return `${base}\n\nEDITING RULE: Remove only the specific person/object requested. Preserve everything else exactly as much as possible, including the main subject, face, clothing, lighting, camera framing and background. Naturally reconstruct only the area that was removed.`;
-  if (isClothingChange) return `${base}\n\nEDITING RULE: Change only the clothing explicitly requested. Preserve the same person, face, hair, skin, body proportions, pose, background, lighting, camera angle and composition. Do not create a new person or scene.`;
-  if (isHd) return `${base}\n\nEDITING RULE: Apply only the requested enhancement. Preserve the original identity, composition, objects and scene. Do not invent or replace content.`;
-  return `${base}\n\nEDITING RULE: This is an edit of the supplied image, not a new image generation. Perform exactly the requested change and preserve everything else: identity, faces, people, objects, pose, composition, background and lighting unless the instruction explicitly asks to change them. Do not redesign, restyle, replace or regenerate unrelated parts of the image.`;
+function getApiKey(): string {
+  return (process.env.SIKASIO_API_KEY || '').trim();
 }
 
-async function pixelRequest(path: string, init: RequestInit): Promise<any> {
-  const key = getApiKey(); if (!key) throw new Error('PIXELAPI_API_KEY is not configured.');
-  const headers = new Headers(init.headers || {}); headers.set('Authorization', `Bearer ${key}`); headers.set('User-Agent', 'MKUU-AI/1.0');
-  if (!(init.body instanceof FormData) && !headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
-  const text = await response.text(); let data: any = {}; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  if (!response.ok) { const detail = data?.error || data?.message || data?.raw || text; throw new Error(`PIXELAPI_IMAGE_API_ERROR: HTTP ${response.status} - ${String(detail).slice(0, 500)}`); }
-  return data;
+async function generateImage(prompt: string): Promise<string> {
+  const key = getApiKey();
+  if (!key) throw new Error('SIKASIO_API_KEY is not configured.');
+  const response = await fetch(`${BASE_URL}/v1/generate?wait=true`, {
+    method: 'POST',
+    headers: { 'X-API-Key': key, 'Content-Type': 'application/json', 'User-Agent': 'MKUU-AI/1.0' },
+    body: JSON.stringify({ prompt: String(prompt || '').trim() || 'Create a high-quality professional image.', model: MODEL, count: 1, aspectRatio: '1:1', size: 'original' }),
+  });
+  const text = await response.text();
+  let data: any = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (!response.ok) {
+    const detail = data?.error?.message || data?.error || data?.message || data?.raw || text;
+    throw new Error(`SIKASIO_IMAGE_API_ERROR: HTTP ${response.status} - ${String(detail).slice(0, 500)}`);
+  }
+  const imageUrl = data?.images?.[0]?.url;
+  if (imageUrl) return downloadAsBase64(String(imageUrl));
+  if (data?.status === 'running' || data?.status === 'queued') {
+    if (!data?.id) throw new Error('SIKASIO_IMAGE_API_EMPTY: generation returned no job id.');
+    return pollJob(String(data.id), key);
+  }
+  throw new Error(`SIKASIO_IMAGE_API_EMPTY: no image URL returned. Response: ${JSON.stringify(data).slice(0, 800)}`);
 }
 
-async function waitForGeneration(generationId: string): Promise<string> {
+async function pollJob(jobId: string, key: string): Promise<string> {
   for (let attempt = 0; attempt < 60; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    const data = await pixelRequest(`/v1/image/${encodeURIComponent(generationId)}`, { method: 'GET' });
-    if (data.status === 'completed' && data.output_url) return String(data.output_url);
-    if (data.status === 'failed' || data.status === 'blocked') throw new Error(`PIXELAPI_IMAGE_PROCESSING_ERROR: ${data.status}${data.error ? ` - ${String(data.error).slice(0, 300)}` : ''}`);
+    const response = await fetch(`${BASE_URL}/v1/jobs/${encodeURIComponent(jobId)}`, { headers: { 'X-API-Key': key, 'User-Agent': 'MKUU-AI/1.0' } });
+    const text = await response.text();
+    let data: any = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (!response.ok) {
+      const detail = data?.error?.message || data?.error || data?.message || text;
+      throw new Error(`SIKASIO_IMAGE_JOB_ERROR: HTTP ${response.status} - ${String(detail).slice(0, 500)}`);
+    }
+    if (data.status === 'done') {
+      const url = data?.images?.[0]?.url;
+      if (!url) throw new Error('SIKASIO_IMAGE_API_EMPTY: completed job contained no image URL.');
+      return downloadAsBase64(String(url));
+    }
+    if (data.status === 'failed') throw new Error(`SIKASIO_IMAGE_PROCESSING_ERROR: ${String(data?.error || 'generation failed').slice(0, 500)}`);
   }
-  throw new Error('PIXELAPI_IMAGE_TIMEOUT: image processing did not complete within 120 seconds.');
+  throw new Error('SIKASIO_IMAGE_TIMEOUT: image processing did not complete within 120 seconds.');
 }
-function getGenerationId(data: any): string | null { const id = data?.generation_id ?? data?.job_id ?? data?.id ?? data?.result?.generation_id ?? data?.result?.job_id ?? data?.result?.id; return id ? String(id) : null; }
-async function resolveImageResponse(data: any, operation: string): Promise<string> {
-  const directUrl = data?.output_url ?? data?.result?.output_url ?? data?.url ?? data?.result?.url; if (directUrl) return downloadAsBase64(String(directUrl));
-  const base64 = data?.result_b64 ?? data?.output_b64 ?? data?.result?.result_b64 ?? data?.result?.output_b64; if (typeof base64 === 'string' && base64.length > 0) return stripDataUrl(base64);
-  const inlineOutput = data?.output ?? data?.result?.output; if (typeof inlineOutput === 'string' && inlineOutput.length > 0) return inlineOutput.startsWith('data:') ? stripDataUrl(inlineOutput) : inlineOutput;
-  const generationId = getGenerationId(data); if (generationId) return downloadAsBase64(await waitForGeneration(generationId));
-  throw new Error(`PIXELAPI_IMAGE_API_EMPTY: ${operation} response contained no image output. Response: ${JSON.stringify(data).slice(0, 800)}`);
-}
-async function downloadAsBase64(url: string): Promise<string> { const response = await fetch(url); if (!response.ok) throw new Error(`PIXELAPI_OUTPUT_DOWNLOAD_ERROR: HTTP ${response.status}`); const bytes = Buffer.from(await response.arrayBuffer()); if (!bytes.length) throw new Error('PIXELAPI_OUTPUT_EMPTY: generated image was empty.'); return bytes.toString('base64'); }
 
-async function editImage(imageBase64: string, mimeType: string, instruction: string): Promise<string> {
-  const data = await pixelRequest('/v1/image/edit', { method: 'POST', body: JSON.stringify({ image: toDataUri(imageBase64, mimeType), prompt: instruction }) });
-  return resolveImageResponse(data, 'edit');
+async function downloadAsBase64(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`SIKASIO_OUTPUT_DOWNLOAD_ERROR: HTTP ${response.status}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length) throw new Error('SIKASIO_OUTPUT_EMPTY: generated image was empty.');
+  return bytes.toString('base64');
 }
-async function generateImage(prompt: string): Promise<string> { const data = await pixelRequest('/v1/image/generate', { method: 'POST', body: JSON.stringify({ model: 'fast-image', prompt, width: 1024, height: 1024 }) }); return resolveImageResponse(data, 'generation'); }
-async function removeBackground(imageBase64: string, mimeType: string): Promise<string> { const form = new FormData(); const bytes = Buffer.from(stripDataUrl(imageBase64), 'base64'); const extension = (mimeType || 'image/png').split('/')[1] || 'png'; form.append('image', new Blob([bytes], { type: mimeType || 'image/png' }), `source.${extension}`); const data = await pixelRequest('/v1/image/remove-background', { method: 'POST', body: form }); return resolveImageResponse(data, 'background-removal'); }
-async function removeObject(imageBase64: string, mimeType: string, prompt: string): Promise<string> { const form = new FormData(); const bytes = Buffer.from(stripDataUrl(imageBase64), 'base64'); const extension = (mimeType || 'image/png').split('/')[1] || 'png'; form.append('image', new Blob([bytes], { type: mimeType || 'image/png' }), `source.${extension}`); form.append('prompt', prompt); const data = await pixelRequest('/v1/image/remove-object', { method: 'POST', body: form }); return resolveImageResponse(data, 'object-removal'); }
 
 export class ImageService {
   private static instance: ImageService | null = null;
   public static getInstance(): ImageService { if (!ImageService.instance) ImageService.instance = new ImageService(); return ImageService.instance; }
   public async processImage(params: ProcessImageParams): Promise<ImageProcessResult> {
-    const { userId, prompt, attachments = [] } = params; const lower = String(prompt || '').toLowerCase().trim();
-    const imageAttachment = attachments.find((a) => String(a.mimeType || '').startsWith('image/')); const rawBase64 = imageAttachment?.base64Data ? stripDataUrl(imageAttachment.base64Data) : ''; const hasImage = !!rawBase64; const mimeType = imageAttachment?.mimeType || 'image/png';
-    const isBgRemoval = ['remove background', 'ondoa background', 'toa background', 'futa background', 'background iwe transparent', 'transparent background'].some((term) => lower.includes(term));
-    const isObjectRemoval = ['ondoa mtu', 'remove person', 'ondoa kitu', 'remove object', 'ondoa object'].some((term) => lower.includes(term));
-    const isHd = ['hd', '2k', '4k', 'enhance', 'boresha', 'quality', 'clear', 'restore'].some((term) => lower.includes(term));
-    const isClothingChange = ['nguo', 'shirt', 'suti', 'shati', 'mavazi'].some((term) => lower.includes(term));
-    let imageBase64: string;
-    if (!hasImage) imageBase64 = await generateImage(prompt);
-    else if (isBgRemoval) imageBase64 = await removeBackground(rawBase64, mimeType);
-    else if (isObjectRemoval) imageBase64 = await removeObject(rawBase64, mimeType, prompt);
-    else imageBase64 = await editImage(rawBase64, mimeType, makePrompt(prompt, true, false, false, isClothingChange, isHd));
-    const filename = isBgRemoval ? `Picha_Bila_Background_${Date.now().toString().slice(-6)}.png` : hasImage ? `Picha_Iliyohaririwa_Max_${Date.now().toString().slice(-6)}.png` : lower.includes('logo') ? `Logo_ya_Max_${Date.now().toString().slice(-6)}.png` : `Picha_ya_Max_${Date.now().toString().slice(-6)}.png`;
-    const title = isBgRemoval ? 'Picha Iliyoondolewa Background' : hasImage ? 'Picha Iliyohaririwa' : lower.includes('logo') ? 'Logo Iliyotengenezwa' : 'Picha Iliyotengenezwa';
-    const saved = await generateRealFile({ userId, filename, fileType: 'png', title, content: imageBase64, base64Data: imageBase64, description: 'Picha halisi iliyotengenezwa/kuhaririwa na MKUU Image Studio (PixelAPI).' });
-    const explanation = isBgRemoval ? 'Nimeondoa background ya picha yako kupitia MKUU Image Studio.' : hasImage ? 'Nimehariri picha yako kupitia MKUU Image Studio na nimekuandalia picha halisi.' : 'Nimetengeneza picha halisi kupitia MKUU Image Studio.';
-    return { file: saved, explanation, modelUsed: PRIMARY_IMAGE_MODEL };
+    const { userId, prompt, attachments = [] } = params;
+    const imageAttachment = attachments.find((a) => String(a.mimeType || '').startsWith('image/'));
+    if (imageAttachment) {
+      throw new Error('SIKASIO_IMAGE_EDIT_UNSUPPORTED: Sikasio Image Gen is currently configured for new image generation only. Image editing/background removal will use a separate image-edit provider later.');
+    }
+    const lower = String(prompt || '').toLowerCase().trim();
+    const imageBase64 = await generateImage(prompt);
+    const filename = lower.includes('logo') ? `Logo_ya_Max_${Date.now().toString().slice(-6)}.jpg` : `Picha_ya_Max_${Date.now().toString().slice(-6)}.jpg`;
+    const title = lower.includes('logo') ? 'Logo Iliyotengenezwa' : 'Picha Iliyotengenezwa';
+    const saved = await generateRealFile({ userId, filename, fileType: 'jpg', title, content: imageBase64, base64Data: imageBase64, description: 'Picha halisi iliyotengenezwa na MKUU Image Studio kupitia Sikasio Image Gen.' });
+    return { file: saved, explanation: 'Nimetengeneza picha halisi kupitia MKUU Image Studio kwa kutumia Sikasio Image Gen.', modelUsed: PRIMARY_IMAGE_MODEL };
   }
 }
+
 export const imageService = ImageService.getInstance();
