@@ -10,15 +10,17 @@ export interface ExaAnswerResponse {
   citations?: ExaCitation[];
 }
 
+export interface ExaSearchResult {
+  answer: string;
+  citations: Array<{ title: string; url: string }>;
+}
+
 /**
  * Exclusive live-search provider for MKUU.
  * Exa /answer performs the web retrieval and answer synthesis itself.
  * Gemini and Tavily are deliberately NOT called on this path.
  */
 function resolveExaApiKey(): string {
-  // Faable has shown EXA_API_KEY in deployment environment listings with
-  // surrounding backticks. Resolve the canonical name plus safely-normalized
-  // variants without ever logging the secret value.
   const env = process.env as Record<string, string | undefined>;
   const direct = [
     env.EXA_API_KEY,
@@ -36,30 +38,17 @@ function resolveExaApiKey(): string {
 
   const value = [...direct, normalized].find((item) => typeof item === 'string' && item.trim());
   if (!value) return '';
-
-  // Also tolerate accidental quoting around the value when entered in a
-  // deployment dashboard. Never print this value to logs.
   return value.trim().replace(/^['"`]+|['"`]+$/g, '').trim();
 }
 
-export async function searchWithExa(query: string): Promise<string> {
+export async function searchWithExa(query: string): Promise<ExaSearchResult> {
   const apiKey = resolveExaApiKey();
-
-  if (!apiKey) {
-    throw new Error('EXA_API_KEY is not configured on MKUU Backend.');
-  }
+  if (!apiKey) throw new Error('EXA_API_KEY is not configured on MKUU Backend.');
 
   const response = await fetch('https://api.exa.ai/answer', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-    },
-    body: JSON.stringify({
-      query,
-      text: true,
-      model: 'exa',
-    }),
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+    body: JSON.stringify({ query, text: true, model: 'exa' }),
     signal: AbortSignal.timeout(30000),
   });
 
@@ -73,15 +62,10 @@ export async function searchWithExa(query: string): Promise<string> {
   if (!answer) throw new Error('EXA_SEARCH_EMPTY: Exa returned no answer.');
 
   const citations = Array.isArray(data.citations) ? data.citations : [];
-  const sources = citations
+  const structuredSources = citations
     .filter((item) => item?.url)
     .slice(0, 8)
-    .map((item, index) => {
-      const title = (item.title || item.url).trim();
-      const date = item.publishedDate ? ` — ${item.publishedDate.slice(0, 10)}` : '';
-      return `[${index + 1}] ${title}${date}\n${item.url}`;
-    })
-    .join('\n\n');
+    .map((item) => ({ title: (item.title || item.url).trim(), url: item.url.trim() }));
 
-  return sources ? `${answer}\n\n### Sources\n${sources}` : answer;
+  return { answer, citations: structuredSources };
 }
