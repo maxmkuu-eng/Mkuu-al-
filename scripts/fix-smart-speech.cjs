@@ -2,7 +2,10 @@ const fs = require('fs');
 
 function ensureImport(source, importLine, anchor, label) {
   if (source.includes(importLine)) return source;
-  if (!source.includes(anchor)) throw new Error(`[TTS] target missing: ${label}`);
+  if (!source.includes(anchor)) {
+    console.warn(`[TTS] target missing: ${label}; preserving existing implementation.`);
+    return source;
+  }
   return source.replace(anchor, `${anchor}\n${importLine}`);
 }
 
