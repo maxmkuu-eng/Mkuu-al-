@@ -136,3 +136,23 @@ main, section, article, p, li, label, textarea, input, button { font-style: norm
 .animate-soundwave-delay-2 { animation: soundwave 1.2s ease-in-out 0.4s infinite; }
 .animate-soundwave-delay-3 { animation: soundwave 1.2s ease-in-out 0.6s infinite; }
 .animate-soundwave-delay-4 { animation: soundwave 1.2s ease-in-out 0.8s infinite; }
+
+/* Compact web-source cards: preserve all source links while using much less vertical space on mobile. */
+#mkuu-web-sources { margin-top: 0.75rem !important; padding-top: 0.5rem !important; }
+#mkuu-web-sources > div:first-child { margin-bottom: 0.5rem !important; }
+#mkuu-web-sources > div:first-child span:first-child { font-size: 0.65rem !important; letter-spacing: 0.12em !important; }
+#mkuu-web-sources > div:first-child span:last-child { font-size: 0.55rem !important; }
+#mkuu-web-sources > div:last-child { display: flex !important; flex-direction: column !important; gap: 0.35rem !important; }
+#mkuu-web-sources a { gap: 0.5rem !important; padding: 0.45rem 0.55rem !important; border-radius: 0.65rem !important; min-height: 0 !important; }
+#mkuu-web-sources a > span:first-child { width: 1.55rem !important; height: 1.55rem !important; min-width: 1.55rem !important; border-radius: 0.45rem !important; font-size: 0.65rem !important; }
+#mkuu-web-sources a > span:nth-child(2) { min-width: 0 !important; line-height: 1.15 !important; }
+#mkuu-web-sources a > span:nth-child(2) > span:first-child { font-size: 0.65rem !important; line-height: 1.2 !important; }
+#mkuu-web-sources a > span:nth-child(2) > span:last-child { font-size: 0.55rem !important; margin-top: 0.1rem !important; line-height: 1.1 !important; }
+#mkuu-web-sources a > span:last-child { font-size: 0.75rem !important; }
+
+@media (max-width: 640px) {
+  #mkuu-web-sources a { padding: 0.38rem 0.5rem !important; }
+  #mkuu-web-sources a > span:first-child { width: 1.4rem !important; height: 1.4rem !important; min-width: 1.4rem !important; font-size: 0.6rem !important; }
+  #mkuu-web-sources a > span:nth-child(2) > span:first-child { font-size: 0.62rem !important; }
+  #mkuu-web-sources a > span:nth-child(2) > span:last-child { font-size: 0.52rem !important; }
+}
