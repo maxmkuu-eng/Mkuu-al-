@@ -1,8 +1,107 @@
 const fs = require('fs');
 const path = require('path');
 
+// -----------------------------------------------------------------------------
+// 1) Persist structured web sources on the assistant message.
+// The backend/Exa layer already returns webSources; App.tsx previously dropped
+// them when constructing ChatMessage, so the UI could never render them.
+// -----------------------------------------------------------------------------
+const appFile = path.join(process.cwd(), 'src/App.tsx');
+let appSource = fs.readFileSync(appFile, 'utf8');
+const appMarker = '        generatedFiles: processedFiles,\n        memoryExtracted:';
+if (!appSource.includes('webSources: chatResult.webSources')) {
+  if (!appSource.includes(appMarker)) {
+    throw new Error('MKUU: App web-sources insertion point not found.');
+  }
+  appSource = appSource.replace(
+    appMarker,
+    '        generatedFiles: processedFiles,\n        webSources: chatResult.webSources || [],\n        memoryExtracted:',
+  );
+  fs.writeFileSync(appFile, appSource);
+  console.log('MKUU: Structured web sources are now persisted on assistant messages.');
+} else {
+  console.log('MKUU: App web-sources wiring already enabled; skipping.');
+}
+
+// -----------------------------------------------------------------------------
+// 2) Carry Exa sources from /api/chat and /api/chat/stream into ChatEngineResult.
+// -----------------------------------------------------------------------------
+const engineFile = path.join(process.cwd(), 'src/services/aiEngine.ts');
+let engineSource = fs.readFileSync(engineFile, 'utf8');
+
+if (!engineSource.includes('webSources?: { title: string; url: string }[];')) {
+  const resultMarker = "export interface ChatEngineResult { reply:string; cleanSpeechText:string; memoriesExtracted?:Memory[]; peopleRecognized?:Person[]; generatedFiles?:GeneratedFileSummary[];";
+  if (!engineSource.includes(resultMarker)) {
+    throw new Error('MKUU: ChatEngineResult insertion point not found.');
+  }
+  engineSource = engineSource.replace(
+    resultMarker,
+    resultMarker + " webSources?: { title: string; url: string }[];",
+  );
+}
+
+if (!engineSource.includes('webSources:serverRes.webSources||[]')) {
+  const nativeMarker = "generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:";
+  if (!engineSource.includes(nativeMarker)) {
+    throw new Error('MKUU: Native server web-sources insertion point not found.');
+  }
+  engineSource = engineSource.replace(
+    nativeMarker,
+    "generatedFiles:serverRes.generatedFiles,webSources:serverRes.webSources||[],engineUsed:'server',aiProvider:",
+  );
+}
+
+if (!engineSource.includes('webSources:serverRes.webSources||[]')) {
+  const agentMarker = "generatedFiles:serverRes.generatedFiles,engineUsed:'server',aiProvider:";
+  if (engineSource.includes(agentMarker)) {
+    engineSource = engineSource.replace(
+      agentMarker,
+      "generatedFiles:serverRes.generatedFiles,webSources:serverRes.webSources||[],engineUsed:'server',aiProvider:",
+    );
+  }
+}
+
+if (!engineSource.includes('let webSources:{title:string;url:string}[]=[];')) {
+  const streamMarker = "let buffer='';let reply='';emitStream('',false);";
+  if (!engineSource.includes(streamMarker)) {
+    throw new Error('MKUU: Streaming web-sources insertion point not found.');
+  }
+  engineSource = engineSource.replace(
+    streamMarker,
+    "let buffer='';let reply='';let webSources:{title:string;url:string}[]=[];emitStream('',false);",
+  );
+}
+
+if (!engineSource.includes("if(payload.type==='done'&&Array.isArray(payload.webSources))webSources=payload.webSources;")) {
+  const streamEventMarker = "if(payload.type==='delta'&&payload.text){reply+=payload.text;emitStream(payload.text,false);}if(payload.type==='error')";
+  if (!engineSource.includes(streamEventMarker)) {
+    throw new Error('MKUU: Streaming event insertion point not found.');
+  }
+  engineSource = engineSource.replace(
+    streamEventMarker,
+    "if(payload.type==='delta'&&payload.text){reply+=payload.text;emitStream(payload.text,false);}if(payload.type==='done'&&Array.isArray(payload.webSources))webSources=payload.webSources;if(payload.type==='error')",
+  );
+}
+
+if (!engineSource.includes("chatModel:'gemini-3.7-flash',intent:'chat',webSources")) {
+  const streamReturnMarker = "engineUsed:'server',aiProvider:'Google Gemini',chatModel:'gemini-3.7-flash',intent:'chat'};}\nexport async function executeMkuuChat";
+  if (!engineSource.includes(streamReturnMarker)) {
+    throw new Error('MKUU: Streaming return web-sources insertion point not found.');
+  }
+  engineSource = engineSource.replace(
+    streamReturnMarker,
+    "engineUsed:'server',aiProvider:'Google Gemini',chatModel:'gemini-3.7-flash',intent:'chat',webSources};}\nexport async function executeMkuuChat",
+  );
+}
+
+fs.writeFileSync(engineFile, engineSource);
+console.log('MKUU: Live web sources now flow from Exa -> backend -> App -> ChatView.');
+
+// -----------------------------------------------------------------------------
+// 3) Render the sources as a clean, separated numbered source section.
+// -----------------------------------------------------------------------------
 const file = path.join(process.cwd(), 'src/components/ChatView.tsx');
-const source = fs.readFileSync(file, 'utf8');
+let source = fs.readFileSync(file, 'utf8');
 
 if (source.includes('id="mkuu-web-sources"')) {
   console.log('MKUU: Web sources UI already formatted; skipping.');
