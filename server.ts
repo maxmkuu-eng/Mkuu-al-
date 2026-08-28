@@ -6,6 +6,7 @@ import { db, FILES_DIR } from './server/db.js';
 import { geminiService, PERSONAL_CHAT_MODEL, AI_PROVIDER, BACKEND_IDENTIFIER } from './server/geminiService.js';
 import { imageService, PRIMARY_IMAGE_MODEL } from './server/imageService.js';
 import { universalAgent } from './server/agentEngine.js';
+import { searchWithExa } from './server/exaSearch.js';
 import { generateRealFile, ensureInitialSeedFiles } from './server/files.js';
 import { getManagerSnapshot, addTask, updateTask, deleteTask, addEvent, updateEvent, deleteEvent, addReminder, updateReminder, deleteReminder, updateSettings, addAction, markReminderDelivered } from './server/assistantManager.js';
 
@@ -24,7 +25,6 @@ async function startServer() {
   app.post('/api/user/pin',(req,res)=>{try{const {pin}=req.body;const updated=db.updateUser(DEFAULT_USER_ID,{securityPinSet:!!pin,securityPin:pin});res.json({success:true,user:updated});}catch(e:any){res.status(400).json({error:e.message});}});
   app.post('/api/system/reset',(_req,res)=>{try{db.resetSystem();res.json({success:true,message:'Mfumo umerejeshwa katika hali ya msingi.'});}catch(e:any){res.status(500).json({error:e.message});}});
 
-  // AI Assistant Manager: tasks, calendar, reminders, proactive status, Android action intents and settings.
   app.get('/api/manager',(_req,res)=>res.json(getManagerSnapshot(DEFAULT_USER_ID)));
   app.get('/api/manager/tasks',(_req,res)=>res.json(getManagerSnapshot(DEFAULT_USER_ID).tasks));
   app.post('/api/manager/tasks',(req,res)=>{try{res.status(201).json(addTask(DEFAULT_USER_ID,req.body));}catch(e:any){res.status(400).json({error:e.message});}});
@@ -43,34 +43,43 @@ async function startServer() {
   app.put('/api/manager/settings',(req,res)=>res.json(updateSettings(DEFAULT_USER_ID,req.body)));
   app.post('/api/manager/actions',(req,res)=>{try{const {type,label,payload={}}=req.body||{};if(!type||!label)return res.status(400).json({error:'Action type na label vinahitajika'});res.status(201).json(addAction(DEFAULT_USER_ID,{type,label,payload}));}catch(e:any){res.status(400).json({error:e.message});}});
 
+  const isLiveQuery = (message:string) => /\b(waziri mkuu|rais wa|makamu wa rais|kiongozi wa sasa|mkuu wa nchi|meya wa|mkuu wa|mkurugenzi wa|mwanasiasa|current|latest|newest|sasa|wa sasa|leo|jana|juzi|kesho|today|yesterday|tomorrow|hivi punde|habari mpya|habari za leo|breaking|bei ya|exchange rate|rate ya|matokeo|ratiba|msimamo|nani ameshinda|nani kashinda|mechi|mchezo|anacheza|amecheza|fixture|score|sports?|soka|football|yanga|simba|azam|pamba jiji|coastal union|jkt tanzania|champions league|caf|news)\b/i.test(String(message||''));
+
   const processChatRequest = async (req:any) => {
     const {message='',conversationId,conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};
     if(!message && (!attachments||attachments.length===0)) throw new Error('Ujumbe au kiambatisho kinahitajika');
     let effectiveHistory=Array.isArray(conversationHistory)&&conversationHistory.length?conversationHistory:[];
     if(!effectiveHistory.length&&conversationId){const stored=db.getConversation(conversationId,DEFAULT_USER_ID);if(stored) effectiveHistory=stored.messages;}
 
-    // Current/changing facts must be grounded with live Google Search.  Prefixing
-    // the user request with an explicit search directive guarantees the existing
-    // GeminiService search-intent detector enables googleSearch for these queries.
-    const lowerMessage = String(message || '').toLowerCase();
-    const currentFactQuery = /\b(waziri mkuu|rais wa|makamu wa rais|kiongozi wa sasa|mkuu wa nchi|meya wa|mkuu wa|mkurugenzi wa|mwanasiasa|current|latest|sasa|wa sasa|leo|hivi punde|habari mpya|habari za leo|bei ya|thamani ya|exchange rate|rate ya|matokeo ya|ratiba ya|msimamo wa|nani ameshinda|nani kashinda)\b/i.test(lowerMessage);
-    const searchMessage = currentFactQuery && !/\b(tafuta google|search google|tafuta mtandaoni|search online)\b/i.test(lowerMessage)
-      ? `Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu. Swali la mtumiaji: ${message}`
-      : message;
+    // HARD SEPARATION: live/current/sports/news queries go directly to Exa.
+    // Gemini is deliberately not called in this branch: no grounding, synthesis, or fallback.
+    if(isLiveQuery(message)){
+      const live=await searchWithExa(String(message));
+      const reply=String(live.answer||'').trim();
+      if(!reply) throw new Error('Exa haijarudisha jibu la kutosha kwa swali hili.');
+      if(conversationId){
+        let c=db.getConversation(conversationId,DEFAULT_USER_ID);
+        const u={id:`msg_${Date.now()}_u`,role:'user' as const,content:message,timestamp:new Date().toISOString(),isVoice,attachments};
+        const a={id:`msg_${Date.now()}_a`,role:'assistant' as const,content:reply,timestamp:new Date().toISOString()};
+        if(c){c.messages.push(u,a);db.saveConversation(c);}else{db.saveConversation({id:conversationId,userId:DEFAULT_USER_ID,title:String(message).slice(0,35)||'Mazungumzo Mapya',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages:[u,a]});}
+      }
+      return {reply,cleanSpeechText:reply,memoriesExtracted:[],peopleRecognized:[],generatedFiles:[],aiProvider:'Exa',chatModel:'Exa Live Search',latencyMs:0,sources:live.citations||[]};
+    }
 
-    const result=await geminiService.processChat({userId:DEFAULT_USER_ID,message:searchMessage,conversationHistory:effectiveHistory,isVoice,attachments});
+    // Normal chat only: Gemini remains the normal conversational model.
+    const result=await geminiService.processChat({userId:DEFAULT_USER_ID,message,conversationHistory:effectiveHistory,isVoice,attachments});
     if(conversationId){let c=db.getConversation(conversationId,DEFAULT_USER_ID);const u={id:`msg_${Date.now()}_u`,role:'user' as const,content:message,timestamp:new Date().toISOString(),isVoice,attachments};const a={id:`msg_${Date.now()}_a`,role:'assistant' as const,content:result.reply,timestamp:new Date().toISOString(),generatedFiles:result.generatedFiles,memoryExtracted:result.memoriesExtracted?.map(m=>m.content),personRecognized:result.peopleRecognized?.map(p=>p.name)};if(c){c.messages.push(u,a);db.saveConversation(c);}else{c={id:conversationId,userId:DEFAULT_USER_ID,title:message.slice(0,35)||'Mazungumzo Mapya',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages:[u,a]};db.saveConversation(c);}}
     return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};
   };
-  app.post(['/api/chat','/api/chat/'],async(req,res)=>{try{res.json(await processChatRequest(req));}catch(error:any){console.error('[MKUU-BACKEND] Chat API Error:',error);res.status(503).json({error:'GEMINI_UNAVAILABLE',message:error.message||'Google Gemini API Error',aiProvider:AI_PROVIDER,chatModel:PERSONAL_CHAT_MODEL});}});
-  app.post('/api/chat/stream',async(req,res)=>{res.status(200).set({'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});try{const result=await processChatRequest(req);res.write(`data: ${JSON.stringify({type:'delta',text:result.reply})}\n\n`);res.write(`data: ${JSON.stringify({type:'done',...result})}\n\n`);res.end();}catch(e:any){res.write(`data: ${JSON.stringify({type:'error',message:e.message||'Google Gemini API Error'})}\n\n`);res.end();}});
+
+  app.post(['/api/chat','/api/chat/'],async(req,res)=>{try{res.json(await processChatRequest(req));}catch(error:any){console.error('[MKUU-BACKEND] Chat API Error:',error);res.status(503).json({error:'CHAT_UNAVAILABLE',message:error.message||'MKUU Backend Error',aiProvider:AI_PROVIDER,chatModel:PERSONAL_CHAT_MODEL});}});
+  app.post('/api/chat/stream',async(req,res)=>{res.status(200).set({'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','Connection':'keep-alive','X-Accel-Buffering':'no'});try{const result=await processChatRequest(req);res.write(`data: ${JSON.stringify({type:'delta',text:result.reply})}\n\n`);res.write(`data: ${JSON.stringify({type:'done',...result})}\n\n`);res.end();}catch(e:any){res.write(`data: ${JSON.stringify({type:'error',message:e.message||'MKUU Backend Error'})}\n\n`);res.end();}});
   app.post('/api/agent',async(req,res)=>{try{const {message='',conversationHistory=[],isVoice=false,attachments=[],people=[]}=req.body||{};if(!message&&!attachments.length)throw new Error('Ujumbe au kiambatisho kinahitajika');res.json({success:true,...await universalAgent.execute({userId:DEFAULT_USER_ID,message,conversationHistory,isVoice,attachments,people})});}catch(e:any){res.status(503).json({success:false,error:'GEMINI_UNAVAILABLE',message:e.message,aiProvider:AI_PROVIDER,chatModel:PERSONAL_CHAT_MODEL});}});
-  app.post(['/api/image/edit','/api/image/generate','/api/image'],async(req,res)=>{try{const {prompt='',imageBase64,mimeType='image/jpeg',filename='picha_iliyohaririwa.png'}=req.body; if(!prompt&&!imageBase64)return res.status(400).json({error:'Maelekezo au picha inahitajika kwa ajili ya Image Studio'});const attachments=imageBase64?[{filename,fileType:mimeType.includes('png')?'png':'jpg',mimeType,base64Data:imageBase64}]:[];const result=await imageService.processImage({userId:DEFAULT_USER_ID,prompt:prompt||'Enhance and edit this image with high precision while strictly preserving identity',attachments});res.json({success:true,reply:result.explanation,file:result.file,generatedFiles:[result.file],modelUsed:result.modelUsed});}catch(e:any){res.status(500).json({error:e.message||'Hitilafu ya Image Studio'});}});
+  app.post(['/api/image/edit','/api/image/generate','/api/image'],async(req,res)=>{try{const {prompt='',imageBase64,mimeType='image/jpeg',filename='picha_iliyohaririwa.png'}=req.body;if(!prompt&&!imageBase64)return res.status(400).json({error:'Maelekezo au picha inahitajika kwa ajili ya Image Studio'});const attachments=imageBase64?[{filename,fileType:mimeType.includes('png')?'png':'jpg',mimeType,base64Data:imageBase64}]:[];const result=await imageService.processImage({userId:DEFAULT_USER_ID,prompt:prompt||'Enhance and edit this image with high precision while strictly preserving identity',attachments});res.json({success:true,reply:result.explanation,file:result.file,generatedFiles:[result.file],modelUsed:result.modelUsed});}catch(e:any){res.status(500).json({error:e.message||'Hitilafu ya Image Studio'});}});
 
   app.get('/api/conversations',(_req,res)=>res.json(db.getConversations(DEFAULT_USER_ID)));
   app.get('/api/conversations/:id',(req,res)=>{const c=db.getConversation(req.params.id,DEFAULT_USER_ID);res.json(c||{id:req.params.id,userId:DEFAULT_USER_ID,title:'Mazungumzo Mapya',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages:[]});});
-  app.post('/api/conversations',(req,res)=>{const {title='Mazungumzo Mapya',messages=[]}=req.body;res.json(db.saveConversation({id:`conv_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,userId:DEFAULT_USER_ID,title,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages}));
-  });
+  app.post('/api/conversations',(req,res)=>{const {title='Mazungumzo Mapya',messages=[]}=req.body;res.json(db.saveConversation({id:`conv_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,userId:DEFAULT_USER_ID,title,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages}));});
   app.delete('/api/conversations/:id',(req,res)=>res.json({success:db.deleteConversation(req.params.id,DEFAULT_USER_ID)}));
   app.get('/api/memories',(_req,res)=>res.json(db.getMemories(DEFAULT_USER_ID)));
   app.post('/api/memories',(req,res)=>{const {content,category='General',importance='medium',tags=[],source='manual'}=req.body;if(!content)return res.status(400).json({error:'Kumbukumbu inahitaji maelezo'});res.json(db.addMemory({userId:DEFAULT_USER_ID,content,category,importance,tags,source}));});
@@ -85,7 +94,7 @@ async function startServer() {
   app.get('/api/autoreply/settings',(_req,res)=>res.json(db.getAutoReplySettings(DEFAULT_USER_ID)));
   app.put('/api/autoreply/settings',(req,res)=>res.json(db.updateAutoReplySettings(DEFAULT_USER_ID,req.body)));
   app.post('/api/autoreply/verify-phone',(req,res)=>{const phoneNumber=String(req.body?.phoneNumber||'').trim();if(!phoneNumber)return res.status(400).json({error:'PHONE_REQUIRED',message:'Nambari ya simu inahitajika.'});const updated=db.updateAutoReplySettings(DEFAULT_USER_ID,{myPhoneNumber:phoneNumber,phoneVerified:true,phoneVerifiedAt:new Date().toISOString()});res.json({success:true,phoneNumber,phoneVerified:true,phoneVerifiedAt:updated.phoneVerifiedAt});});
-  app.post('/api/autoreply/remove-phone',(_req,res)=>{const updated=db.updateAutoReplySettings(DEFAULT_USER_ID,{myPhoneNumber:'',phoneVerified:false,phoneVerifiedAt:undefined});res.json({success:true,phoneNumber:'',phoneVerified:false});});
+  app.post('/api/autoreply/remove-phone',(_req,res)=>{db.updateAutoReplySettings(DEFAULT_USER_ID,{myPhoneNumber:'',phoneVerified:false,phoneVerifiedAt:undefined});res.json({success:true,phoneNumber:'',phoneVerified:false});});
   app.get('/api/autoreply/logs',(_req,res)=>res.json(db.getAutoReplyLogs(DEFAULT_USER_ID)));
   app.delete('/api/autoreply/logs',(_req,res)=>{db.clearAutoReplyLogs(DEFAULT_USER_ID);res.json({success:true});});
   app.post('/api/autoreply/emergency-stop',(req,res)=>{const current=db.getAutoReplySettings(DEFAULT_USER_ID);const updated=db.updateAutoReplySettings(DEFAULT_USER_ID,{emergencyStop:req.body?.stop!==undefined?!!req.body.stop:!current.emergencyStop});res.json({success:true,emergencyStop:updated.emergencyStop,settings:updated});});
