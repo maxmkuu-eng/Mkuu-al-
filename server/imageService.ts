@@ -1,137 +1,20 @@
 import { GeneratedFileSummary } from './db.js';
 import { generateRealFile } from './files.js';
 
-// MKUU IMAGE STUDIO
-// Provider: Magic Hour API. API key remains server-side.
+// MKUU IMAGE STUDIO — Magic Hour provider
 export const PRIMARY_IMAGE_MODEL = 'Magic Hour AI Image Generator';
 export const EDIT_IMAGE_MODEL = 'Magic Hour AI Image Editor';
-
 export interface ProcessImageParams { userId: string; prompt: string; attachments?: Array<{ filename: string; fileType: string; mimeType: string; size?: number; base64Data?: string; }>; }
 export interface ImageProcessResult { file: GeneratedFileSummary; explanation: string; modelUsed: string; }
-
 const BASE_URL = 'https://api.magichour.ai';
-
-function requireKey(): string {
-  const key = (process.env.MAGIC_HOUR_API_KEY || '').trim();
-  if (!key) throw new Error('MAGIC_HOUR_API_KEY is not configured.');
-  return key;
-}
-
-async function parseResponse(response: Response): Promise<any> {
-  const text = await response.text();
-  let data: any = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  if (!response.ok) {
-    const detail = data?.error?.message || data?.error || data?.message || data?.raw || text;
-    throw new Error(`MAGIC_HOUR_IMAGE_API_ERROR: HTTP ${response.status} - ${String(detail).slice(0, 700)}`);
-  }
-  return data;
-}
-
-async function downloadAsBase64(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`MAGIC_HOUR_OUTPUT_DOWNLOAD_ERROR: HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.length) throw new Error('MAGIC_HOUR_OUTPUT_EMPTY: generated image was empty.');
-  return bytes.toString('base64');
-}
-
-async function createProject(path: string, body: Record<string, unknown>, key: string): Promise<any> {
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'User-Agent': 'MKUU-AI/1.0' },
-    body: JSON.stringify(body),
-  });
-  return parseResponse(response);
-}
-
-async function pollProject(projectId: string, key: string): Promise<string> {
-  for (let attempt = 0; attempt < 90; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const response = await fetch(`${BASE_URL}/v1/image-projects/${encodeURIComponent(projectId)}`, {
-      headers: { Authorization: `Bearer ${key}`, 'User-Agent': 'MKUU-AI/1.0' },
-    });
-    const data = await parseResponse(response);
-    const status = String(data?.status || data?.state || '').toLowerCase();
-    if (['completed', 'complete', 'succeeded', 'done'].includes(status)) {
-      const url = data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url || data?.assets?.[0]?.url;
-      if (!url) throw new Error('MAGIC_HOUR_IMAGE_API_EMPTY: completed project contained no image URL.');
-      return downloadAsBase64(String(url));
-    }
-    if (['failed', 'error', 'cancelled', 'canceled'].includes(status)) {
-      throw new Error(`MAGIC_HOUR_IMAGE_PROCESSING_ERROR: ${String(data?.error?.message || data?.error || 'image processing failed').slice(0, 700)}`);
-    }
-  }
-  throw new Error('MAGIC_HOUR_IMAGE_TIMEOUT: image processing did not complete within 180 seconds.');
-}
-
-async function generateImage(prompt: string): Promise<string> {
-  const key = requireKey();
-  const data = await createProject('/v1/ai-image-generator', { prompt: String(prompt || '').trim() || 'Create a high-quality professional image.' }, key);
-  const direct = data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url;
-  if (direct) return downloadAsBase64(String(direct));
-  const projectId = data?.id || data?.project_id || data?.projectId;
-  if (!projectId) throw new Error(`MAGIC_HOUR_IMAGE_API_EMPTY: generation returned no project id. Response: ${JSON.stringify(data).slice(0, 900)}`);
-  return pollProject(String(projectId), key);
-}
-
-async function editImage(attachment: NonNullable<ProcessImageParams['attachments']>[number], prompt: string): Promise<string> {
-  const key = requireKey();
-  if (!attachment.base64Data) throw new Error('MAGIC_HOUR_IMAGE_INPUT_MISSING: uploaded image has no base64 data.');
-  const data = await createProject('/v1/ai-image-editor', { prompt: String(prompt || '').trim() || 'Edit this image while preserving the main subject.', image: attachment.base64Data }, key);
-  const direct = data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url;
-  if (direct) return downloadAsBase64(String(direct));
-  const projectId = data?.id || data?.project_id || data?.projectId;
-  if (!projectId) throw new Error(`MAGIC_HOUR_IMAGE_EDIT_EMPTY: editor returned no project id. Response: ${JSON.stringify(data).slice(0, 900)}`);
-  return pollProject(String(projectId), key);
-}
-
-async function removeBackground(attachment: NonNullable<ProcessImageParams['attachments']>[number]): Promise<string> {
-  const key = requireKey();
-  if (!attachment.base64Data) throw new Error('MAGIC_HOUR_IMAGE_INPUT_MISSING: uploaded image has no base64 data.');
-  const data = await createProject('/v1/image-background-remover', { image: attachment.base64Data }, key);
-  const direct = data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url;
-  if (direct) return downloadAsBase64(String(direct));
-  const projectId = data?.id || data?.project_id || data?.projectId;
-  if (!projectId) throw new Error(`MAGIC_HOUR_BACKGROUND_REMOVE_EMPTY: remover returned no project id. Response: ${JSON.stringify(data).slice(0, 900)}`);
-  return pollProject(String(projectId), key);
-}
-
-function wantsBackgroundRemoval(prompt: string): boolean {
-  const p = prompt.toLowerCase();
-  return /(remove|ondoa|toa|delete|fanya)\s+.{0,30}(background|bg|mandhar|backdrop)/i.test(p) || /(background|bg|mandhar|backdrop).{0,30}(remove|ondoa|toa|delete)/i.test(p);
-}
-
-export class ImageService {
-  private static instance: ImageService | null = null;
-  public static getInstance(): ImageService { if (!ImageService.instance) ImageService.instance = new ImageService(); return ImageService.instance; }
-  public async processImage(params: ProcessImageParams): Promise<ImageProcessResult> {
-    const { userId, prompt, attachments = [] } = params;
-    const imageAttachment = attachments.find((a) => String(a.mimeType || '').startsWith('image/'));
-    let imageBase64: string;
-    let modelUsed: string;
-    let explanation: string;
-    if (imageAttachment) {
-      if (wantsBackgroundRemoval(prompt)) {
-        imageBase64 = await removeBackground(imageAttachment);
-        modelUsed = 'Magic Hour Background Remover';
-        explanation = 'Nimeondoa background kupitia MKUU Image Studio kwa kutumia Magic Hour.';
-      } else {
-        imageBase64 = await editImage(imageAttachment, prompt);
-        modelUsed = EDIT_IMAGE_MODEL;
-        explanation = 'Nimehariri picha kupitia MKUU Image Studio kwa kutumia Magic Hour.';
-      }
-    } else {
-      imageBase64 = await generateImage(prompt);
-      modelUsed = PRIMARY_IMAGE_MODEL;
-      explanation = 'Nimetengeneza picha halisi kupitia MKUU Image Studio kwa kutumia Magic Hour.';
-    }
-    const lower = String(prompt || '').toLowerCase();
-    const filename = lower.includes('logo') ? `Logo_ya_Max_${Date.now().toString().slice(-6)}.jpg` : `Picha_ya_Max_${Date.now().toString().slice(-6)}.jpg`;
-    const title = lower.includes('logo') ? 'Logo Iliyotengenezwa' : 'Picha Iliyotengenezwa';
-    const saved = await generateRealFile({ userId, filename, fileType: 'jpg', title, content: imageBase64, base64Data: imageBase64, description: explanation });
-    return { file: saved, explanation, modelUsed };
-  }
-}
-
+function requireKey(): string { const key = (process.env.MAGIC_HOUR_API_KEY || '').trim(); if (!key) throw new Error('MAGIC_HOUR_API_KEY is not configured.'); return key; }
+async function parseResponse(response: Response): Promise<any> { const text = await response.text(); let data: any = {}; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; } if (!response.ok) { const detail = data?.error?.message || data?.error || data?.message || data?.raw || text; throw new Error(`MAGIC_HOUR_IMAGE_API_ERROR: HTTP ${response.status} - ${String(detail).slice(0, 700)}`); } return data; }
+async function downloadAsBase64(url: string): Promise<string> { const response = await fetch(url); if (!response.ok) throw new Error(`MAGIC_HOUR_OUTPUT_DOWNLOAD_ERROR: HTTP ${response.status}`); const bytes = Buffer.from(await response.arrayBuffer()); if (!bytes.length) throw new Error('MAGIC_HOUR_OUTPUT_EMPTY: generated image was empty.'); return bytes.toString('base64'); }
+async function createProject(path: string, body: Record<string, unknown>, key: string): Promise<any> { const response = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'User-Agent': 'MKUU-AI/1.0' }, body: JSON.stringify(body) }); return parseResponse(response); }
+async function pollProject(projectId: string, key: string): Promise<string> { for (let attempt = 0; attempt < 90; attempt++) { await new Promise((resolve) => setTimeout(resolve, 2000)); const response = await fetch(`${BASE_URL}/v1/image-projects/${encodeURIComponent(projectId)}`, { headers: { Authorization: `Bearer ${key}`, 'User-Agent': 'MKUU-AI/1.0' } }); const data = await parseResponse(response); const status = String(data?.status || data?.state || '').toLowerCase(); if (['completed','complete','succeeded','done'].includes(status)) { const url = data?.downloads?.[0]?.url || data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url; if (!url) throw new Error('MAGIC_HOUR_IMAGE_API_EMPTY: completed project contained no image URL.'); return downloadAsBase64(String(url)); } if (['failed','error','cancelled','canceled'].includes(status)) throw new Error(`MAGIC_HOUR_IMAGE_PROCESSING_ERROR: ${String(data?.error?.message || data?.error || 'image processing failed').slice(0, 700)}`); } throw new Error('MAGIC_HOUR_IMAGE_TIMEOUT: image processing did not complete within 180 seconds.'); }
+async function generateImage(prompt: string): Promise<string> { const key = requireKey(); const data = await createProject('/v1/ai-image-generator', { image_count: 1, style: { prompt: String(prompt || '').trim() || 'Create a high-quality professional image.' }, model: 'default', aspect_ratio: '1:1', resolution: 'auto', name: `MKUU Image ${Date.now()}` }, key); const direct = data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url; if (direct) return downloadAsBase64(String(direct)); const projectId = data?.id || data?.project_id || data?.projectId; if (!projectId) throw new Error(`MAGIC_HOUR_IMAGE_API_EMPTY: generation returned no project id. Response: ${JSON.stringify(data).slice(0,900)}`); return pollProject(String(projectId), key); }
+async function editImage(attachment: NonNullable<ProcessImageParams['attachments']>[number], prompt: string): Promise<string> { const key = requireKey(); if (!attachment.base64Data) throw new Error('MAGIC_HOUR_IMAGE_INPUT_MISSING: uploaded image has no base64 data.'); const extension = (attachment.filename.split('.').pop() || 'png').toLowerCase(); const data = await createProject('/v1/ai-image-editor', { assets: { image_file_path: `data:image/${extension === 'jpg' ? 'jpeg' : extension};base64,${attachment.base64Data}` }, style: { prompt: String(prompt || '').trim() || 'Edit this image while preserving the main subject.' }, model: 'qwen-edit', image_count: 1, aspect_ratio: 'auto', resolution: '1k', name: `MKUU Image Edit ${Date.now()}` }, key); const direct = data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url; if (direct) return downloadAsBase64(String(direct)); const projectId = data?.id || data?.project_id || data?.projectId; if (!projectId) throw new Error(`MAGIC_HOUR_IMAGE_EDIT_EMPTY: editor returned no project id. Response: ${JSON.stringify(data).slice(0,900)}`); return pollProject(String(projectId), key); }
+async function removeBackground(attachment: NonNullable<ProcessImageParams['attachments']>[number]): Promise<string> { const key = requireKey(); if (!attachment.base64Data) throw new Error('MAGIC_HOUR_IMAGE_INPUT_MISSING: uploaded image has no base64 data.'); const extension = (attachment.filename.split('.').pop() || 'png').toLowerCase(); const data = await createProject('/v1/image-background-remover', { assets: { image_file_path: `data:image/${extension === 'jpg' ? 'jpeg' : extension};base64,${attachment.base64Data}` }, name: `MKUU Background Removal ${Date.now()}` }, key); const direct = data?.image_url || data?.output_url || data?.result?.url || data?.images?.[0]?.url; if (direct) return downloadAsBase64(String(direct)); const projectId = data?.id || data?.project_id || data?.projectId; if (!projectId) throw new Error(`MAGIC_HOUR_BACKGROUND_REMOVE_EMPTY: remover returned no project id. Response: ${JSON.stringify(data).slice(0,900)}`); return pollProject(String(projectId), key); }
+function wantsBackgroundRemoval(prompt: string): boolean { const p = prompt.toLowerCase(); return /(remove|ondoa|toa|delete|fanya)\s+.{0,30}(background|bg|mandhar|backdrop)/i.test(p) || /(background|bg|mandhar|backdrop).{0,30}(remove|ondoa|toa|delete)/i.test(p); }
+export class ImageService { private static instance: ImageService | null = null; public static getInstance(): ImageService { if (!ImageService.instance) ImageService.instance = new ImageService(); return ImageService.instance; } public async processImage(params: ProcessImageParams): Promise<ImageProcessResult> { const { userId, prompt, attachments = [] } = params; const imageAttachment = attachments.find((a) => String(a.mimeType || '').startsWith('image/')); let imageBase64: string; let modelUsed: string; let explanation: string; if (imageAttachment) { if (wantsBackgroundRemoval(prompt)) { imageBase64 = await removeBackground(imageAttachment); modelUsed = 'Magic Hour Background Remover'; explanation = 'Nimeondoa background kupitia MKUU Image Studio kwa kutumia Magic Hour.'; } else { imageBase64 = await editImage(imageAttachment, prompt); modelUsed = EDIT_IMAGE_MODEL; explanation = 'Nimehariri picha kupitia MKUU Image Studio kwa kutumia Magic Hour.'; } } else { imageBase64 = await generateImage(prompt); modelUsed = PRIMARY_IMAGE_MODEL; explanation = 'Nimetengeneza picha halisi kupitia MKUU Image Studio kwa kutumia Magic Hour.'; } const lower = String(prompt || '').toLowerCase(); const filename = lower.includes('logo') ? `Logo_ya_Max_${Date.now().toString().slice(-6)}.jpg` : `Picha_ya_Max_${Date.now().toString().slice(-6)}.jpg`; const title = lower.includes('logo') ? 'Logo Iliyotengenezwa' : 'Picha Iliyotengenezwa'; const saved = await generateRealFile({ userId, filename, fileType: 'jpg', title, content: imageBase64, base64Data: imageBase64, description: explanation }); return { file: saved, explanation, modelUsed }; } }
 export const imageService = ImageService.getInstance();
