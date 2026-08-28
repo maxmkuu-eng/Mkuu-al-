@@ -20,15 +20,22 @@ function resolveExaApiKey(): string {
   return normalized.trim().replace(/^['"`]+|['"`]+$/g, '').trim();
 }
 
-function tanzaniaDateContext(): { today: string; yesterday: string; twoDaysAgo: string } {
+function tanzaniaDateContext(): { today: string; yesterday: string; twoDaysAgo: string; formatted: string } {
   const now = new Date();
-  const format = (date: Date) => new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Africa/Dar_es_Salaam', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(date);
+  const timeZone = 'Africa/Dar_es_Salaam';
+  const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const fullFormatter = new Intl.DateTimeFormat('sw-TZ', {
+    timeZone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  const formatDate = (date: Date) => dateFormatter.format(date);
   return {
-    today: format(now),
-    yesterday: format(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
-    twoDaysAgo: format(new Date(now.getTime() - 48 * 60 * 60 * 1000)),
+    today: formatDate(now),
+    yesterday: formatDate(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+    twoDaysAgo: formatDate(new Date(now.getTime() - 48 * 60 * 60 * 1000)),
+    formatted: `${fullFormatter.format(now)} (Africa/Dar_es_Salaam, UTC+3)`,
   };
 }
 
@@ -36,8 +43,16 @@ function isFreshOrRelativeQuery(query: string): boolean {
   return /\b(jana|juzi|leo|today|yesterday|latest|newest|current|sasa|wa sasa|hivi punde|habari mpya|habari za leo|wiki hii|this week|matokeo ya|mechi ya|ratiba ya|msimamo wa|nani ameshinda|nani kashinda)\b/i.test(query);
 }
 
+function isSocialQuery(query: string): boolean {
+  return /\b(instagram|facebook|tiktok|youtube|twitter|x\.com|social media|post ya|tweet|reel|story|official post|profile)\b/i.test(query);
+}
+
 function isSportsResultQuery(query: string): boolean {
   return /\b(simba|yanga|young africans|azam|coastal union|singida|geita gold|jkt tanzania|namungo|mashujaa|dodoma jiji|kagera sugar|tabora united|mechi|mchezo|matokeo|score|full time|ft|win|won|lost|draw|ushindi|amecheza|ilicheza|amefungwa|imeshinda|kashinda|mshindi|mpinzani|opponent|fixture|standings|ligi|premier league|champions league|caf)\b/i.test(query);
+}
+
+function isOpponentQuestion(query: string): boolean {
+  return /\b(amecheza na nani|amecheza dhidi ya nani|alicheza na nani|ilicheza na nani|who did .* play|opponent)\b/i.test(query);
 }
 
 function resultStrength(item: any): number {
@@ -49,11 +64,30 @@ function resultStrength(item: any): number {
   return score;
 }
 
+function extractOpponentAnswer(query: string, results: any[], requestedDate: string): string | null {
+  const team = String(query).match(/\b(simba(?: sc)?|yanga(?: sc)?|young africans|azam(?: fc)?|coastal union(?: fc)?)\b/i)?.[1];
+  if (!team) return null;
+  const teamRegex = team.replace(/\s+/g, '\\s+') .replace(/(?:\\s+sc|\\s+fc)$/i, '(?:\\s+(?:SC|FC))?');
+  const vsPattern = new RegExp(`${teamRegex}\\s*(?:vs\\.?|v\\.?|versus)\\s*([^|\\-–—,]+)`, 'i');
+  const vsReversePattern = new RegExp(`([^|\\-–—,]+)\\s*(?:vs\\.?|v\\.?|versus)\\s*${teamRegex}`, 'i');
+
+  for (const item of results) {
+    const haystack = `${item?.title || ''} ${item?.highlights?.join?.(' ') || ''}`;
+    const direct = haystack.match(vsPattern);
+    const reverse = haystack.match(vsReversePattern);
+    const opponent = (direct?.[1] || reverse?.[1] || '').replace(/\s*(live score|live result|result|score).*$/i, '').trim();
+    if (opponent) return `Jana ${team.replace(/\b\w/g, (c) => c.toUpperCase())} alicheza na ${opponent}.`;
+  }
+  return null;
+}
+
 export async function searchWithExa(query: string): Promise<ExaSearchResult> {
   const apiKey = resolveExaApiKey();
   const dates = tanzaniaDateContext();
   const fresh = isFreshOrRelativeQuery(query);
+  const social = isSocialQuery(query);
   const sportsResult = isSportsResultQuery(query);
+  const opponentQuestion = isOpponentQuestion(query);
   const requestedDate = /\b(jana|yesterday)\b/i.test(query)
     ? dates.yesterday
     : /\b(juzi)\b/i.test(query)
@@ -61,8 +95,8 @@ export async function searchWithExa(query: string): Promise<ExaSearchResult> {
       : dates.today;
 
   const queryWithAbsoluteDates = fresh
-    ? `${query}\nIMPORTANT DATE CONTEXT: Current date in Tanzania is ${dates.today}. Requested event date is ${requestedDate}. If the user says "jana/yesterday", that means ${dates.yesterday}; if "juzi", that means ${dates.twoDaysAgo}. ${sportsResult ? 'SPORTS RESULT REQUIREMENT: find the completed match on the requested date. Search specifically for final/full-time result, opponent and score. Ignore pre-match previews, fixtures, scheduled kick-off pages and articles saying the teams WILL play.' : 'Use the requested event date, not an older event with a similar name.'}`
-    : query;
+    ? `${query}\nIMPORTANT TANZANIA TIME CONTEXT: Current local date/time is ${dates.formatted}. Current date=${dates.today}. Requested event date=${requestedDate}. If the user says "jana/yesterday", that means ${dates.yesterday}; if "juzi", that means ${dates.twoDaysAgo}. ${sportsResult ? 'SPORTS RESULT REQUIREMENT: find the completed match on the requested date. Search specifically for final/full-time result, opponent and score. Ignore pre-match previews, fixtures, scheduled kick-off pages and articles saying the teams WILL play.' : 'Use the requested event date, not an older event with a similar name.'}`
+    : `${query}\nCURRENT TANZANIA LOCAL TIME: ${dates.formatted}`;
 
   const body: Record<string, unknown> = {
     query: sportsResult
@@ -75,10 +109,11 @@ export async function searchWithExa(query: string): Promise<ExaSearchResult> {
 
   if (fresh) {
     const requestedStart = new Date(`${requestedDate}T00:00:00+03:00`).toISOString();
-    body.startPublishedDate = sportsResult ? requestedStart : new Date(new Date(`${dates.twoDaysAgo}T00:00:00+03:00`).getTime()).toISOString();
+    body.startPublishedDate = sportsResult ? requestedStart : new Date(`${dates.twoDaysAgo}T00:00:00+03:00`).toISOString();
     body.endPublishedDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    body.category = 'news';
-    body.systemPrompt = `Return only information supported by the freshest search results. Current Tanzania date=${dates.today}; requested event date=${requestedDate}. ${sportsResult ? 'For sports questions, the requested event must be completed. Prefer pages explicitly showing FT/full-time/final result or a completed match score. Reject pre-match previews, fixture pages without a result, scheduled kick-off pages, and text saying the teams will play. Do not use an older head-to-head result. If no completed result is supported, say that no verified final result was found instead of guessing.' : 'For relative dates, use the requested event date and do not substitute an older event with a similar title.'}`;
+    // Do NOT restrict live search to the news vertical. Website, official pages,
+    // social posts and sports pages must all remain searchable through Exa.
+    body.maxAgeHours = 0;
   }
 
   const response = await fetch('https://api.exa.ai/search', {
@@ -103,28 +138,30 @@ export async function searchWithExa(query: string): Promise<ExaSearchResult> {
     .filter((item: any) => item?.url)
     .map((item: any) => ({ title: String(item.title || item.url).trim(), url: String(item.url).trim() }));
 
-  // Exa's synthesized answer can sometimes promote a same-day pre-match story.
-  // For sports result questions, build the evidence passed to MKUU from the
-  // highest-confidence result pages instead of trusting that synthesis blindly.
   let answer = '';
-  if (sportsResult) {
-    const strong = results.filter((item: any) => resultStrength(item) >= 6).slice(0, 5);
+
+  // Exact-answer guard for questions such as "Jana Simba amecheza na nani".
+  // Return only the requested fact instead of dumping search-result narratives.
+  if (sportsResult && opponentQuestion) {
+    answer = extractOpponentAnswer(query, results, requestedDate) || '';
+    if (!answer) throw new Error(`EXA_SEARCH_NO_VERIFIED_SPORTS_RESULT: No verified opponent found for ${requestedDate}.`);
+  } else if (sportsResult) {
+    const strong = results.filter((item: any) => resultStrength(item) >= 6).slice(0, 3);
     answer = strong
-      .map((item: any, index: number) => {
-        const title = String(item.title || item.url || '').trim();
-        const published = item.publishedDate ? ` | published ${item.publishedDate}` : '';
-        const evidence = String(item.highlights?.[0] || item.summary || item.text || '').trim().slice(0, 1800);
-        return `${index + 1}. ${title}${published}\n${evidence}`;
-      })
+      .map((item: any) => String(item.highlights?.[0] || item.summary || item.text || '').trim().slice(0, 1200))
+      .filter(Boolean)
       .join('\n\n');
-    if (!answer) {
-      throw new Error(`EXA_SEARCH_NO_VERIFIED_SPORTS_RESULT: No completed final result found for ${requestedDate}.`);
-    }
+    if (!answer) throw new Error(`EXA_SEARCH_NO_VERIFIED_SPORTS_RESULT: No completed final result found for ${requestedDate}.`);
   } else {
+    // Prefer Exa's own answer output when available. No Gemini/other LLM is used here.
     answer = String(data?.output?.content || '').trim();
     if (!answer) {
+      // Keep the fallback deliberately short and question-focused: only the top
+      // relevant passages are returned, rather than unrelated search results.
       answer = results
-        .map((item: any, index: number) => `${index + 1}. ${item.title || item.url}${item.publishedDate ? ` (${item.publishedDate})` : ''}\n${item.highlights?.[0] || item.summary || item.text || ''}`)
+        .slice(0, social ? 3 : 2)
+        .map((item: any) => String(item.highlights?.[0] || item.summary || item.text || '').trim().slice(0, 1000))
+        .filter(Boolean)
         .join('\n\n')
         .trim();
     }
