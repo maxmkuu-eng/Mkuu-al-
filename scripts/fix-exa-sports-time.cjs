@@ -35,7 +35,8 @@ const replacement = String.raw`function extractOpponentAnswer(query:string,resul
     ];
     for(const p of patterns){
       const m=s.match(p.re); if(!m)continue;
-      const [hh,mm]=m[1].split(':').map(Number); const total=(hh*60+mm+p.offset*60+1440)%1440;
+      const parts=m[1].split(':').map(Number);
+      const total=(parts[0]*60+parts[1]+p.offset*60+1440)%1440;
       return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0')+' EAT';
     }
     return null;
@@ -53,7 +54,9 @@ const replacement = String.raw`function extractOpponentAnswer(query:string,resul
     const kickoff=tanzaniaKickoff(h);
     if(opp && opp.length<80){
       const day=/\b(jana|yesterday)\b/i.test(q)?'Jana':/\b(juzi)\b/i.test(q)?'Juzi':/\b(kesho|tomorrow)\b/i.test(q)?'Kesho':'Leo';
-      return `${day} ${team.replace(/\b\w/g,c=>c.toUpperCase())} ${future?'anacheza':'alicheza'} na ${opp}${kickoff?' saa '+kickoff:''}.`;
+      const verb=future?'anacheza':'alicheza';
+      const name=team.replace(/\b\w/g,c=>c.toUpperCase());
+      return day+' '+name+' '+verb+' na '+opp+(kickoff?' saa '+kickoff:'')+'.';
     }
   }
   return null;
