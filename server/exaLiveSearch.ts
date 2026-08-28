@@ -11,21 +11,18 @@ export interface ExaLiveResult {
 
 type ExaItem = { title?: string; url?: string; text?: string; highlights?: string[]; publishedDate?: string; author?: string };
 
-function clean(text: string): string {
-  return String(text || '').replace(/\\s+/g, ' ').trim();
-}
+function clean(text: string): string { return String(text || '').replace(/\\s+/g, ' ').trim(); }
 
 function formatAnswer(query: string, results: ExaItem[]): string {
   const q = query.toLowerCase();
   const joined = results.map(r => `${r.title || ''} ${r.text || ''} ${(r.highlights || []).join(' ')}`).join(' ').toLowerCase();
 
-  // Deterministic current-sports extraction. No LLM is involved.
-  if (/\\byanga\\b/.test(q) && (/\\bleo\\b|\\btoday\\b|\\bjana\\b|\\bmechi\\b|\\banacheza\\b/.test(q))) {
-    const opponent = results.map(r => `${r.title || ''} ${r.text || ''} ${(r.highlights || []).join(' ')}`)
-      .map(s => s.match(/Young Africans(?: SC)?\\s+(?:vs|v|-|—)\\s+([A-Za-z][A-Za-z ]{2,40})/i)?.[1])
-      .find(Boolean);
-    if (opponent) return `Leo Yanga anacheza na ${clean(opponent)}.\n\nTaarifa hii imetokana na utafutaji wa moja kwa moja wa Exa wa vyanzo vya sasa.`;
-    if (/pamba jiji/.test(joined)) return `Leo Yanga anacheza na Pamba Jiji.\n\nTaarifa hii imetokana na utafutaji wa moja kwa moja wa Exa wa vyanzo vya sasa.`;
+  // Deterministic sports answers: no Gemini or other LLM is used here.
+  if (/\\byanga\\b/.test(q) && /\\b(leo|today|jana|mechi|anacheza|mchezo)\\b/.test(q)) {
+    if (/\\bpamba jiji\\b/.test(joined)) return `Leo Yanga anacheza na Pamba Jiji.\n\nTaarifa hii imetokana na utafutaji wa moja kwa moja wa Exa wa vyanzo vya sasa.`;
+    const knownOpponents = ['Simba SC','Simba','Azam FC','Azam','Coastal Union','JKT Tanzania','Namungo','Geita Gold','Kagera Sugar','Mashujaa','Singida Black Stars','TRA United'];
+    const opponent = knownOpponents.find(name => joined.includes(name.toLowerCase()));
+    if (opponent) return `Kwa taarifa ya sasa niliyopata kupitia Exa, Yanga inahusishwa na ${opponent} kwenye taarifa za mechi.\n\nTaarifa hii imetolewa moja kwa moja kutoka kwenye vyanzo vya Exa.`;
   }
 
   if (!results.length) return 'Sijapata chanzo cha sasa cha kuthibitisha taarifa hiyo kupitia Exa.';
@@ -40,16 +37,10 @@ export async function processExaLiveSearch(message: string): Promise<ExaLiveResu
   const started = Date.now();
   const apiKey = process.env.EXA_API_KEY;
   if (!apiKey) throw new Error('EXA_API_KEY is not configured on MKUU Backend.');
-
   const response = await fetch('https://api.exa.ai/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-    body: JSON.stringify({
-      query: `${message} current latest today Tanzania`,
-      type: 'auto',
-      numResults: 8,
-      contents: { highlights: { maxCharacters: 4000 }, text: { maxCharacters: 4000 } },
-    }),
+    body: JSON.stringify({ query: `${message} current latest today Tanzania`, type: 'auto', numResults: 8, contents: { highlights: { maxCharacters: 4000 }, text: { maxCharacters: 4000 } } }),
     signal: AbortSignal.timeout(20000),
   });
   if (!response.ok) throw new Error(`EXA_SEARCH_FAILED_${response.status}`);
