@@ -19,8 +19,8 @@ const replacement = String.raw`function extractOpponentAnswer(query:string,resul
   const aliases:Record<string,string>={yanga:'young africans','yanga sc':'young africans','young africans':'young africans',simba:'simba','simba sc':'simba',azam:'azam','azam fc':'azam','coastal union':'coastal union','coastal union fc':'coastal union'};
   const canonical=aliases[team.toLowerCase()]||team;
   const tr=canonical.replace(/\s+/g,'\\s+');
-  const a=new RegExp(`${tr}\\s*(?:sc|fc)?\\s*(?:vs\\.?|v\\.?|versus|[-–—])\\s*([^|\\-–—,]+)`,'i');
-  const b=new RegExp(`([^|\\-–—,]+)\\s*(?:vs\\.?|v\\.?|versus|[-–—])\\s*${tr}\\s*(?:sc|fc)?`,'i');
+  const a=new RegExp(tr+'\\s*(?:sc|fc)?\\s*(?:vs\\.?|v\\.?|versus|[-–—])\\s*([^|\\-–—,]+)','i');
+  const b=new RegExp('([^|\\-–—,]+)\\s*(?:vs\\.?|v\\.?|versus|[-–—])\\s*'+tr+'\\s*(?:sc|fc)?','i');
   const future=/\b(kesho|tomorrow|will play|will face|anacheza|tutacheza|itaikabili|leo|today)\b/i.test(q);
 
   function tanzaniaKickoff(text:string){
@@ -28,21 +28,21 @@ const replacement = String.raw`function extractOpponentAnswer(query:string,resul
     const patterns=[
       {re:/(\b\d{1,2}:\d{2})\s*(?:UTC|GMT)\b/i, offset:3},
       {re:/(\b\d{1,2}:\d{2})\s*(?:EAT|UTC\+?3)\b/i, offset:0},
-      {re:/(\b\d{1,2}:\d{2})\s*(?:CET|UTC\+?1)\b/i, offset:2},
-      {re:/(\b\d{1,2}:\d{2})\s*(?:CEST|UTC\+?2)\b/i, offset:1},
-      {re:/(\b\d{1,2}:\d{2})\s*(?:BST|UTC\+?1)\b/i, offset:2},
-      {re:/(\b\d{1,2}:\d{2})\s*(?:CAT|UTC\+?2)\b/i, offset:1}
+      {re:/(\b\d{1,2}:\d{2})\s*(?:CET)\b/i, offset:2},
+      {re:/(\b\d{1,2}:\d{2})\s*(?:CEST)\b/i, offset:1},
+      {re:/(\b\d{1,2}:\d{2})\s*(?:BST)\b/i, offset:2},
+      {re:/(\b\d{1,2}:\d{2})\s*(?:CAT)\b/i, offset:1}
     ];
     for(const p of patterns){
       const m=s.match(p.re); if(!m)continue;
       const [hh,mm]=m[1].split(':').map(Number); const total=(hh*60+mm+p.offset*60+1440)%1440;
-      return `${String(Math.floor(total/60)).padStart(2,'0')}:${String(total%60).padStart(2,'0')} EAT`;
+      return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0')+' EAT';
     }
     return null;
   }
 
   for(const item of results){
-    const h=`${item?.title||''} ${item?.highlights?.join?.(' ')||''} ${item?.summary||''} ${item?.text||''}`;
+    const h=(String(item?.title||'')+' '+(item?.highlights?.join?.(' ')||'')+' '+String(item?.summary||'')+' '+String(item?.text||''));
     const m=h.match(a)||h.match(b);
     let opp=(m?.[1]||'').replace(/\s*(live score|live result|result|score|today|leo|tonight|scheduled|kick[- ]?off).*$/i,'').trim();
     if(!opp){
@@ -53,7 +53,7 @@ const replacement = String.raw`function extractOpponentAnswer(query:string,resul
     const kickoff=tanzaniaKickoff(h);
     if(opp && opp.length<80){
       const day=/\b(jana|yesterday)\b/i.test(q)?'Jana':/\b(juzi)\b/i.test(q)?'Juzi':/\b(kesho|tomorrow)\b/i.test(q)?'Kesho':'Leo';
-      return `${day} ${team.replace(/\b\w/g,c=>c.toUpperCase())} ${future?'anacheza':'alicheza'} na ${opp}${kickoff?` saa ${kickoff}`:''}.`;
+      return `${day} ${team.replace(/\b\w/g,c=>c.toUpperCase())} ${future?'anacheza':'alicheza'} na ${opp}${kickoff?' saa '+kickoff:''}.`;
     }
   }
   return null;
