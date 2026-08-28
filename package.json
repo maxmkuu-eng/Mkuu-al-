@@ -29,7 +29,7 @@
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
-    "openai": "^5.12.0",
+    "openai": "^5.12.2",
     "pdf-lib": "^1.17.1",
     "xlsx": "^0.18.0",
     "@vitejs/plugin-react": "^4.3.4",
