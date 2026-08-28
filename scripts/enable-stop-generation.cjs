@@ -26,17 +26,42 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   write(file, s);
 }
 
-// ChatView: while loading, the same control becomes a dark-red Stop button.
+// ChatView: the composer control becomes Stop while a real generation is running.
 {
   const file = 'src/components/ChatView.tsx';
   let s = read(file);
-  s = s.replace('  Send, Mic, Crown, Brain, Users, Download, FileText, FileSpreadsheet, FileCode,', '  Send, Square, Mic, Crown, Brain, Users, Download, FileText, FileSpreadsheet, FileCode,');
-  s = s.replace('  onSendMessage: (text: string, isVoice?: boolean, attachments?: AttachmentItem[]) => Promise<any>;', '  onSendMessage: (text: string, isVoice?: boolean, attachments?: AttachmentItem[]) => Promise<any>; onStopGenerating?: () => void;');
-  s = s.replace('  messages, conversationTitle = \'Mkuu Chat\', onSendMessage, onRetryMessage, isLoading,', '  messages, conversationTitle = \'Mkuu Chat\', onSendMessage, onStopGenerating, onRetryMessage, isLoading,');
-  s = s.replace("    if ((!inputText.trim() && selectedAttachments.length === 0) || isLoading) return;", "    if (isLoading) { onStopGenerating?.(); return; }\n    if (!inputText.trim() && selectedAttachments.length === 0) return;");
-  const oldButton = '<button type="submit" id="chat-send-btn" disabled={(!inputText.trim() && selectedAttachments.length === 0) || isLoading} className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm uppercase tracking-wider flex items-center space-x-1.5 transition-all shadow-md ${(inputText.trim() || selectedAttachments.length > 0) && !isLoading ? \'bg-[#D4AF37] hover:bg-[#c59f2e] text-black cursor-pointer\' : \'bg-[#1a1a1a] text-[#666666] cursor-not-allowed border border-[#252525]\'}`}><span>SEND</span><Send className="w-3.5 h-3.5" /></button>';
-  const newButton = '<button type="submit" id="chat-send-btn" disabled={!isLoading && (!inputText.trim() && selectedAttachments.length === 0)} className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-md ${isLoading ? \'bg-[#B71C1C] hover:bg-[#D32F2F] text-white cursor-pointer border border-red-700\' : (inputText.trim() || selectedAttachments.length > 0) ? \'bg-[#D4AF37] hover:bg-[#c59f2e] text-black cursor-pointer\' : \'bg-[#1a1a1a] text-[#666666] cursor-not-allowed border border-[#252525]\'}`} title={isLoading ? "Simamisha jibu" : "Tuma ujumbe"}>{isLoading ? <Square className="w-3.5 h-3.5 fill-current" /> : <><span>SEND</span><Send className="w-3.5 h-3.5" /></>}</button>';
-  if (s.includes(oldButton)) s = s.replace(oldButton, newButton);
+
+  if (!s.includes('onStopGenerating?: () => void;')) {
+    s = s.replace(
+      '  onRetryMessage?: (message: ChatMessage) => Promise<any>; isLoading: boolean;',
+      '  onRetryMessage?: (message: ChatMessage) => Promise<any>; onStopGenerating?: () => void; isLoading: boolean;'
+    );
+  }
+  s = s.replace(
+    '  messages, conversationTitle = \'Mkuu\', onSendMessage, onRetryMessage, isLoading,',
+    '  messages, conversationTitle = \'Mkuu\', onSendMessage, onRetryMessage, onStopGenerating, isLoading,'
+  );
+
+  // Allow submit while loading so the same button can stop generation.
+  s = s.replace(
+    '    if ((!inputText.trim() && selectedAttachments.length === 0) || isLoading) return;',
+    '    if (isLoading) { onStopGenerating?.(); return; }\n    if (!inputText.trim() && selectedAttachments.length === 0) return;'
+  );
+
+  // Make the top speaker actually read the latest assistant response instead of opening the voice modal.
+  if (!s.includes('const speakLatestAssistant = () =>')) {
+    s = s.replace(
+      '  const getFileIcon = (type: string) => {',
+      "  const speakLatestAssistant = () => {\n    const latest = [...messages].reverse().find((m) => m.role === 'assistant' && String(m.content || '').trim());\n    if (latest) playSpeech(latest.id, latest.content);\n    else onOpenVoice();\n  };\n\n  const getFileIcon = (type: string) => {"
+    );
+  }
+  s = s.replace('onClick={onOpenVoice} aria-label="Sauti" className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/[0.06] hover:text-[#D4AF37]"><Volume2', 'onClick={speakLatestAssistant} aria-label="Soma jibu kwa sauti" className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/[0.06] hover:text-[#D4AF37]"><Volume2');
+
+  // Current ChatGPT-style composer: replace the disabled Send control with a real Stop control.
+  const currentButton = '<button type="submit" disabled={isLoading || (!inputText.trim() && selectedAttachments.length === 0)} aria-label="Tuma" className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500">{isLoading ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}</button>';
+  const stopButton = '<button type="submit" disabled={!isLoading && (!inputText.trim() && selectedAttachments.length === 0)} aria-label={isLoading ? "Simamisha jibu" : "Tuma"} title={isLoading ? "Simamisha jibu" : "Tuma ujumbe"} className={`mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${isLoading ? "bg-red-600 text-white hover:bg-red-500" : "bg-zinc-100 text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500"}`}>{isLoading ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}</button>';
+  if (s.includes(currentButton)) s = s.replace(currentButton, stopButton);
+
   write(file, s);
 }
 
@@ -47,11 +72,23 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   if (!s.includes('signal?: AbortSignal;')) {
     s = s.replace('  people?: Person[];\n}', '  people?: Person[];\n  signal?: AbortSignal;\n}');
   }
-  s = s.replace("    method: 'POST',\n    body: JSON.stringify({\n      prompt: params.message,", "    method: 'POST',\n    signal: params.signal,\n    body: JSON.stringify({\n      prompt: params.message,");
-  s = s.replace("const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });", "const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: params.signal });");
-  s = s.replace("    method: 'POST',\n    body: JSON.stringify({\n      conversationId: params.conversationId,", "    method: 'POST',\n    signal: params.signal,\n    body: JSON.stringify({\n      conversationId: params.conversationId,");
-  s = s.replace("const response = await fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }, body: JSON.stringify({ message: params.message", "const response = await fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }, signal: params.signal, body: JSON.stringify({ message: params.message");
+  s = s.replace(
+    "    method: 'POST',\n    body: JSON.stringify({\n      prompt: params.message,",
+    "    method: 'POST',\n    signal: params.signal,\n    body: JSON.stringify({\n      prompt: params.message,"
+  );
+  s = s.replace(
+    "const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });",
+    "const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: params.signal });"
+  );
+  s = s.replace(
+    "    method: 'POST',\n    body: JSON.stringify({\n      conversationId: params.conversationId,",
+    "    method: 'POST',\n    signal: params.signal,\n    body: JSON.stringify({\n      conversationId: params.conversationId,"
+  );
+  s = s.replace(
+    "const response = await fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }, body: JSON.stringify({ message: params.message",
+    "const response = await fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }, signal: params.signal, body: JSON.stringify({ message: params.message"
+  );
   write(file, s);
 }
 
-console.log('MKUU: functional red Stop generation control enabled; network requests are abortable.');
+console.log('MKUU: functional Stop generation + working speaker playback enabled.');
