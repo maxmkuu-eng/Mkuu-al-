@@ -8,25 +8,60 @@ function patchFile(relative, transform) {
   if (next !== source) fs.writeFileSync(file, next);
 }
 
-// Backend: classify current public-figure/social questions as live-search requests.
+// Backend: current/public-figure/social questions are LIVE WEB requests.
+// IMPORTANT: live-search answers must bypass Gemini/Tavily entirely and use Exa directly.
 patchFile('server/geminiService.ts', (source) => {
-  const match = source.match(/const searchKeywords = \[(.*?)\];/s);
-  if (!match) throw new Error('MKUU: searchKeywords array marker not found.');
-  const extras = [
-    'amejifungua', 'amepata mtoto', 'mtoto wa', 'ujauzito', 'pregnancy', 'pregnant',
-    'baby', 'birth', 'zuchu', 'diamond', 'msanii', 'celebrity', 'artist', 'singer',
-    'actor', 'actress', 'social media', 'instagram', 'facebook', 'tiktok', 'youtube',
-    'twitter', 'x.com', 'official statement', 'post ya', 'statement ya', 'today',
-    'yesterday', 'tomorrow', 'what happened', 'nani ni', 'who is', 'price', 'cost',
-    'salary', 'appointed', 'resigned', 'died', 'death'
-  ];
-  let body = match[1];
-  for (const term of extras) if (!body.includes(`'${term}'`)) body += `,'${term}'`;
-  const bodyStart = match.index + match[0].indexOf(match[1]);
-  return source.slice(0, bodyStart) + body + source.slice(bodyStart + match[1].length);
+  if (!source.includes("import { searchWithExa } from './exaSearch.js';")) {
+    source = source.replace(
+      "import { searchWithTavily } from './tavilySearch.js';",
+      "import { searchWithTavily } from './tavilySearch.js';\nimport { searchWithExa } from './exaSearch.js';"
+    );
+  }
+
+  source = source.replace(
+    "const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;",
+    "const usedModel = isSearchQuery ? 'Exa Live Search' : PERSONAL_CHAT_MODEL;"
+  );
+
+  // Replace only the top-level live-search branch. This prevents any Gemini
+  // generation call, Google Search tool, or Tavily fallback from running for
+  // live/social questions.
+  const start = source.indexOf('    if (isSearchQuery) {');
+  const elseMarker = start >= 0 ? source.indexOf('\n    } else {', start) : -1;
+  if (start < 0 || elseMarker < 0) throw new Error('MKUU: live-search branch marker not found.');
+
+  const branchEnd = elseMarker + '\n    }'.length;
+  const liveBranch = `    if (isSearchQuery) {\n      try {\n        const tz = getCurrentTanzaniaTimeContext();\n        const exaQuery = [\n          String(message || '').trim(),\n          '',\n          'LIVE SEARCH POLICY:',\n          '- Answer ONLY the exact question asked by the user.',\n          '- Use Exa live web/social search evidence only; do not use model memory.',\n          '- Current Tanzania date/time: ' + tz.formattedString,\n          '- If the user says jana/yesterday/juzi/leo, resolve it using Tanzania local date above.',\n          '- Never substitute an older event, old article, old match, or historical person for the requested date.',\n          '- For social-media questions, prefer the requested official/public post or profile evidence.',\n          '- For sports result questions, require the completed final result for the requested date.',\n          '- If Exa cannot verify the exact requested fact, say it could not be verified instead of guessing.',\n        ].join('\\n');\n\n        console.log('[MKUU-BACKEND] [EXA_LIVE_SEARCH_STARTED] Gemini is bypassed for live/social search.');\n        const exaResult = await searchWithExa(exaQuery);\n        aiReplyText = String(exaResult.answer || '').trim();\n        if (!aiReplyText) throw new Error('EXA_SEARCH_EMPTY: Exa returned no verified answer.');\n        console.log('[MKUU-BACKEND] [EXA_LIVE_SEARCH_SUCCESS] Direct Exa answer returned.');\n      } catch (exaErr: any) {\n        const exaMsg = String(exaErr?.message || exaErr);\n        console.error('[MKUU-BACKEND] [EXA_LIVE_SEARCH_FAILED]', exaMsg);\n        throw new Error(\`LIVE_SEARCH_UNAVAILABLE: Exa live search failed. \${exaMsg}\`);\n      }\n    }`;
+
+  source = source.slice(0, start) + liveBranch + source.slice(branchEnd);
+
+  // Never label a direct Exa answer as Gemini.
+  source = source.replace(
+    "aiProvider: AI_PROVIDER,\n      chatModel: usedModel,",
+    "aiProvider: isSearchQuery ? 'Exa Live Search' : AI_PROVIDER,\n      chatModel: usedModel,"
+  );
+
+  return source;
 });
 
-// Client: make the same questions live-search requests when the marker exists.
+// Backend request wrapper: remove the old Google wording from the live-search hint.
+patchFile('server.ts', (source) => {
+  return source.replace(
+    'Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu.',
+    'Tafuta mtandaoni kupitia Exa na uthibitishe taarifa za sasa kabla ya kujibu.'
+  );
+});
+
+// Agent path: remove the old Tavily instruction. geminiService now routes the
+// actual live request directly to Exa and never calls Gemini for that branch.
+patchFile('server/agentEngine.ts', (source) => {
+  return source.replace(
+    '[LIVE_WEB_SEARCH_REQUIRED — Tumia Tavily kupata taarifa mpya kabla ya kujibu]',
+    '[LIVE_WEB_SEARCH_REQUIRED — Tumia Exa kupata taarifa mpya kabla ya kujibu]'
+  );
+});
+
+// Client: make current/public-figure/social questions live-search requests.
 patchFile('src/services/aiEngine.ts', (source) => {
   const marker = '  const changingFactPatterns = [';
   const index = source.indexOf(marker);
@@ -93,5 +128,6 @@ patchFile('src/services/apiConfig.ts', (source) => {
   return source;
 });
 
-console.log('MKUU: current public-figure and social-information questions now route through Tavily.');
+console.log('MKUU: live/social search is now direct Exa; Gemini/Tavily/Google Search are bypassed for live requests.');
+console.log('MKUU: Tanzania real-time date/time context and relative-date guard enabled.');
 console.log('MKUU: response Stop control patched without changing other features.');
