@@ -9,9 +9,16 @@ source = source.replace(
   "function isFinalResultQuery(q:string){return /\\b(matokeo|score|full time|ft|result|nani ameshinda|nani kashinda|ameshinda|imeshinda|alishinda|ilishinda|amefungwa|alifungwa|ilifungwa|kushinda|kushindwa|won|lost|draw|final)\\b/i.test(q)&&!/\\b(anacheza|tutacheza|will play|will face|ratiba|fixture|upcoming|kesho|tomorrow)\\b/i.test(q);}",
 );
 
-const oldStrength = "if(/\\b(today|leo|will face|will play|tutacheza|kuikabili|preview|pre-match|kick[- ]?off|scheduled|itaikabili|inatarajiwa)\\b/i.test(t))s-=8;";
-const newStrength = "if(/\\b(today|leo|will face|will play|tutacheza|kuikabili|preview|pre-match|kick[- ]?off|scheduled|starts? on|starting at|it starts|itaikabili|inatarajiwa|will meet|will take on|fixture|upcoming)\\b/i.test(t))s-=14;";
-if (source.includes(oldStrength)) source = source.replace(oldStrength, newStrength);
+// A completed 2-0/3-0/etc. must score as strongly as a result keyword.
+const oldResultStrength = "if(/\\b(full time|ft|final score|match result|result|ushindi|won|defeated|beat|victory|1\\s*[-–]\\s*0|0\\s*[-–]\\s*1|2\\s*[-–]\\s*1|1\\s*[-–]\\s*2)\\b/i.test(t))s+=8;";
+const newResultStrength = "if(/\\b(full time|ft|final score|match result|result|ushindi|won|defeated|defeating|beat|victory)\\b/i.test(t)||/\\b\\d{1,2}\\s*[-–:]\\s*\\d{1,2}\\b/.test(t))s+=8;";
+if (source.includes(oldResultStrength)) source = source.replace(oldResultStrength, newResultStrength);
+
+const oldPreviewStrength = "if(/\\b(today|leo|will face|will play|tutacheza|kuikabili|preview|pre-match|kick[- ]?off|scheduled|itaikabili|inatarajiwa)\\b/i.test(t))s-=8;";
+const newPreviewStrength = "if(/\\b(today|leo|will face|will play|tutacheza|kuikabili|preview|pre-match|kick[- ]?off|scheduled|starts? on|starting at|it starts|itaikabili|inatarajiwa|will meet|will take on|fixture|upcoming)\\b/i.test(t))s-=14;";
+if (source.includes(oldPreviewStrength)) source = source.replace(oldPreviewStrength, newPreviewStrength);
+const alreadyHardenedPreview = "if(/\\b(today|leo|will face|will play|tutacheza|kuikabili|preview|pre-match|kick[- ]?off|scheduled|starts? on|starting at|it starts|itaikabili|inatarajiwa|will meet|will take on|fixture|upcoming)\\b/i.test(t))s-=14;";
+if (source.includes(alreadyHardenedPreview)) source = source.replace(alreadyHardenedPreview, alreadyHardenedPreview);
 
 const marker = "function evidenceText(item:any){return `${item?.title||''} ${item?.highlights?.join?.(' ')||''} ${item?.summary||''} ${item?.text||''}`.replace(/\\s+/g,' ').trim();}";
 if (!source.includes('function extractFinalSportsAnswer(')) {
