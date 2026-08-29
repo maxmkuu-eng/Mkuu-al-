@@ -16,11 +16,16 @@ function patch(filePath, replacements) {
   if (changed) fs.writeFileSync(file, source);
 }
 
-// 1) Backend: expose Exa citations from the live-search branch.
+// 1) Backend: expose Exa citations from the live-search branch and keep the
+// source array in function scope so ordinary chat requests do not throw.
 patch('server/geminiService.ts', [
   [
+    "    let aiReplyText = '';",
+    "    let aiReplyText = '';\n    let webSources: Array<{ title: string; url: string }> = [];",
+  ],
+  [
     '        const evidence = String(exa.answer || \'\').trim();',
-    '        const webSources = Array.isArray(exa.citations) ? exa.citations.filter((c) => c?.url).map((c) => ({ title: String(c.title || c.url), url: String(c.url) })) : [];\n        const evidence = String(exa.answer || \'\').trim();',
+    '        webSources = Array.isArray(exa.citations) ? exa.citations.filter((c) => c?.url).map((c) => ({ title: String(c.title || c.url), url: String(c.url) })) : [];\n        const evidence = String(exa.answer || \'\').trim();',
   ],
   [
     '  generatedFiles: GeneratedFileSummary[];\n  aiProvider: string;',
