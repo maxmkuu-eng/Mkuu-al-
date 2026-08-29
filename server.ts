@@ -13,7 +13,13 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   const DEFAULT_USER_ID = 'user_max_owner';
-  await ensureInitialSeedFiles();
+  // Do not block the HTTP listener on first-run seed-file generation. Some hosted
+  // runtimes health-check the port immediately after starting the Node process.
+  // The seed generator is internally guarded and failures must never prevent the
+  // MKUU server from binding to the platform-provided PORT.
+  void ensureInitialSeedFiles(DEFAULT_USER_ID).catch((error) => {
+    console.error('[MKUU-SEED] Initial seed generation failed; server will continue:', error);
+  });
   app.use((req, res, next) => { res.header('Access-Control-Allow-Origin','*'); res.header('Access-Control-Allow-Methods','GET, POST, PUT, PATCH, DELETE, OPTIONS'); res.header('Access-Control-Allow-Headers','Origin, X-Requested-With, Content-Type, Accept, Authorization'); if(req.method==='OPTIONS') return res.status(200).end(); next(); });
   app.use(express.json({ limit:'50mb' }));
   app.use(express.urlencoded({ extended:true, limit:'50mb' }));
@@ -49,9 +55,6 @@ async function startServer() {
     let effectiveHistory=Array.isArray(conversationHistory)&&conversationHistory.length?conversationHistory:[];
     if(!effectiveHistory.length&&conversationId){const stored=db.getConversation(conversationId,DEFAULT_USER_ID);if(stored) effectiveHistory=stored.messages;}
 
-    // Current/changing facts must be grounded with live Google Search.  Prefixing
-    // the user request with an explicit search directive guarantees the existing
-    // GeminiService search-intent detector enables googleSearch for these queries.
     const lowerMessage = String(message || '').toLowerCase();
     const currentFactQuery = /\b(waziri mkuu|rais wa|makamu wa rais|kiongozi wa sasa|mkuu wa nchi|meya wa|mkuu wa|mkurugenzi wa|mwanasiasa|current|latest|sasa|wa sasa|leo|hivi punde|habari mpya|habari za leo|bei ya|thamani ya|exchange rate|rate ya|matokeo ya|ratiba ya|msimamo wa|nani ameshinda|nani kashinda)\b/i.test(lowerMessage);
     const searchMessage = currentFactQuery && !/\b(tafuta google|search google|tafuta mtandaoni|search online)\b/i.test(lowerMessage)
@@ -85,7 +88,7 @@ async function startServer() {
   app.get('/api/autoreply/settings',(_req,res)=>res.json(db.getAutoReplySettings(DEFAULT_USER_ID)));
   app.put('/api/autoreply/settings',(req,res)=>res.json(db.updateAutoReplySettings(DEFAULT_USER_ID,req.body)));
   app.post('/api/autoreply/verify-phone',(req,res)=>{const phoneNumber=String(req.body?.phoneNumber||'').trim();if(!phoneNumber)return res.status(400).json({error:'PHONE_REQUIRED',message:'Nambari ya simu inahitajika.'});const updated=db.updateAutoReplySettings(DEFAULT_USER_ID,{myPhoneNumber:phoneNumber,phoneVerified:true,phoneVerifiedAt:new Date().toISOString()});res.json({success:true,phoneNumber,phoneVerified:true,phoneVerifiedAt:updated.phoneVerifiedAt});});
-  app.post('/api/autoreply/remove-phone',(_req,res)=>{const updated=db.updateAutoReplySettings(DEFAULT_USER_ID,{myPhoneNumber:'',phoneVerified:false,phoneVerifiedAt:undefined});res.json({success:true,phoneNumber:'',phoneVerified:false});});
+  app.post('/api/autoreply/remove-phone',(_req,res)=>{db.updateAutoReplySettings(DEFAULT_USER_ID,{myPhoneNumber:'',phoneVerified:false,phoneVerifiedAt:undefined});res.json({success:true,phoneNumber:'',phoneVerified:false});});
   app.get('/api/autoreply/logs',(_req,res)=>res.json(db.getAutoReplyLogs(DEFAULT_USER_ID)));
   app.delete('/api/autoreply/logs',(_req,res)=>{db.clearAutoReplyLogs(DEFAULT_USER_ID);res.json({success:true});});
   app.post('/api/autoreply/emergency-stop',(req,res)=>{const current=db.getAutoReplySettings(DEFAULT_USER_ID);const updated=db.updateAutoReplySettings(DEFAULT_USER_ID,{emergencyStop:req.body?.stop!==undefined?!!req.body.stop:!current.emergencyStop});res.json({success:true,emergencyStop:updated.emergencyStop,settings:updated});});
@@ -97,4 +100,4 @@ async function startServer() {
   if(process.env.NODE_ENV!=='production'){const vite=await createViteServer({server:{middlewareMode:true},appType:'spa'});app.use(vite.middlewares);}else{const distPath=path.join(process.cwd(),'dist');app.use(express.static(distPath));app.get('*',(_req,res)=>res.sendFile(path.join(distPath,'index.html')));}
   app.listen(PORT,'0.0.0.0',()=>console.log(`👑 MKUU AI Server is running on port ${PORT}`));
 }
-startServer();
+startServer().catch((error)=>{console.error('[MKUU-STARTUP] Fatal server startup error:',error);process.exit(1);});
