@@ -23,18 +23,23 @@ const replaceOnce = (s, from, to) => s.includes(from) ? s.replace(from, to) : s;
   );
 
   // Search official-government sources first for office-holder questions.
+  const governmentQueryLine = 'const governmentQuery=isGovernmentOfficeQuery(query);';
+  if (!s.includes(governmentQueryLine)) {
+    const bodyMarker = "const body:any={query:sports&&finalResult?`${q}\\nFINAL RESULT ONLY: ${requestedDate}`:q,type:fresh?'fast':'auto',numResults:sports?12:(fresh?12:8),contents:{highlights:true,text:true}};";
+    s = replaceOnce(s, bodyMarker, governmentQueryLine + bodyMarker);
+  }
   if (!s.includes('includeDomains')) {
     s = replaceOnce(
       s,
       "const body:any={query:sports&&finalResult?`${q}\\nFINAL RESULT ONLY: ${requestedDate}`:q,type:fresh?'fast':'auto',numResults:sports?12:(fresh?12:8),contents:{highlights:true,text:true}};",
-      "const governmentQuery=isGovernmentOfficeQuery(query);const body:any={query:sports&&finalResult?`${q}\\nFINAL RESULT ONLY: ${requestedDate}`:q,type:fresh?'fast':'auto',numResults:sports?12:(fresh?12:8),contents:{highlights:true,text:true}};if(governmentQuery)body.includeDomains=['ikulu.go.tz','pmo.go.tz','go.tz','gov.go.tz','michezo.go.tz','bunge.go.tz'];"
+      "const body:any={query:sports&&finalResult?`${q}\\nFINAL RESULT ONLY: ${requestedDate}`:q,type:fresh?'fast':'auto',numResults:sports?12:(fresh?12:8),contents:{highlights:true,text:true}};if(governmentQuery)body.includeDomains=['ikulu.go.tz','pmo.go.tz','go.tz','gov.go.tz','michezo.go.tz','bunge.go.tz'];"
     );
   }
 
   // Prefer official domains over ordinary news when the user asks who currently holds office.
   s = s.replace(
     "const data=await response.json() as any;const raw=Array.isArray(data?.results)?data.results:[];const ranked=sports&&finalResult?[...raw].sort((a:any,b:any)=>resultStrength(b)-resultStrength(a)):news?[...raw].sort((a:any,b:any)=>newsEvidenceStrength(b)-newsEvidenceStrength(a)):raw;",
-    "const data=await response.json() as any;const raw=Array.isArray(data?.results)?data.results:[];const governmentQuery=isGovernmentOfficeQuery(query);const ranked=sports&&finalResult?[...raw].sort((a:any,b:any)=>resultStrength(b)-resultStrength(a)):governmentQuery?[...raw].sort((a:any,b:any)=>authorityStrength(b)-authorityStrength(a)):news?[...raw].sort((a:any,b:any)=>newsEvidenceStrength(b)-newsEvidenceStrength(a)):raw;"
+    "const data=await response.json() as any;const raw=Array.isArray(data?.results)?data.results:[];const ranked=sports&&finalResult?[...raw].sort((a:any,b:any)=>resultStrength(b)-resultStrength(a)):governmentQuery?[...raw].sort((a:any,b:any)=>authorityStrength(b)-authorityStrength(a)):news?[...raw].sort((a:any,b:any)=>newsEvidenceStrength(b)-newsEvidenceStrength(a)):raw;"
   );
 
   s = s.replace(
@@ -68,15 +73,14 @@ const replaceOnce = (s, from, to) => s.includes(from) ? s.replace(from, to) : s;
     "return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};",
     "return {reply:result.reply,cleanSpeechText:result.cleanSpeechText,memoriesExtracted:result.memoriesExtracted,peopleRecognized:result.peopleRecognized,generatedFiles:result.generatedFiles,webSources:result.webSources||[],aiProvider:result.aiProvider,chatModel:result.chatModel,latencyMs:result.latencyMs};"
   );
-  // Do not inject a misleading "Tafuta Google" instruction. Exa is the live provider.
   s = s.replace(
     "const searchMessage = currentFactQuery && !/\\b(tafuta google|search google|tafuta mtandaoni|search online)\\b/i.test(lowerMessage)\n      ? `Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu. Swali la mtumiaji: ${message}`\n      : message;",
-    "const searchMessage = currentFactQuery ? message : message;"
+    "const searchMessage = message;"
   );
   write(file, s);
 }
 
-// 4) Carry web sources into the saved assistant message even without the legacy build patch.
+// 4) Carry web sources into the client result and saved assistant message.
 {
   const file = 'src/services/aiEngine.ts';
   let s = read(file);
