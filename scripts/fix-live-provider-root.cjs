@@ -23,8 +23,6 @@ if (start === -1 || end === -1) {
   process.exit(0);
 }
 
-// Build generated TypeScript with ordinary strings so nested template literals
-// can never break this Node build script.
 const replacement = [
   '    // IMPORTANT: All current/live/news/sports questions are grounded through Exa first.',
   '    // Exa is the single live-search provider. Gemini only synthesizes returned evidence.',
@@ -34,9 +32,10 @@ const replacement = [
   "        const timeContext = getCurrentTanzaniaTimeContext();",
   "        const exaQuery = message + '\\nCurrent date/time in Tanzania: ' + timeContext.formattedString;",
   '        const exa = await searchWithExa(exaQuery);',
+  "        webSources = Array.isArray(exa.citations) ? exa.citations.filter((c) => c && c.url).map((c) => ({ title: String(c.title || c.url), url: String(c.url) })) : [];",
   "        const evidence = String(exa.answer || '').trim();",
   "        if (!evidence) throw new Error('EXA_SEARCH_EMPTY: no usable live evidence returned.');",
-  "        const citationsText = exa.citations.map((c) => '- ' + c.title + ': ' + c.url).join('\\n');",
+  "        const citationsText = webSources.map((c) => '- ' + c.title + ': ' + c.url).join('\\n');",
   "        const groundedSystemPrompt = systemPrompt + '\\n\\nLIVE WEB EVIDENCE (EXA):\\n' + evidence + '\\n\\nSOURCE LINKS:\\n' + citationsText + '\\n\\nSTRICT LIVE-DATA RULES:\\n' +",
   "          '- Treat EXA evidence as the factual source for this live query.\\n' +",
   "          '- Answer the exact question asked; do not answer a different question.\\n' +",
@@ -58,7 +57,7 @@ const replacement = [
   '          preferredModel: PERSONAL_CHAT_MODEL,',
   '        });',
   "        if (!aiReplyText || !aiReplyText.trim()) throw new Error('Gemini returned an empty response after Exa grounding.');",
-  "        console.log('[MKUU-BACKEND] [EXA_SEARCH_SUCCESS] evidence=' + exa.citations.length + ' citations latency=' + (Date.now() - startTime) + 'ms');",
+  "        console.log('[MKUU-BACKEND] [EXA_SEARCH_SUCCESS] evidence=' + webSources.length + ' citations latency=' + (Date.now() - startTime) + 'ms');",
   '      } catch (exaErr) {',
   "        const msg = String(exaErr && exaErr.message ? exaErr.message : exaErr);",
   "        console.error('[MKUU-BACKEND] [EXA_SEARCH_FAILED] ' + msg);",
@@ -72,5 +71,15 @@ source = source.replace(
   'const usedModel = PERSONAL_CHAT_MODEL;',
 );
 
+// Idempotent guard: never leave duplicate webSources declarations behind.
+const declaration = "    let webSources: Array<{ title: string; url: string }> = [];";
+const count = source.split(declaration).length - 1;
+if (count === 0) {
+  source = source.replace("    let aiReplyText = '';", "    let aiReplyText = '';\n" + declaration);
+} else if (count > 1) {
+  const first = source.indexOf(declaration);
+  source = source.slice(0, first + declaration.length) + source.slice(first + declaration.length).replaceAll(declaration, '');
+}
+
 fs.writeFileSync(file, source);
-console.log('MKUU: LIVE ROOT FIX applied — /api/chat live queries now use Exa evidence before Gemini synthesis.');
+console.log('MKUU: LIVE ROOT FIX applied — /api/chat live queries now use Exa evidence and return citations before Gemini synthesis.');
