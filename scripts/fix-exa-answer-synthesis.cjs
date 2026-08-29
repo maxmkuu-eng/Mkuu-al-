@@ -1,13 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 
-// IMPORTANT: Live/current/news/sports answers are Exa-only by design.
-// Never inject Gemini synthesis into the Exa live-search path.
+// Verification only. The actual live-provider rewrite is performed by
+// fix-live-provider-root.cjs later in the build chain.
 const file = path.join(process.cwd(), 'server', 'geminiService.ts');
 const source = fs.readFileSync(file, 'utf8');
 
-if (/MKUU EXA LIVE SEARCH EVIDENCE - synthesize this evidence into the answer/.test(source)) {
-  throw new Error('MKUU: Gemini synthesis is still present in the Exa live-search path. Remove it from server/geminiService.ts before building.');
+if (/searchWithTavily/.test(source)) {
+  throw new Error('MKUU: Tavily is still present in the live chat service. Exa must be the live provider.');
 }
 
-console.log('MKUU: Exa live-search remains EXA-ONLY; Gemini synthesis is disabled.');
+if (!source.includes("searchWithExa")) {
+  throw new Error('MKUU: Exa live provider import is missing from geminiService.ts.');
+}
+
+console.log('MKUU: Exa live-search evidence is verified; Gemini synthesis may use Exa evidence only.');
