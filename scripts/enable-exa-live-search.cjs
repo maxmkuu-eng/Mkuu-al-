@@ -25,8 +25,8 @@ const exaBlock = `    if (isSearchQuery) {
         if (!evidence) throw new Error('Exa returned no usable evidence.');
 
         // Exa retrieves current evidence; Gemini performs the final natural-language
-        // synthesis. This prevents raw search output (or a search engine "no answer"
-        // summary) from being shown as the final answer.
+        // synthesis. Raw evidence is deliberately passed to Gemini so an Exa search
+        // engine summary such as "no answer" cannot become the final response.
         const groundedSystemPrompt = \`${'${systemPrompt}'}\\n\\nLIVE EXA EVIDENCE:\\n${'${evidence}'}\\n\\nSTRICT EVIDENCE RULES:\\n- Answer the user's exact question using the supplied Exa evidence as the primary source.\\n- Do not answer from stale model memory when the evidence contains the requested fact.\\n- Extract concrete names, dates, scores, opponents, times and event details from the evidence.\\n- For news/celebrity questions, do not say "hakuna taarifa" merely because the user did not mention a date; use credible evidence about the event.\\n- For sports, distinguish upcoming fixtures from completed results and use Tanzania time (Africa/Dar_es_Salaam, UTC+3).\\n- If evidence confirms the event, state the confirmed fact directly.\\n- If the evidence conflicts, explain the conflict briefly and identify which source is stronger/newer.\\n- If the evidence truly does not contain the requested fact, say that the search did not find enough reliable evidence; never invent it.\\n- Keep the answer direct and natural in Kiswahili unless the user uses another language.\`;
         const groundedContents = this.buildConversationHistory(
           conversationHistory,
@@ -84,5 +84,17 @@ if (!source.includes('      webSources,\n      aiProvider:')) {
   source = source.replace('      generatedFiles: generatedFilesList,\n      aiProvider:', '      generatedFiles: generatedFilesList,\n      webSources,\n      aiProvider:');
 }
 
+// Harden Exa news retrieval: if its answer field is weak/empty, return the
+// retrieved article evidence itself so Gemini has factual material to synthesize.
+const exaFile = path.join(process.cwd(), 'server', 'exaSearch.ts');
+if (fs.existsSync(exaFile)) {
+  let exaSource = fs.readFileSync(exaFile, 'utf8');
+  exaSource = exaSource.replace(
+    /function extractNewsFactAnswer\(query:string,results:any\[\]\)\{[\s\S]*?\}\n\nfunction extractOpponentAnswer/,
+    "function extractNewsFactAnswer(query:string,results:any[]){const ranked=[...results].sort((a,b)=>newsEvidenceStrength(b)-newsEvidenceStrength(a));const strong=ranked.filter(x=>newsEvidenceStrength(x)>=7);const usable=(strong.length?strong:ranked).slice(0,8).map(evidenceText).filter(Boolean);return usable.length?usable.join('\\n\\n'):null;}\n\nfunction extractOpponentAnswer",
+  );
+  fs.writeFileSync(exaFile, exaSource);
+}
+
 fs.writeFileSync(file, source);
-console.log('MKUU: Exa retrieves live evidence and Gemini synthesizes the final answer; current/news/celebrity intent is enforced.');
+console.log('MKUU: Exa retrieves live evidence and Gemini synthesizes the final answer; current/news/celebrity intent and evidence fallback are enforced.');
