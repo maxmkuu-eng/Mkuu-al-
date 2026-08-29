@@ -76,7 +76,20 @@ patch('src/services/aiEngine.ts', [
   ],
 ]);
 
-// 4) App: save web sources on the assistant message so ChatView can render them.
+// 4) Force changing/current sports and news questions through the server/Exa path.
+// This prevents a locally stored Gemini key from bypassing Exa and returning stale answers.
+patch('src/services/aiEngine.ts', [
+  [
+    "export async function executeMkuuChat(params:ChatEngineParams):Promise<ChatEngineResult>{const smsCommand=await handleDirectSmsCommand(params);if(smsCommand)return smsCommand;if(needsImageRoute(params))return callImageStudio(params);const directApiKey=getStoredGeminiApiKey();",
+    "export async function executeMkuuChat(params:ChatEngineParams):Promise<ChatEngineResult>{const smsCommand=await handleDirectSmsCommand(params);if(smsCommand)return smsCommand;if(needsImageRoute(params))return callImageStudio(params);if(needsLiveSearch(params.message))return streamServerChat(params);const directApiKey=getStoredGeminiApiKey();",
+  ],
+  [
+    "const patterns=[/\\bwaziri mkuu\\b/,/\\brais wa\\b/",
+    "const patterns=[/\\bjana\\b/,/\\bjuzi\\b/,/\\byanga\\b/,/\\bsimba\\b/,/\\byoung africans\\b/,/\\bazam\\b/,/\\bpamba jiji\\b/,/\\bcoastal union\\b/,/\\bmechi\\b/,/\\bmchezo\\b/,/\\banacheza\\b/,/\\bamecheza\\b/,/\\balicheza\\b/,/\\bmatokeo\\b/,/\\bratiba\\b/,/\\bmsimamo\\b/,/\\bopponent\\b/,/\\bwaziri mkuu\\b/,/\\brais wa\\b/",
+  ],
+]);
+
+// 5) App: save web sources on the assistant message so ChatView can render them.
 patch('src/App.tsx', [
   [
     'generatedFiles: processedFiles,\n        memoryExtracted:',
@@ -84,4 +97,4 @@ patch('src/App.tsx', [
   ],
 ]);
 
-console.log('MKUU: live Exa citations now propagate backend -> API -> AI engine -> local chat -> ChatView.');
+console.log('MKUU: live Exa citations now propagate backend -> API -> AI engine -> local chat -> ChatView; live sports/news cannot bypass Exa.');
