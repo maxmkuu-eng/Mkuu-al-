@@ -89,7 +89,27 @@ patch('src/services/aiEngine.ts', [
   ],
 ]);
 
-// 5) App: save web sources on the assistant message so ChatView can render them.
+// 5) Make the source section visibly identifiable in ChatView.
+patch('src/components/ChatView.tsx', [
+  [
+    '{msg.webSources?.length ? <div className="mt-3 flex flex-wrap gap-1.5">',
+    '{msg.webSources?.length ? <div className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-3"><div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Vyanzo vya taarifa</div><div className="flex flex-wrap gap-1.5">',
+  ],
+  [
+    '>{source.title}</a>)}</div> : null}',
+    '>{source.title}</a>)}</div></div> : null}',
+  ],
+]);
+
+// 6) Remove the duplicate AbortSignal object key reported by Vite/esbuild.
+patch('src/App.tsx', [
+  [
+    'signal: abortController.signal,\n        signal: chatAbortControllerRef.current?.signal,',
+    'signal: chatAbortControllerRef.current?.signal || abortController.signal,',
+  ],
+]);
+
+// 7) App: save web sources on the assistant message so ChatView can render them.
 patch('src/App.tsx', [
   [
     'generatedFiles: processedFiles,\n        memoryExtracted:',
@@ -97,4 +117,4 @@ patch('src/App.tsx', [
   ],
 ]);
 
-console.log('MKUU: live Exa citations now propagate backend -> API -> AI engine -> local chat -> ChatView; live sports/news cannot bypass Exa.');
+console.log('MKUU: live Exa citations now propagate backend -> API -> AI engine -> local chat -> ChatView; live sports/news cannot bypass Exa; source section is visible.');
