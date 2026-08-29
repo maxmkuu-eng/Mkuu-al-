@@ -43,7 +43,7 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   }
 }
 
-// ChatView: replace the existing compact source chips with a clear, clickable
+// ChatView: replace the old compact source chips with a clear, clickable
 // numbered source section. This intentionally uses exact string matching instead
 // of a large JSX regular expression; the previous regex was parsed by Node as
 // having invalid flags and stopped the entire Faable build.
@@ -52,10 +52,13 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   let source = read(file);
 
   if (source.includes('id="mkuu-web-sources"')) {
-    console.log('MKUU: Numbered web sources UI already enabled; skipping.');
+    // Keep the section idempotent, but make the visible list match the source count.
+    const next = source.replace(/msg\.webSources\.slice\(0, 8\)/g, 'msg.webSources.slice(0, 10)');
+    if (next !== source) write(file, next);
+    console.log('MKUU: Numbered web sources UI already enabled; showing up to 10 sources.');
   } else {
     const compactBlock = '{msg.webSources?.length ? <div className="mt-3 flex flex-wrap gap-1.5">{msg.webSources.slice(0, 6).map((source, i) => <a key={i} href={source.url} target="_blank" rel="noreferrer" className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] text-zinc-400 hover:text-[#D4AF37]">{source.title}</a>)}</div> : null}';
-    const block = '{msg.webSources?.length ? <div id="mkuu-web-sources" className="mt-4 w-full border-t border-white/[0.08] pt-3"><div className="mb-2.5 flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-wider text-[#D4AF37]">Vyanzo vya taarifa</span><span className="text-[9px] uppercase tracking-wider text-zinc-600">{msg.webSources.length} source{msg.webSources.length === 1 ? "" : "s"}</span></div><div className="space-y-1.5">{msg.webSources.slice(0, 8).map((source, i) => <a key={i} href={source.url} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.025] px-2.5 py-2 no-underline transition hover:border-[#D4AF37]/30 hover:bg-white/[0.04]"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[#D4AF37]/10 text-[10px] font-bold text-[#D4AF37]">{i + 1}</span><span className="min-w-0 flex-1"><span className="block truncate text-[10px] font-semibold text-zinc-300 group-hover:text-[#D4AF37]">{source.title || source.url}</span><span className="mt-0.5 block truncate text-[9px] text-zinc-600">{source.url}</span></span><span className="shrink-0 text-zinc-600 group-hover:text-[#D4AF37]">↗</span></a>)}</div></div> : null}';
+    const block = '{msg.webSources?.length ? <div id="mkuu-web-sources" className="mt-4 w-full border-t border-white/[0.08] pt-3"><div className="mb-2.5 flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-wider text-[#D4AF37]">Vyanzo vya taarifa</span><span className="text-[9px] uppercase tracking-wider text-zinc-600">{msg.webSources.length} source{msg.webSources.length === 1 ? "" : "s"}</span></div><div className="space-y-1.5">{msg.webSources.slice(0, 10).map((source, i) => <a key={i} href={source.url} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.025] px-2.5 py-2 no-underline transition hover:border-[#D4AF37]/30 hover:bg-white/[0.04]"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[#D4AF37]/10 text-[10px] font-bold text-[#D4AF37]">{i + 1}</span><span className="min-w-0 flex-1"><span className="block truncate text-[10px] font-semibold text-zinc-300 group-hover:text-[#D4AF37]">{source.title || source.url}</span><span className="mt-0.5 block truncate text-[9px] text-zinc-600">{source.url}</span></span><span className="shrink-0 text-zinc-600 group-hover:text-[#D4AF37]">↗</span></a>)}</div></div> : null}';
 
     if (source.includes(compactBlock)) {
       source = source.replace(compactBlock, block);
