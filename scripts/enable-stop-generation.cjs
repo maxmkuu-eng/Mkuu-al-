@@ -6,8 +6,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
 
 // App: own the AbortController so Stop cancels the real generation request.
-// This patch is intentionally idempotent because the build chain invokes it
-// twice. A second invocation must never add another signal/controller/key.
+// This patch is intentionally idempotent because the build chain invokes it twice.
 {
   const file = 'src/App.tsx';
   let s = read(file);
@@ -24,16 +23,26 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
     s = s.replace("  // Send Message with Offline-First Local Persistence & Autonomous Multi-Tier AI Processing\n", "  const handleStopGenerating = () => {\n    mkuuAbortControllerRef.current?.abort();\n    mkuuAbortControllerRef.current = null;\n    setIsLoading(false);\n  };\n\n  // Send Message with Offline-First Local Persistence & Autonomous Multi-Tier AI Processing\n");
   }
 
-  // Add exactly one controller creation to handleSendMessage.
   if (!s.includes('const abortController = new AbortController();')) {
     s = s.replace("    setIsLoading(true);\n\n    try {", "    setIsLoading(true);\n    const abortController = new AbortController();\n    mkuuAbortControllerRef.current = abortController;\n\n    try {");
   }
 
-  // Add exactly one AbortSignal to the chat-engine request.
   const peopleSignalMarker = "        people,\n        signal: abortController.signal,\n      });";
   if (!s.includes('signal: abortController.signal') && s.includes("        people,\n      });")) {
     s = s.replace("        people,\n      });", peopleSignalMarker);
   }
+
+  // Some earlier streaming/stop patches may already have added a second
+  // AbortSignal. Normalize the chat request to one signal property.
+  s = s.replace(
+    /signal:\s*abortController\.signal,\s*\n\s*signal:\s*chatAbortControllerRef\.current\?\.signal,\s*/g,
+    'signal: chatAbortControllerRef.current?.signal || abortController.signal,\n'
+  );
+  // If the opposite order was produced, normalize that too.
+  s = s.replace(
+    /signal:\s*chatAbortControllerRef\.current\?\.signal,\s*\n\s*signal:\s*abortController\.signal,\s*/g,
+    'signal: chatAbortControllerRef.current?.signal || abortController.signal,\n'
+  );
 
   if (!s.includes("if (e?.name === 'AbortError' || abortController.signal.aborted)")) {
     s = s.replace(
@@ -56,7 +65,7 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   write(file, s);
 }
 
-// ChatView: the composer control becomes Stop while a real generation is running.
+// ChatView: composer becomes Stop while a real generation is running.
 {
   const file = 'src/components/ChatView.tsx';
   let s = read(file);
@@ -72,7 +81,6 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
     '  messages, conversationTitle = \'Mkuu\', onSendMessage, onRetryMessage, onStopGenerating, isLoading,'
   );
 
-  // Allow submit while loading so the same button can stop generation.
   if (!s.includes('if (isLoading) { onStopGenerating?.(); return; }')) {
     s = s.replace(
       '    if ((!inputText.trim() && selectedAttachments.length === 0) || isLoading) return;',
@@ -80,7 +88,6 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
     );
   }
 
-  // Make the top speaker actually read the latest assistant response instead of opening the voice modal.
   if (!s.includes('const speakLatestAssistant = () =>')) {
     s = s.replace(
       '  const getFileIcon = (type: string) => {',
@@ -89,7 +96,6 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   }
   s = s.replace('onClick={onOpenVoice} aria-label="Sauti" className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/[0.06] hover:text-[#D4AF37]"><Volume2', 'onClick={speakLatestAssistant} aria-label="Soma jibu kwa sauti" className="rounded-lg p-2 text-zinc-400 transition hover:bg-white/[0.06] hover:text-[#D4AF37]"><Volume2');
 
-  // Current ChatGPT-style composer: replace the disabled Send control with a real Stop control.
   const currentButton = '<button type="submit" disabled={isLoading || (!inputText.trim() && selectedAttachments.length === 0)} aria-label="Tuma" className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500">{isLoading ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}</button>';
   const stopButton = '<button type="submit" disabled={!isLoading && (!inputText.trim() && selectedAttachments.length === 0)} aria-label={isLoading ? "Simamisha jibu" : "Tuma"} title={isLoading ? "Simamisha jibu" : "Tuma ujumbe"} className={`mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${isLoading ? "bg-red-600 text-white hover:bg-red-500" : "bg-zinc-100 text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500"}`}>{isLoading ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}</button>';
   if (s.includes(currentButton)) s = s.replace(currentButton, stopButton);
@@ -97,7 +103,7 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   write(file, s);
 }
 
-// AI engine: propagate AbortSignal into every network generation route.
+// AI engine: propagate AbortSignal into network generation routes.
 {
   const file = 'src/services/aiEngine.ts';
   let s = read(file);
