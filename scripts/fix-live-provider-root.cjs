@@ -23,8 +23,8 @@ if (start === -1 || end === -1) {
   process.exit(0);
 }
 
-// Build the generated TypeScript as ordinary strings. Do not use a template
-// literal here because the generated code itself contains interpolation syntax.
+// Build generated TypeScript with ordinary strings so nested template literals
+// can never break this Node build script.
 const replacement = [
   '    // IMPORTANT: All current/live/news/sports questions are grounded through Exa first.',
   '    // Exa is the single live-search provider. Gemini only synthesizes returned evidence.',
@@ -40,12 +40,12 @@ const replacement = [
   "        const groundedSystemPrompt = systemPrompt + '\\n\\nLIVE WEB EVIDENCE (EXA):\\n' + evidence + '\\n\\nSOURCE LINKS:\\n' + citationsText + '\\n\\nSTRICT LIVE-DATA RULES:\\n' +",
   "          '- Treat EXA evidence as the factual source for this live query.\\n' +",
   "          '- Answer the exact question asked; do not answer a different question.\\n' +",
-  "          '- Never say " + JSON.stringify('hakuna taarifa') + ' or ' + JSON.stringify('no information') + ' if the evidence contains a credible direct answer.\\n' +",
+  "          '- Never say \"hakuna taarifa\" or \"no information\" if the evidence contains a credible direct answer.\\n' +",
   "          '- Do not use stale model memory to contradict the evidence.\\n' +",
   "          '- For sports, distinguish scheduled fixtures from completed results and convert kickoff times to Africa/Dar_es_Salaam (UTC+3).\\n' +",
   "          '- For news and celebrity questions, prefer explicit confirmed facts and named details over rumors.\\n' +",
   "          '- If sources conflict, state the conflict and prefer the stronger/newer source.\\n' +",
-  "          '- Never invent a name, date, score, time, child gender/name, or event unsupported by evidence.\\n' +",
+  "          '- Never invent a name, date, score, time, child gender/name, or event unsupported by the evidence.\\n' +",
   "          '- Keep the answer concise and directly answer the user in natural Kiswahili unless another language is requested.';",
   '        const groundedContents = this.buildConversationHistory(',
   "          conversationHistory,",
@@ -67,9 +67,6 @@ const replacement = [
 ].join('\n') + '\n';
 
 source = source.slice(0, start) + replacement + source.slice(end);
-
-// The live branch now uses Exa, so the normal model label should not claim the
-// old live-search model. Keep the actual Gemini synthesis model explicit.
 source = source.replace(
   'const usedModel = isSearchQuery ? LIVE_SEARCH_MODEL : PERSONAL_CHAT_MODEL;',
   'const usedModel = PERSONAL_CHAT_MODEL;',
