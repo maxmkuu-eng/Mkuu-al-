@@ -36,4 +36,8 @@ if(live.test(gem)) gem=gem.replace(live,`    if (isSearchQuery) {
 else throw new Error('Expected GeminiService live branch was not found; refusing unsafe fallback.');
 gem=gem.replace('      latencyMs: Date.now() - startTime,\n    };','      latencyMs: Date.now() - startTime,\n      webSources: liveWebSources,\n    };');
 write('server/geminiService.ts',gem);
-console.log('[MKUU-BUILD-REPAIR] Fixed build duplicates and enforced Exa-only live/social routing; Gemini is not called for live searches.');
+
+let server=read('server.ts');
+server=server.replace('generatedFiles:result.generatedFiles,aiProvider:', 'generatedFiles:result.generatedFiles,webSources:result.webSources||[],aiProvider:');
+write('server.ts',server);
+console.log('[MKUU-BUILD-REPAIR] Fixed build duplicates, restored source bridge, and enforced Exa-only live/social routing; Gemini is not called for live searches.');
