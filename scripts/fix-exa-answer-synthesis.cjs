@@ -69,9 +69,13 @@ exa = exa.replace(
 );
 write('server/exaSearch.ts', exa);
 
-// The alternate /api/agent path must obey the same Exa-only rule.
+// The alternate /api/agent path must obey the same Exa-only rule and detect
+// relative-date live questions too.
 let agent = read('server/agentEngine.ts');
 if (!agent.includes("from './exaSearch.js'")) agent = agent.replace("import { geminiService } from './geminiService.js';", "import { geminiService } from './geminiService.js';\nimport { searchWithExa } from './exaSearch.js';");
+if (!agent.includes("'jana','juzi','kesho'")) {
+  agent = agent.replace("const LIVE_WEB_TERMS = [", "const LIVE_WEB_TERMS = ['jana','juzi','kesho','yesterday','tomorrow','zimeishaje','iliishaje','amecheza na nani','alicheza na nani',");
+}
 const anchor = "    let liveAwareMessage = request.message;\n    if (isLiveWebQuestion(request.message)) {";
 if (agent.includes(anchor) && !agent.includes("[EXA_AGENT_LIVE]")) {
   agent = agent.replace(anchor, "    let liveAwareMessage = request.message;\n    if (isLiveWebQuestion(request.message)) {\n      console.log('[EXA_AGENT_LIVE] Gemini bypassed for live query.');\n      const exa = await searchWithExa(request.message);\n      return { intent, reply: exa.answer, cleanSpeechText: exa.answer, generatedFiles: [], memoriesExtracted: [], peopleRecognized: [], aiProvider: 'Exa Live Search', chatModel: 'Exa', latencyMs: Date.now() - started };\n    }\n    if (false) {");
