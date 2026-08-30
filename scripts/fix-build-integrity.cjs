@@ -58,5 +58,4 @@ const write = (p, s) => fs.writeFileSync(path.join(root, p), s);
   }
 }
 
-require('./fix-final-runtime.cjs');
 console.log('[MKUU] Final build-integrity normalization complete.');
