@@ -1,5 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
-
 export interface ExaCitation { title?: string; url: string; publishedDate?: string; author?: string; }
 export interface ExaSearchResult { answer: string; citations: Array<{ title: string; url: string }>; }
 
