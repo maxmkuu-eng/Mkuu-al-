@@ -5,13 +5,9 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const write = (p, s) => fs.writeFileSync(path.join(root, p), s, 'utf8');
 
 // This patch must stay syntax-safe: it runs before every production build.
-// The previous version used nested template literals and stopped the APK build.
-
 let exa = read('server/exaSearch.ts');
 
 // Make Tanzania relative-date context explicit and add an all-completed-results branch.
-// Use ordinary string concatenation in the generated TypeScript so this CJS patch
-// cannot terminate its own template string accidentally.
 const oldFn = /export async function searchWithExa\(query:string\):Promise<ExaSearchResult>\{[\s\S]*?\n\}/;
 if (oldFn.test(exa)) {
   const fn = [
@@ -61,25 +57,30 @@ if (oldFn.test(exa)) {
     '  if(!answer)throw new Error(\'EXA_SEARCH_EMPTY: Exa returned no usable live-search evidence.\');',
     '  return {answer,citations};',
     '}'
-  ].join('\\n');
-  exa=exa.replace(oldFn,fn);
+  ].join('\n');
+  exa = exa.replace(oldFn, fn);
 }
-write('server/exaSearch.ts',exa);
+write('server/exaSearch.ts', exa);
 
 // Native APK must never fall back to direct Gemini for live/current queries.
-let engine=read('src/services/aiEngine.ts');
-engine=engine.replace(
-  /export interface ChatEngineResult \{([\s\S]*?)\n\}/,
-  (m,body)=>body.includes('webSources')?m:'export interface ChatEngineResult {'+body+'\\n  webSources?: Array<{ title:string; url:string }>;\\n}'
-);
-engine=engine.replace(
-  /const directApiKey=getStoredGeminiApiKey\(\);if\(directApiKey&&directApiKey\.trim\(\)\.length>10\)return callDirectGemini\(directApiKey\.trim\(\),params\);if\(isCapacitorNative\(\))return callNativeServerChat\(params\);/,
-  'const directApiKey=getStoredGeminiApiKey();if(!needsLiveSearch(params.message)&&directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative()||needsLiveSearch(params.message))return callNativeServerChat(params);'
-);
-engine=engine.replace(
+let engine = read('src/services/aiEngine.ts');
+const interfacePattern = /export interface ChatEngineResult \{([\s\S]*?)\n\}/;
+if (!engine.includes('webSources?: Array<{ title:string; url:string }>')) {
+  engine = engine.replace(interfacePattern, (m, body) =>
+    'export interface ChatEngineResult {' + body + '\n  webSources?: Array<{ title:string; url:string }>;\n}'
+  );
+}
+
+// Avoid a fragile giant RegExp here. Exact substring replacement is deterministic and
+// keeps this build-time patch valid even when the surrounding implementation changes.
+const oldRouting = 'const directApiKey=getStoredGeminiApiKey();if(directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative())return callNativeServerChat(params);';
+const newRouting = 'const directApiKey=getStoredGeminiApiKey();if(!needsLiveSearch(params.message)&&directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative()||needsLiveSearch(params.message))return callNativeServerChat(params);';
+if (engine.includes(oldRouting)) engine = engine.replace(oldRouting, newRouting);
+
+engine = engine.replace(
   /generatedFiles:serverRes\.generatedFiles,engineUsed:/,
   'generatedFiles:serverRes.generatedFiles,webSources:Array.isArray(serverRes.webSources)?serverRes.webSources:[],engineUsed:'
 );
-write('src/services/aiEngine.ts',engine);
+write('src/services/aiEngine.ts', engine);
 
 console.log('[MKUU-EXA-ALL] Syntax-safe all-results + source bridge + Exa-only native live routing applied.');
