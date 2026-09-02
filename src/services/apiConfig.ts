@@ -1,8 +1,8 @@
 /** MKUU AI production API configuration. */
-// Faable hosts the production Express backend at the same public deployment URL.
-// Use the explicit Faable URL for both web and native clients so API calls never
-// fall back to a stale/custom origin or a frontend-only route.
-export const DEFAULT_PUBLIC_BACKEND_URL = 'https://mkuu-al-7ejzi.faable.link';
+// Reuse the existing Faable deployment supplied for the working backend.
+// Keep one explicit public origin for web and native clients so all API calls
+// target the same backend service instead of a frontend-only/custom origin.
+export const DEFAULT_PUBLIC_BACKEND_URL = 'https://chii-0u0af.faable.link';
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
 export const STORAGE_SERVER_KEY_CUSTOM = 'mkuu_backend_api_url_v1';
 
