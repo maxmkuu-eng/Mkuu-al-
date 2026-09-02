@@ -7,10 +7,6 @@
     {
       "source": "/health",
       "destination": "/api/health"
-    },
-    {
-      "source": "/api/:path*",
-      "destination": "https://mkuu-al-3.onrender.com/api/:path*"
     }
   ]
 }
