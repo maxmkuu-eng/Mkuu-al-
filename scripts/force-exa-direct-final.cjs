@@ -1,16 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-
 const root = process.cwd();
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const write = (p, s) => fs.writeFileSync(path.join(root, p), s, 'utf8');
-
-// FINAL LIVE SEARCH SAFETY LAYER.
-// This script must be idempotent: build-time patching must never fail merely
-// because an earlier patch already changed the same code.
 let gemini = read('server/geminiService.ts');
 
-// Normalize the live provider import.
 gemini = gemini.replace(/import \{ searchWithTavily \} from ['"]\.\/tavilySearch\.js['"];?\n?/g, "import { searchWithExa } from './exaSearch.js';\n");
 if (!gemini.includes("import { searchWithExa } from './exaSearch.js';")) {
   const anchor = "import { generateRealFile } from './files.js';";
@@ -18,22 +12,12 @@ if (!gemini.includes("import { searchWithExa } from './exaSearch.js';")) {
 }
 
 function findMatchingBrace(source, openIndex) {
-  let depth = 0;
-  let quote = null;
-  let escaped = false;
-  let lineComment = false;
-  let blockComment = false;
+  let depth = 0, quote = null, escaped = false, lineComment = false, blockComment = false;
   for (let i = openIndex; i < source.length; i++) {
-    const c = source[i];
-    const n = source[i + 1];
+    const c = source[i], n = source[i + 1];
     if (lineComment) { if (c === '\n') lineComment = false; continue; }
     if (blockComment) { if (c === '*' && n === '/') { blockComment = false; i++; } continue; }
-    if (quote) {
-      if (escaped) { escaped = false; continue; }
-      if (c === '\\') { escaped = true; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
+    if (quote) { if (escaped) { escaped = false; continue; } if (c === '\\') { escaped = true; continue; } if (c === quote) quote = null; continue; }
     if (c === '/' && n === '/') { lineComment = true; i++; continue; }
     if (c === '/' && n === '*') { blockComment = true; i++; continue; }
     if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
@@ -46,8 +30,7 @@ function findMatchingBrace(source, openIndex) {
 const searchIf = gemini.indexOf('if (isSearchQuery)');
 let branchPatched = false;
 if (searchIf >= 0) {
-  const open = gemini.indexOf('{', searchIf);
-  const close = open >= 0 ? findMatchingBrace(gemini, open) : -1;
+  const open = gemini.indexOf('{', searchIf), close = open >= 0 ? findMatchingBrace(gemini, open) : -1;
   if (open >= 0 && close >= 0) {
     const elseMatch = gemini.slice(close + 1).match(/^\s*else\s*\{/);
     if (elseMatch) {
@@ -85,61 +68,52 @@ if (searchIf >= 0) {
     }
   }
 }
+if (!branchPatched && !gemini.includes('[EXA_SEARCH_STARTED] Direct live web/social query.')) console.warn('[MKUU-FINAL-LIVE] Existing live-search branch could not be located; preserving current implementation.');
 
-if (!branchPatched && !gemini.includes('[EXA_SEARCH_STARTED] Direct live web/social query.')) {
-  console.warn('[MKUU-FINAL-LIVE] Existing live-search branch could not be located; preserving current implementation.');
-}
-
-// Pure clock questions are answered locally without Gemini or web search.
-if (!gemini.includes('const timeQuestion = /')) {
+// Pure greetings and clock questions are answered locally: no Gemini/web round-trip.
+if (!gemini.includes('const ownerGreeting = /')) {
   const anchor = '    const { userId, message, conversationHistory = [], isVoice = false, attachments = [] } = params;';
-  const timeGuard = `    const timeQuestion = /\\b(saa ngapi|saa ya sasa|muda wa sasa|muda gani sasa|time now|current time|what time is it|leo ni siku gani|leo tarehe ngapi|tarehe ya leo|date today|today's date)\\b/i.test(String(message || ''));
+  const localGuard = `    const ownerGreeting = /^(habari|mambo|vipi|hello|hi|hey|habari mkuu|mambo mkuu|vipi mkuu)[!?.,\\s]*$/i.test(String(message || '').trim());
+    if (ownerGreeting) {
+      const greetingReply = 'Nzuri sana Mkuu 👑, niko tayari. Nikusaidie nini?';
+      return { reply: greetingReply, cleanSpeechText: greetingReply, memoriesExtracted: [], peopleRecognized: [], generatedFiles: [], webSources: [], aiProvider: AI_PROVIDER, chatModel: 'MKUU Local Greeting', latencyMs: Date.now() - startTime };
+    }
+    const timeQuestion = /\\b(saa ngapi|saa ya sasa|muda wa sasa|muda gani sasa|time now|current time|what time is it|leo ni siku gani|leo tarehe ngapi|tarehe ya leo|date today|today's date)\\b/i.test(String(message || ''));
     if (timeQuestion) {
       const t = getCurrentTanzaniaTimeContext();
       const timeReply = t.timeString + ' sasa hivi, ' + t.dayOfWeek + ' ' + t.dateString + ' (Tanzania, UTC+3).';
       return { reply: timeReply, cleanSpeechText: timeReply, memoriesExtracted: [], peopleRecognized: [], generatedFiles: [], webSources: [], aiProvider: AI_PROVIDER, chatModel: 'Tanzania Real-Time Clock', latencyMs: Date.now() - startTime };
     }
 `;
-  if (gemini.includes(anchor)) gemini = gemini.replace(anchor, anchor + '\n' + timeGuard);
+  if (gemini.includes(anchor)) gemini = gemini.replace(anchor, anchor + '\n' + localGuard);
 }
 
-// Ensure relative-date questions enter live search.
 const searchAnchor = 'const searchKeywords = [';
 if (gemini.includes(searchAnchor) && !gemini.includes("'zimeishaje'")) {
   const relative = "'jana','juzi','kesho','yesterday','tomorrow','zimeishaje','iliishaje','imeishaje','zimefanyaje','amecheza na nani','alicheza na nani','amecheza dhidi ya nani','alicheza dhidi ya nani','opponent','live score','final result',";
   gemini = gemini.replace(searchAnchor, searchAnchor + relative);
 }
 
-// Make owner identity explicit so greetings do not trigger an inappropriate religious response.
 if (!gemini.includes('OWNER GREETING RULE')) {
   const anchor = 'MAADILI NA TABIA YA MKUU AI:';
   const rule = `OWNER GREETING RULE:
 - Max ndiye Mkuu/Boss na mmiliki wa MKUU AI. Mtambue kama "Mkuu", "Boss", au "Max" kwa heshima.
-- Akisema "habari", "mambo", "vipi", "hello", "hi", au salamu nyingine, jibu kwa salamu ya kawaida ya kirafiki kama "Nzuri sana Mkuu 👑, niko tayari. Nikusaidie nini?".
-- USITUMIE "marahaba" isipokuwa Max mwenyewe ametumia salamu ya Kiislamu inayohitaji jibu hilo.
-- Usibadilishe salamu ya kawaida kuwa jibu la kidini bila sababu.
+- Salamu za kawaida kama "habari", "mambo", "vipi", "hello" zijibiwe kawaida na kwa kirafiki.
+- USITUMIE "marahaba" kwa salamu ya kawaida isipokuwa Max mwenyewe ametumia salamu ya Kiislamu inayohitaji jibu hilo.
 
 `;
   if (gemini.includes(anchor)) gemini = gemini.replace(anchor, rule + anchor);
 }
 
-// Persist Exa source cards on the response.
-if (!gemini.includes('webSources: Array<{ title: string; url: string }>')) {
-  gemini = gemini.replace('  latencyMs: number;\n}', '  latencyMs: number;\n  webSources: Array<{ title: string; url: string }>;\n}');
-}
+if (!gemini.includes('webSources: Array<{ title: string; url: string }>')) gemini = gemini.replace('  latencyMs: number;\n}', '  latencyMs: number;\n  webSources: Array<{ title: string; url: string }>;\n}');
 const declaration = "    let webSources: Array<{ title: string; url: string }> = [];";
 gemini = gemini.split(declaration).join('');
 if (gemini.includes("    let aiReplyText = '';")) gemini = gemini.replace("    let aiReplyText = '';", "    let aiReplyText = '';\n" + declaration);
 if (!gemini.includes('      webSources,\n      aiProvider:')) gemini = gemini.replace('      generatedFiles: generatedFilesList,\n      aiProvider:', '      generatedFiles: generatedFilesList,\n      webSources,\n      aiProvider:');
 
-// Client hard guard: stored Gemini credentials are allowed only for normal chat.
 const enginePath = 'src/services/aiEngine.ts';
 let engine = read(enginePath);
-engine = engine.replace(
-  /const directApiKey=getStoredGeminiApiKey\(\);if\(directApiKey&&directApiKey\.trim\(\)\.length>10\)return callDirectGemini\(directApiKey\.trim\(\),params\);if\(isCapacitorNative\(\)\)return callNativeServerChat\(params\);/,
-  "const directApiKey=getStoredGeminiApiKey();if(!needsLiveSearch(params.message)&&directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative()||needsLiveSearch(params.message))return callNativeServerChat(params);"
-);
+engine = engine.replace(/const directApiKey=getStoredGeminiApiKey\(\);if\(directApiKey&&directApiKey\.trim\(\)\.length>10\)return callDirectGemini\(directApiKey\.trim\(\),params\);if\(isCapacitorNative\(\)\)return callNativeServerChat\(params\);/, "const directApiKey=getStoredGeminiApiKey();if(!needsLiveSearch(params.message)&&directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative()||needsLiveSearch(params.message))return callNativeServerChat(params);");
 write('server/geminiService.ts', gemini);
 write(enginePath, engine);
-
-console.log('[MKUU-FINAL-LIVE] Live search resilient with Exa primary + Gemini Search fallback; owner greeting behavior enforced; Tanzania real-time clock enforced.');
+console.log('[MKUU-FINAL-LIVE] Live search: Exa primary + Gemini Search fallback. Greetings/time are local and instant. Owner identity enforced.');
