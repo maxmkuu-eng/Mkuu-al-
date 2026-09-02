@@ -5,6 +5,11 @@ const root = process.cwd();
 const file = path.join(root, 'server/geminiService.ts');
 let s = fs.readFileSync(file, 'utf8');
 
+// Hard-lock the personal/normal chat route to Gemini 3.7 Flash.
+s = s.replace(/export const PERSONAL_CHAT_MODEL\s*=\s*['"][^'"]+['"];/, "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';");
+s = s.replace(/export const CHAT_MODEL_FALLBACKS\s*=\s*\[[\s\S]*?\];/, "export const CHAT_MODEL_FALLBACKS = ['gemini-3.7-flash'];");
+s = s.replace(/const modelsToTry = params\.config\?\.tools \? \[preferred\] : \[[^\]]*\];/, "const modelsToTry = params.config?.tools ? [preferred] : [PERSONAL_CHAT_MODEL];");
+
 // Fast local greeting: no DB work, no Gemini round-trip, no web search.
 const marker = "    const { userId, message, conversationHistory = [], isVoice = false, attachments = [] } = params;";
 if (!s.includes('MKUU_FAST_OWNER_GREETING')) {
@@ -13,10 +18,14 @@ if (!s.includes('MKUU_FAST_OWNER_GREETING')) {
   s = s.replace(marker, marker + '\n' + block);
 }
 
-// Keep normal chat on the personal model only; avoid expensive fallback/model churn.
+// Keep normal chat on Gemini 3.7 Flash only; avoid model fallback/churn.
 s = s.replace(
   "const modelsToTry = params.config?.tools ? [preferred] : [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];",
-  "const modelsToTry = params.config?.tools ? [preferred] : [preferred];"
+  "const modelsToTry = params.config?.tools ? [preferred] : [PERSONAL_CHAT_MODEL];"
+);
+s = s.replace(
+  "const modelsToTry = params.config?.tools ? [preferred] : [preferred];",
+  "const modelsToTry = params.config?.tools ? [preferred] : [PERSONAL_CHAT_MODEL];"
 );
 
 // Reduce unnecessary history/token work for ordinary chat while retaining useful context.
@@ -32,4 +41,4 @@ if (!s.includes('OWNER GREETING — HARD RULE')) {
 }
 
 fs.writeFileSync(file, s, 'utf8');
-console.log('[MKUU-FAST-CHAT] Fast owner greetings, shorter history, fewer normal-chat retries, and explicit owner greeting rule enabled.');
+console.log('[MKUU-FAST-CHAT] Normal chat is hard-locked to Gemini 3.7 Flash; fast owner greetings and reduced chat churn enabled.');
