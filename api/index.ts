@@ -21,9 +21,29 @@ app.use(express.json({ limit: '50mb' }));
 app.get(['/health', '/api/health'], async (_req, res) => {
   try {
     const health = await geminiService.getHealthStatus();
-    res.json({ status: 'ok', service: 'MKUU Backend', gemini: 'configured', chatModel: health.chatModel || PERSONAL_CHAT_MODEL, backend: health.backend || BACKEND_IDENTIFIER, aiProvider: health.aiProvider || AI_PROVIDER, imageModel: PRIMARY_IMAGE_MODEL, latencyMs: health.latencyMs });
-  } catch (_error) {
-    res.json({ status: 'ok', service: 'MKUU Backend', gemini: 'configured', chatModel: PERSONAL_CHAT_MODEL, backend: BACKEND_IDENTIFIER, aiProvider: AI_PROVIDER });
+    const httpStatus = health.status === 'connected' ? 200 : 503;
+    res.status(httpStatus).json({
+      status: health.status === 'connected' ? 'ok' : 'degraded',
+      service: 'MKUU Backend',
+      gemini: health.status,
+      chatModel: health.chatModel || PERSONAL_CHAT_MODEL,
+      backend: health.backend || BACKEND_IDENTIFIER,
+      aiProvider: health.aiProvider || AI_PROVIDER,
+      imageModel: PRIMARY_IMAGE_MODEL,
+      latencyMs: health.latencyMs,
+      ...(health.error ? { error: health.error } : {}),
+    });
+  } catch (error: any) {
+    console.error('[MKUU-BACKEND] Health check failed:', error);
+    res.status(503).json({
+      status: 'degraded',
+      service: 'MKUU Backend',
+      gemini: 'unavailable',
+      chatModel: PERSONAL_CHAT_MODEL,
+      backend: BACKEND_IDENTIFIER,
+      aiProvider: AI_PROVIDER,
+      error: error?.message || String(error),
+    });
   }
 });
 
@@ -113,8 +133,29 @@ app.post(['/api/chat', '/api/chat/'], async (req, res) => {
     const result = await geminiService.processChat({ userId: DEFAULT_USER_ID, message, conversationHistory: history, isVoice, attachments });
     res.json({ reply: result.reply, cleanSpeechText: result.cleanSpeechText, memoriesExtracted: result.memoriesExtracted, peopleRecognized: result.peopleRecognized, generatedFiles: result.generatedFiles, aiProvider: result.aiProvider, chatModel: result.chatModel, latencyMs: result.latencyMs });
   } catch (error: any) {
-    console.error('[MKUU-VERCEL] Chat API Error:', error);
-    res.status(503).json({ error: 'GEMINI_UNAVAILABLE', message: error?.message || 'Google Gemini API Error', aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL });
+    const rawMessage = String(error?.message || error || 'Google Gemini API Error');
+    const statusMatch = rawMessage.match(/(?:HTTP|status|code)[\s:=]+(400|401|403|404|409|429|500|502|503|504)\b/i);
+    const statusFromMessage = statusMatch ? Number(statusMatch[1]) : 0;
+    const isAuth = statusFromMessage === 401 || /authentication|api key|invalid.*key|unauthorized/i.test(rawMessage);
+    const isPermission = statusFromMessage === 403 || /permission|forbidden|access denied/i.test(rawMessage);
+    const isNotFound = statusFromMessage === 404 || /model_not_found|model.*not found|not found/i.test(rawMessage);
+    const isRateLimit = statusFromMessage === 429 || /RESOURCE_EXHAUSTED|rate.?limit|quota|too many requests/i.test(rawMessage);
+    const errorType = isAuth ? 'GEMINI_AUTHENTICATION_ERROR'
+      : isPermission ? 'GEMINI_PERMISSION_ERROR'
+      : isNotFound ? 'GEMINI_MODEL_ERROR'
+      : isRateLimit ? 'GEMINI_RATE_LIMIT_ERROR'
+      : statusFromMessage >= 500 ? 'GEMINI_SERVER_ERROR'
+      : 'GEMINI_REQUEST_ERROR';
+    const httpStatus = statusFromMessage >= 400 && statusFromMessage < 600 ? statusFromMessage : 503;
+    console.error(`[MKUU-BACKEND] [${errorType}] ${rawMessage}`);
+    res.status(httpStatus).json({
+      error: errorType,
+      message: rawMessage,
+      detail: rawMessage,
+      aiProvider: AI_PROVIDER,
+      chatModel: PERSONAL_CHAT_MODEL,
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
