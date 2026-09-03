@@ -1,5 +1,5 @@
 {
   "buildpack": "node",
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run build:server",
   "startCommand": "node dist/server.cjs"
 }
