@@ -2,35 +2,38 @@ const fs = require('fs');
 const path = require('path');
 
 const target = path.join(process.cwd(), 'server', 'geminiService.ts');
-if (!fs.existsSync(target)) {
-  console.log('[GEMINI-RUNTIME] server/geminiService.ts not found; skipping.');
-  process.exit(0);
-}
+if (!fs.existsSync(target)) throw new Error('[GEMINI-RUNTIME] server/geminiService.ts not found.');
 
 let source = fs.readFileSync(target, 'utf8');
 
-// MKUU uses one Gemini model only: the current Personal Chat model.
-// Remove the old multi-model fallback/search model configuration before bundling.
+// MKUU architecture: Gemini handles normal chat; Exa handles live/web search.
+// Tavily and Google Search grounding are not part of the live-search path.
+source = source.replace(/import \{ searchWithTavily \} from '\.\/tavilySearch\.js';\n?/g, '');
 source = source.replace(/export const PERSONAL_CHAT_MODEL = 'gemini-[^']+';/, "export const PERSONAL_CHAT_MODEL = 'gemini-3.8-flash';");
-source = source.replace(/export const LIVE_SEARCH_MODEL = 'gemini-[^']+';/, "export const LIVE_SEARCH_MODEL = PERSONAL_CHAT_MODEL;");
+source = source.replace(/export const LIVE_SEARCH_MODEL = '[^']+';/, "export const LIVE_SEARCH_MODEL = 'EXA_DIRECT';");
 source = source.replace(/export const CHAT_MODEL_FALLBACKS = \[[\s\S]*?\];/, "export const CHAT_MODEL_FALLBACKS = [PERSONAL_CHAT_MODEL];");
+source = source.replace(/Gemini 3\.7 Flash/g, 'Gemini 3.8 Flash');
 
-// Permanently remove the server-side @google/genai execution dependency from the
-// generated backend. REST is used instead so SDK/runtime bundling cannot produce
-// opaque ReferenceErrors such as \"i is not defined\".
-source = source.replace(/^import \{ GoogleGenAI \} from '@google\/genai';\n/m, '');
+// Remove the SDK execution path completely. The production backend uses the
+// Gemini REST endpoint so an SDK internal ReferenceError such as "i is not defined"
+// can never reach the chat request handler.
+source = source.replace(/^import \{ GoogleGenAI \} from '@google\/genai';\n?/m, '');
 source = source.replace(/\n  private aiClient: GoogleGenAI \| null = null;\n/, '\n');
 
 const clientStart = source.indexOf('  private getClient(): GoogleGenAI {');
 if (clientStart >= 0) {
   const clientEnd = source.indexOf('  public async getHealthStatus(', clientStart);
-  if (clientEnd > clientStart) source = source.slice(0, clientStart) + source.slice(clientEnd);
+  if (clientEnd <= clientStart) throw new Error('[GEMINI-RUNTIME] getClient boundary is invalid.');
+  source = source.slice(0, clientStart) + source.slice(clientEnd);
 }
 
 const healthStart = source.indexOf('  public async getHealthStatus(');
 const processStart = source.indexOf('  public async processChat(', healthStart);
-if (healthStart >= 0 && processStart > healthStart) {
-  const healthMethod = `  public async getHealthStatus(): Promise<{ aiProvider: string; chatModel: string; backend: string; status: 'connected' | 'unavailable'; latencyMs?: number; error?: string }> {
+if (healthStart < 0 || processStart <= healthStart) {
+  throw new Error('[GEMINI-RUNTIME] Health/process method boundaries not found.');
+}
+
+const healthMethod = `  public async getHealthStatus(): Promise<{ aiProvider: string; chatModel: string; backend: string; status: 'connected' | 'unavailable'; latencyMs?: number; error?: string }> {
     const startTime = Date.now();
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -56,15 +59,12 @@ if (healthStart >= 0 && processStart > healthStart) {
   }
 
 `;
-  source = source.slice(0, healthStart) + healthMethod + source.slice(processStart);
-}
+source = source.slice(0, healthStart) + healthMethod + source.slice(processStart);
 
 const methodStart = source.indexOf('  private async executeGeminiCallWithFallback(');
 const methodEnd = source.indexOf('  private buildSystemPrompt(', methodStart);
-
-if (methodStart < 0 || methodEnd < 0) {
-  console.log('[GEMINI-RUNTIME] Gemini call method boundaries not found; skipping safely.');
-  process.exit(0);
+if (methodStart < 0 || methodEnd <= methodStart) {
+  throw new Error('[GEMINI-RUNTIME] Gemini call method boundaries not found.');
 }
 
 const newMethod = `  private async executeGeminiCallWithFallback(params: { contents: any; config?: any; preferredModel?: string }): Promise<string> {
@@ -73,8 +73,8 @@ const newMethod = `  private async executeGeminiCallWithFallback(params: { conte
 
     const model = PERSONAL_CHAT_MODEL;
     const endpoint = \`https://generativelanguage.googleapis.com/v1beta/models/\${model}:generateContent\`;
-    const cfg = params.config || {};
-    const body = { contents: params.contents };
+    const cfg: any = params.config || {};
+    const body: any = { contents: params.contents };
 
     if (cfg.systemInstruction) {
       body.systemInstruction = typeof cfg.systemInstruction === 'string'
@@ -82,7 +82,7 @@ const newMethod = `  private async executeGeminiCallWithFallback(params: { conte
         : cfg.systemInstruction;
     }
 
-    const generationConfig = {};
+    const generationConfig: any = {};
     for (const key of ['temperature', 'topP', 'topK', 'maxOutputTokens', 'candidateCount', 'stopSequences']) {
       if (cfg[key] !== undefined) generationConfig[key] = cfg[key];
     }
@@ -99,7 +99,7 @@ const newMethod = `  private async executeGeminiCallWithFallback(params: { conte
       });
 
       const raw = await restResponse.text();
-      let data = {};
+      let data: any = {};
       try { data = JSON.parse(raw); } catch {}
 
       if (!restResponse.ok) {
@@ -108,7 +108,7 @@ const newMethod = `  private async executeGeminiCallWithFallback(params: { conte
       }
 
       const text = data?.candidates?.[0]?.content?.parts
-        ?.map((part) => part?.text || '')
+        ?.map((part: any) => part?.text || '')
         .join('') || '';
 
       if (!text.trim()) throw new Error('Gemini REST returned an empty response.');
@@ -122,7 +122,26 @@ const newMethod = `  private async executeGeminiCallWithFallback(params: { conte
   }
 
 `;
-
 source = source.slice(0, methodStart) + newMethod + source.slice(methodEnd);
+
+// Never silently ship the old SDK/Tavily execution path.
+const forbidden = [
+  "@google/genai",
+  'GoogleGenAI',
+  '.models.generateContent',
+  'private getClient():',
+  'searchWithTavily',
+];
+const leftovers = forbidden.filter((token) => source.includes(token));
+if (leftovers.length) {
+  throw new Error(`[GEMINI-RUNTIME] Forbidden runtime references remain: ${leftovers.join(', ')}`);
+}
+if (!source.includes("export const PERSONAL_CHAT_MODEL = 'gemini-3.8-flash';")) {
+  throw new Error('[GEMINI-RUNTIME] Gemini 3.8 Flash model was not installed.');
+}
+if (!source.includes('[GEMINI_REST_REQUEST]')) {
+  throw new Error('[GEMINI-RUNTIME] Direct Gemini REST call was not installed.');
+}
+
 fs.writeFileSync(target, source, 'utf8');
-console.log('[GEMINI-RUNTIME] Single Gemini 3.8 Flash REST path installed; all fallbacks removed.');
+console.log('[GEMINI-RUNTIME] OK: Gemini 3.8 Flash REST only; Exa-only live search; Tavily/SDK runtime removed.');
