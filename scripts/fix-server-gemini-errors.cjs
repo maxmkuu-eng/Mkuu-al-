@@ -16,9 +16,17 @@ source = source.replace(
   "app.get(['/health','/api/health','/api/status','/api/system/status','/api/ping'], async (_req,res)=>{ try { const health=await geminiService.getHealthStatus(); const connected=health.status==='connected'; res.status(connected?200:503).json({status:connected?'ok':'degraded',service:'MKUU Backend',gemini:health.status,chatModel:health.chatModel||PERSONAL_CHAT_MODEL,backend:health.backend||BACKEND_IDENTIFIER,aiProvider:health.aiProvider||AI_PROVIDER,imageModel:PRIMARY_IMAGE_MODEL,time:new Date().toISOString(),latencyMs:health.latencyMs,...(health.error?{error:health.error}: {})}); } catch(e:any) { console.error('[MKUU-BACKEND] Health check failed:',e); res.status(503).json({status:'degraded',service:'MKUU Backend',gemini:'unavailable',chatModel:PERSONAL_CHAT_MODEL,backend:BACKEND_IDENTIFIER,aiProvider:AI_PROVIDER,error:e?.message||String(e)}); } });"
 );
 
+// Current-information routing must never inject a Google-search instruction into the
+// message. The backend's GeminiService decides whether to call Exa, so Exa remains the
+// sole live-search provider.
+source = source.replace(
+  /const searchMessage = currentFactQuery && !\/\\b\(tafuta google\|search google\|tafuta mtandaoni\|search online\)\\b\/i\.test\(lowerMessage\)\n\s*\? `Tafuta Google na uthibitishe taarifa za sasa kabla ya kujibu\. Swali la mtumiaji: \$\{message\}`\n\s*: message;/,
+  'const searchMessage = message;'
+);
+
 source = source.replace(
   "app.post(['/api/chat','/api/chat/'],async(req,res)=>{try{res.json(await processChatRequest(req));}catch(error:any){console.error('[MKUU-BACKEND] Chat API Error:',error);res.status(503).json({error:'GEMINI_UNAVAILABLE',message:error.message||'Google Gemini API Error',aiProvider:AI_PROVIDER,chatModel:PERSONAL_CHAT_MODEL});}});",
-  "app.post(['/api/chat','/api/chat/'],async(req,res)=>{try{res.json(await processChatRequest(req));}catch(error:any){const raw=String(error?.message||error||'Google Gemini API Error');const m=raw.match(/(?:HTTP|status|code)[\\s:=]+(400|401|403|404|409|429|500|502|503|504)\\b/i);const code=m?Number(m[1]):0;const type=code===401||/authentication|api key|invalid.*key|unauthorized/i.test(raw)?'GEMINI_AUTHENTICATION_ERROR':code===403||/permission|forbidden|access denied/i.test(raw)?'GEMINI_PERMISSION_ERROR':code===404||/model.*not found|not found/i.test(raw)?'GEMINI_MODEL_ERROR':code===429||/RESOURCE_EXHAUSTED|rate.?limit|quota|too many requests/i.test(raw)?'GEMINI_RATE_LIMIT_ERROR':code>=500?'GEMINI_SERVER_ERROR':'GEMINI_REQUEST_ERROR';console.error(`[MKUU-BACKEND] [${type}] ${raw}`);res.status(code>=400&&code<600?code:503).json({error:type,message:raw,detail:raw,aiProvider:AI_PROVIDER,chatModel:PERSONAL_CHAT_MODEL,timestamp:new Date().toISOString()});}});"
+  "app.post(['/api/chat','/api/chat/'],async(req,res)=>{try{res.json(await processChatRequest(req));}catch(error:any){const raw=String(error?.message||error||'Google Gemini API Error');const m=raw.match(/(?:HTTP|status|code)[\\s:=]+(400|401|403|404|409|429|500|502|503|504)\\b/i);const code=m?Number(m[1]):0;const isExa=/LIVE_SEARCH_UNAVAILABLE|EXA_SEARCH_/i.test(raw);const type=isExa?'EXA_UNAVAILABLE':code===401||/authentication|api key|invalid.*key|unauthorized/i.test(raw)?'GEMINI_AUTHENTICATION_ERROR':code===403||/permission|forbidden|access denied/i.test(raw)?'GEMINI_PERMISSION_ERROR':code===404||/model.*not found|not found/i.test(raw)?'GEMINI_MODEL_ERROR':code===429||/RESOURCE_EXHAUSTED|rate.?limit|quota|too many requests/i.test(raw)?'GEMINI_RATE_LIMIT_ERROR':code>=500?'GEMINI_SERVER_ERROR':'GEMINI_REQUEST_ERROR';console.error(`[MKUU-BACKEND] [${type}] ${raw}`);res.status(code>=400&&code<600?code:503).json({error:type,message:raw,detail:raw,aiProvider:isExa?'Exa Live Search':AI_PROVIDER,chatModel:isExa?'Exa':PERSONAL_CHAT_MODEL,timestamp:new Date().toISOString()});}});"
 );
 
 source = source.replace(
@@ -28,7 +36,7 @@ source = source.replace(
 
 if (source !== original) {
   fs.writeFileSync(target, source);
-  console.log('[GEMINI-SERVER] Production server error handling patched.');
+  console.log('[GEMINI-SERVER] Production server error handling and Exa routing patched.');
 } else {
   console.log('[GEMINI-SERVER] Production server already patched; no changes needed.');
 }
