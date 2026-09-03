@@ -12,6 +12,12 @@ if (!source.includes("import { searchWithExa } from './exaSearch.js';")) {
   source = source.replace("import { generateRealFile } from './files.js';", "import { generateRealFile } from './files.js';\nimport { searchWithExa } from './exaSearch.js';");
 }
 
+// Gemini 3.x no longer accepts legacy sampling fields such as temperature.
+// Remove them at build time so all generated server builds use a valid Gemini 3.x config.
+source = source.replace(/const generationConfig:\s*any\s*=\s*\{\s*systemInstruction:\s*systemPrompt,\s*temperature:\s*0\.7\s*\};/g, 'const generationConfig: any = { systemInstruction: systemPrompt };');
+source = source.replace(/temperature:\s*0\.7,?\s*/g, '');
+source = source.replace(/temperature:\s*0\.2,?\s*/g, '');
+
 // The Gemini service itself must also be safe if called directly: live search is Exa-only.
 const liveStart = source.indexOf('    if (isSearchQuery) {');
 const fileIntentMarker = source.indexOf('    if (fileIntent) {', liveStart);
@@ -71,4 +77,4 @@ if (fs.existsSync(serverFile)) {
   fs.writeFileSync(serverFile, server, 'utf8');
 }
 
-console.log('[EXA-ONLY] Live/social queries use Exa only; normal chat uses Gemini; Tavily and Google Search live fallbacks removed; health/error reporting fixed.');
+console.log('[EXA-ONLY] Live/social queries use Exa only; normal chat uses Gemini; Gemini 3.x legacy temperature fields removed; Tavily and Google Search live fallbacks removed; health/error reporting fixed.');
