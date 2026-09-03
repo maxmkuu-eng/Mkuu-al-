@@ -1,0 +1,29 @@
+const fs = require('fs');
+const path = require('path');
+
+const bundle = path.join(process.cwd(), 'dist', 'server.cjs');
+if (!fs.existsSync(bundle)) {
+  console.error('[GEMINI-BUILD] dist/server.cjs was not generated.');
+  process.exit(1);
+}
+
+const source = fs.readFileSync(bundle, 'utf8');
+const forbidden = [
+  '@google/genai',
+  'GoogleGenAI',
+  '.models.generateContent',
+  'getClient()'
+];
+
+const found = forbidden.filter((token) => source.includes(token));
+if (found.length) {
+  console.error(`[GEMINI-BUILD] FAILED: stale Gemini SDK execution path detected: ${found.join(', ')}`);
+  process.exit(1);
+}
+
+if (!source.includes('generativelanguage.googleapis.com/v1beta/models/') || !source.includes('x-goog-api-key')) {
+  console.error('[GEMINI-BUILD] FAILED: direct Gemini REST execution path is missing.');
+  process.exit(1);
+}
+
+console.log('[GEMINI-BUILD] OK: production bundle uses direct Gemini REST only.');
