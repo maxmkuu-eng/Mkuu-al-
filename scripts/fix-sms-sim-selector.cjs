@@ -4,6 +4,12 @@ const PLUGIN = 'android/app/src/main/java/com/mkuu/ai/SmsSenderPlugin.java';
 const UI = 'src/components/AutoReplyCenter.tsx';
 
 function patchFile(path, marker, anchor, block) {
+  // The Android project/plugin can be generated later by Capacitor sync.
+  // Do not fail the web/Render build when the generated native source is absent.
+  if (!fs.existsSync(path)) {
+    console.log(`[SMS-SIM] ${path}: not present yet; skipping native patch (will be applied when the native source exists).`);
+    return;
+  }
   let source = fs.readFileSync(path, 'utf8');
   if (source.includes(marker)) {
     console.log(`[SMS-SIM] ${path}: already patched`);
