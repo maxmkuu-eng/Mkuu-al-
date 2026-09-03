@@ -14,7 +14,7 @@ COPY . .
 # Build the application, then apply the Gemini REST runtime patch as the final
 # source transform before creating the production server bundle.
 # The explicit build marker makes Render logs prove which build was deployed.
-ARG MKUU_BUILD_MARKER=gemini-rest-2026-09-03-01
+ARG MKUU_BUILD_MARKER=gemini-rest-2026-09-03-02
 RUN echo "[MKUU-BUILD] MARKER=${MKUU_BUILD_MARKER}" \
   && node scripts/enable-puter-image-studio.cjs \
   && sed -i "s/gemini-2\.5-flash/gemini-3.6-flash/g" server/geminiService.ts \
