@@ -3,16 +3,16 @@ services:
     name: mkuu-ai-backend
     env: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm run build:server
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: GEMINI_API_KEY
         sync: false
-      - key: EXA_API_KEY
+      - key: TAVILY_API_KEY
         sync: false
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 3000
+        value: 10000
