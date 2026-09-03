@@ -1,13 +1,13 @@
 /** MKUU AI production API configuration. */
-// The backend URL is intentionally NOT hardcoded to another project's Faable deployment.
-// For production/native builds, provide VITE_API_BASE_URL with this project's own
-// Faable public URL. A saved URL may also be supplied by the app's server settings.
+// MKUU production/native builds use the deployed Render backend.
+// A saved server URL is allowed only as an explicit app override.
 export const DEFAULT_PUBLIC_BACKEND_URL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL?.trim()) || '';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL?.trim()) ||
+  'https://mkuu-al-3.onrender.com';
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
 export const STORAGE_SERVER_KEY_CUSTOM = 'mkuu_backend_api_url_v1';
 
-export type ApiErrorCode = 'NO_INTERNET'|'BACKEND_UNREACHABLE'|'GEMINI_UNAVAILABLE'|'DNS_FAILURE'|'TLS_FAILURE'|'HTTP_401'|'HTTP_403'|'HTTP_429'|'HTTP_500'|'HTTP_502'|'HTTP_503'|'TIMEOUT'|'AUTH_REDIRECT'|'UNKNOWN'|'IMAGE_GENERATION_FAILED'|'IMAGE_SAVE_FAILED';
+export type ApiErrorCode = 'NO_INTERNET'|'BACKEND_UNREACHABLE'|'GEMINI_UNAVAILABLE'|'EXA_UNAVAILABLE'|'DNS_FAILURE'|'TLS_FAILURE'|'HTTP_401'|'HTTP_403'|'HTTP_429'|'HTTP_500'|'HTTP_502'|'HTTP_503'|'TIMEOUT'|'AUTH_REDIRECT'|'UNKNOWN'|'IMAGE_GENERATION_FAILED'|'IMAGE_SAVE_FAILED';
 
 export class MkuuApiError extends Error {
   public code: ApiErrorCode; public status?: number; public technicalDetails: string; public userMessage: string; public targetUrl: string; public isRetryable: boolean;
@@ -51,10 +51,11 @@ export async function apiFetch<T>(endpoint:string,options?:RequestInit,timeoutMs
       if(!r.ok){
         const detail=typeof body==='string'?body:(body?.message||body?.error||`HTTP ${r.status}`);
         if(isImageEndpoint)throw new MkuuApiError({code:'IMAGE_GENERATION_FAILED',status:r.status,userMessage:'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali hakikisha Image Studio imeunganishwa na jaribu tena.',technicalDetails:String(detail),targetUrl:url});
-        throw new MkuuApiError({code:r.status===429||r.status===503?'GEMINI_UNAVAILABLE':'BACKEND_UNREACHABLE',status:r.status,userMessage:r.status===429||r.status===503?'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:String(detail),targetUrl:url});
+        const isExa=body?.error==='EXA_UNAVAILABLE'||/LIVE_SEARCH_UNAVAILABLE|EXA_SEARCH_/i.test(String(body?.message||detail));
+        throw new MkuuApiError({code:isExa?'EXA_UNAVAILABLE':r.status===429||r.status===503?'GEMINI_UNAVAILABLE':'BACKEND_UNREACHABLE',status:r.status,userMessage:isExa?'EXA LIVE SEARCH HAIPATIKANI KWA SASA\nTafadhali jaribu tena.':r.status===429||r.status===503?'GEMINI HAIPATIKANI KWA SASA\nTafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:String(detail),targetUrl:url});
       }
       return body as T;
-    }catch(e:any){clearTimeout(t);last=e instanceof MkuuApiError?e:new MkuuApiError({code:isImageEndpoint?'IMAGE_GENERATION_FAILED':'BACKEND_UNREACHABLE',userMessage:isImageEndpoint?'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:e?.message||'Failed to fetch',targetUrl:url});if(last.code==='GEMINI_UNAVAILABLE'||last.code==='IMAGE_GENERATION_FAILED')throw last;if(attempt===0)await new Promise(r=>setTimeout(r,500));}
+    }catch(e:any){clearTimeout(t);last=e instanceof MkuuApiError?e:new MkuuApiError({code:isImageEndpoint?'IMAGE_GENERATION_FAILED':'BACKEND_UNREACHABLE',userMessage:isImageEndpoint?'IMAGE STUDIO IMESHINDWA KUTENGENEZA PICHA. Tafadhali jaribu tena.':'SEVA YA MKUU HAIPATIKANI\nTafadhali jaribu tena.',technicalDetails:e?.message||'Failed to fetch',targetUrl:url});if(last.code==='GEMINI_UNAVAILABLE'||last.code==='EXA_UNAVAILABLE'||last.code==='IMAGE_GENERATION_FAILED')throw last;if(attempt===0)await new Promise(r=>setTimeout(r,500));}
   }
   throw last;
 }
