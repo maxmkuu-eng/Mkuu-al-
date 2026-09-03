@@ -2,20 +2,105 @@ const fs = require('fs');
 const path = require('path');
 
 const target = path.join(process.cwd(), 'server', 'geminiService.ts');
-if (!fs.existsSync(target)) process.exit(0);
-
-let source = fs.readFileSync(target, 'utf8');
-const original = source;
-
-const oldMethod = `  private async executeGeminiCallWithFallback(params: { contents: any; config?: any; preferredModel?: string }): Promise<string> {\n    const client = this.getClient();\n    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;\n    const modelsToTry = params.config?.tools ? [preferred] : [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];\n    let lastError: any = null;\n    for (const model of modelsToTry) {\n      try {\n        const response = await client.models.generateContent({ model, contents: params.contents, config: params.config });\n        const text = response.text;\n        if (text?.trim()) return text;\n      } catch (err: any) {\n        lastError = err;\n        const errMsg = String(err?.message || err);\n        if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota')) await new Promise((r) => setTimeout(r, 600));\n      }\n    }\n    throw lastError || new Error('All Gemini model candidates are temporarily unavailable.');\n  }`;
-
-const newMethod = `  private async executeGeminiCallWithFallback(params: { contents: any; config?: any; preferredModel?: string }): Promise<string> {\n    const client = this.getClient();\n    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;\n    const modelsToTry = params.config?.tools ? [preferred] : [preferred, ...CHAT_MODEL_FALLBACKS.filter((m) => m !== preferred)];\n    let lastError: any = null;\n    for (const model of modelsToTry) {\n      try {\n        const response = await client.models.generateContent({ model, contents: params.contents, config: params.config });\n        const text = response.text;\n        if (text?.trim()) return text;\n      } catch (err: any) {\n        lastError = err;\n        const errMsg = String(err?.message || err);\n        console.error(\`[MKUU-BACKEND] [GEMINI_SDK_ERROR] model=\"\${model}\" error=\"\${errMsg}\"\`);\n        if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota')) await new Promise((r) => setTimeout(r, 600));\n      }\n    }\n\n    // The SDK must not be a single point of failure. If it throws an internal\n    // JavaScript error (for example an opaque \"i is not defined\" exception),\n    // retry the same Gemini request through the documented REST generateContent\n    // endpoint using the same API key and model.\n    try {\n      const apiKey = process.env.GEMINI_API_KEY;\n      if (!apiKey) throw lastError || new Error('GEMINI_API_KEY is not configured on MKUU Backend.');\n      const model = preferred;\n      const endpoint = \`https://generativelanguage.googleapis.com/v1beta/models/\${model}:generateContent\`;\n      const cfg = params.config || {};\n      const body: any = { contents: params.contents };\n      if (cfg.systemInstruction) body.systemInstruction = typeof cfg.systemInstruction === 'string' ? { parts: [{ text: cfg.systemInstruction }] } : cfg.systemInstruction;\n      const generationConfig: any = {};\n      for (const key of ['temperature', 'topP', 'topK', 'maxOutputTokens', 'candidateCount', 'stopSequences']) if (cfg[key] !== undefined) generationConfig[key] = cfg[key];\n      if (cfg.thinkingConfig) generationConfig.thinkingConfig = cfg.thinkingConfig;\n      if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;\n      if (cfg.tools) body.tools = cfg.tools;\n\n      const restResponse = await fetch(endpoint, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },\n        body: JSON.stringify(body),\n      });\n      const raw = await restResponse.text();\n      let data: any = {};\n      try { data = JSON.parse(raw); } catch {}\n      if (!restResponse.ok) {\n        const message = data?.error?.message || raw || \`Gemini REST request failed with HTTP \${restResponse.status}\`;\n        throw new Error(\`Gemini REST HTTP \${restResponse.status}: \${message}\`);\n      }\n      const text = data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || '').join('') || '';\n      if (text.trim()) return text;\n      throw new Error('Gemini REST returned an empty response.');\n    } catch (restErr: any) {\n      const restMsg = String(restErr?.message || restErr);\n      console.error(\`[MKUU-BACKEND] [GEMINI_REST_FALLBACK_FAILED] \${restMsg}\`);\n      throw new Error(\`Gemini SDK failed: \${String(lastError?.message || lastError || 'unknown SDK error')}; REST fallback failed: \${restMsg}\`);\n    }\n  }`;
-
-if (source.includes(oldMethod)) {
-  source = source.replace(oldMethod, newMethod);
-} else {
-  console.log('[GEMINI-RUNTIME] executeGeminiCallWithFallback source changed; skipping safely.');
+if (!fs.existsSync(target)) {
+  console.log('[GEMINI-RUNTIME] server/geminiService.ts not found; skipping.');
+  process.exit(0);
 }
 
-if (source !== original) fs.writeFileSync(target, source, 'utf8');
-console.log('[GEMINI-RUNTIME] SDK failure fallback installed safely.');
+let source = fs.readFileSync(target, 'utf8');
+const methodStart = source.indexOf('  private async executeGeminiCallWithFallback(');
+const methodEnd = source.indexOf('  private buildSystemPrompt(', methodStart);
+
+if (methodStart < 0 || methodEnd < 0) {
+  console.log('[GEMINI-RUNTIME] Gemini call method boundaries not found; skipping safely.');
+  process.exit(0);
+}
+
+const newMethod = `  private async executeGeminiCallWithFallback(params: { contents: any; config?: any; preferredModel?: string }): Promise<string> {
+    const preferred = params.preferredModel || PERSONAL_CHAT_MODEL;
+    const modelsToTry = params.config?.tools ? [preferred] : [PERSONAL_CHAT_MODEL];
+    let lastError: any = null;
+
+    // Use the Gemini SDK first. If its internal runtime throws an opaque
+    // ReferenceError such as "i is not defined", use the same Gemini model
+    // through Google's documented REST endpoint instead of returning 503.
+    for (const model of modelsToTry) {
+      try {
+        const response = await this.getClient().models.generateContent({
+          model,
+          contents: params.contents,
+          config: params.config,
+        });
+        const text = typeof response.text === 'string' ? response.text : '';
+        if (text.trim()) return text;
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = String(err?.message || err);
+        console.error(\`[MKUU-BACKEND] [GEMINI_SDK_ERROR] model="\${model}" error="\${errMsg}"\`);
+        if (/429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(errMsg)) {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+      }
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw lastError || new Error('GEMINI_API_KEY is not configured on MKUU Backend.');
+    }
+
+    try {
+      const model = preferred;
+      const endpoint = \`https://generativelanguage.googleapis.com/v1beta/models/\${model}:generateContent\`;
+      const cfg = params.config || {};
+      const body: any = { contents: params.contents };
+
+      if (cfg.systemInstruction) {
+        body.systemInstruction = typeof cfg.systemInstruction === 'string'
+          ? { parts: [{ text: cfg.systemInstruction }] }
+          : cfg.systemInstruction;
+      }
+
+      const generationConfig: any = {};
+      for (const key of ['temperature', 'topP', 'topK', 'maxOutputTokens', 'candidateCount', 'stopSequences']) {
+        if (cfg[key] !== undefined) generationConfig[key] = cfg[key];
+      }
+      if (cfg.thinkingConfig) generationConfig.thinkingConfig = cfg.thinkingConfig;
+      if (Object.keys(generationConfig).length) body.generationConfig = generationConfig;
+      if (cfg.tools) body.tools = cfg.tools;
+
+      const restResponse = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(body),
+      });
+
+      const raw = await restResponse.text();
+      let data: any = {};
+      try { data = JSON.parse(raw); } catch {}
+
+      if (!restResponse.ok) {
+        const message = data?.error?.message || raw || \`Gemini REST HTTP \${restResponse.status}\`;
+        throw new Error(\`Gemini REST HTTP \${restResponse.status}: \${message}\`);
+      }
+
+      const text = data?.candidates?.[0]?.content?.parts
+        ?.map((part: any) => part?.text || '')
+        .join('') || '';
+      if (text.trim()) return text;
+      throw new Error('Gemini REST returned an empty response.');
+    } catch (restErr: any) {
+      const sdkMsg = String(lastError?.message || lastError || 'unknown SDK error');
+      const restMsg = String(restErr?.message || restErr);
+      console.error(\`[MKUU-BACKEND] [GEMINI_REST_FALLBACK_FAILED] SDK=\${sdkMsg} REST=\${restMsg}\`);
+      throw new Error(\`Gemini SDK failed: \${sdkMsg}; REST fallback failed: \${restMsg}\`);
+    }
+  }
+
+`;
+
+source = source.slice(0, methodStart) + newMethod + source.slice(methodEnd);
+fs.writeFileSync(target, source, 'utf8');
+console.log('[GEMINI-RUNTIME] Gemini SDK runtime fallback installed with boundary-based patching.');
