@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
-    "@capacitor/cli": "^8.0.0",
     "@capacitor/core": "^8.5.0",
     "@capacitor-community/text-to-speech": "^8.0.2",
     "@capacitor/filesystem": "^8.0.0",
@@ -25,6 +24,7 @@
     "autoprefixer": "10.4.21",
     "canvas-confetti": "^1.0.0",
     "docx": "^9.7.1",
+    "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "openai": "^5.12.2",
     "pdf-lib": "^1.17.0",
