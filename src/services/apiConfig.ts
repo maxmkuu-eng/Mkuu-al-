@@ -1,8 +1,9 @@
 /** MKUU AI production API configuration. */
-// Reuse the existing Faable deployment supplied for the working backend.
-// Keep one explicit public origin for web and native clients so all API calls
-// target the same backend service instead of a frontend-only/custom origin.
-export const DEFAULT_PUBLIC_BACKEND_URL = 'https://chii-0u0af.faable.link';
+// The backend URL is intentionally NOT hardcoded to another project's Faable deployment.
+// For production/native builds, provide VITE_API_BASE_URL with this project's own
+// Faable public URL. A saved URL may also be supplied by the app's server settings.
+export const DEFAULT_PUBLIC_BACKEND_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL?.trim()) || '';
 export const STORAGE_SERVER_URL_KEY = 'mkuu_backend_api_url_v1';
 export const STORAGE_SERVER_KEY_CUSTOM = 'mkuu_backend_api_url_v1';
 
@@ -20,7 +21,11 @@ export function isCapacitorNative(): boolean {
 }
 
 export function getApiBaseUrl(): string {
-  return DEFAULT_PUBLIC_BACKEND_URL;
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem(STORAGE_SERVER_URL_KEY)?.trim();
+    if (saved) return saved.replace(/\/+$/,'');
+  }
+  return DEFAULT_PUBLIC_BACKEND_URL.replace(/\/+$/,'');
 }
 
 export const PRODUCTION_API_BASE_URL=DEFAULT_PUBLIC_BACKEND_URL;
