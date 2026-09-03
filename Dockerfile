@@ -11,11 +11,12 @@ RUN npm install
 # Copy project files
 COPY . .
 
-# Build the application first, then force the Gemini REST patch one final time
-# immediately before the production server bundle is created. This prevents any
-# earlier build-time transform from leaving the old @google/genai execution path
-# inside dist/server.cjs.
-RUN node scripts/enable-puter-image-studio.cjs \
+# Build the application, then apply the Gemini REST runtime patch as the final
+# source transform before creating the production server bundle.
+# The explicit build marker makes Render logs prove which build was deployed.
+ARG MKUU_BUILD_MARKER=gemini-rest-2026-09-03-01
+RUN echo "[MKUU-BUILD] MARKER=${MKUU_BUILD_MARKER}" \
+  && node scripts/enable-puter-image-studio.cjs \
   && sed -i "s/gemini-2\.5-flash/gemini-3.6-flash/g" server/geminiService.ts \
   && npm run build \
   && node scripts/fix-gemini-runtime-fallback.cjs \
