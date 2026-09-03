@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const root = path.resolve(__dirname, '..');
+const root = process.cwd();
 const aiPath = path.join(root, 'src', 'services', 'aiEngine.ts');
 const apiPath = path.join(root, 'src', 'services', 'apiConfig.ts');
 
@@ -40,7 +40,28 @@ safePatch(aiPath, [
     "if(payload.type==='error')throw new Error(payload.message||'Streaming error');",
     "if(payload.type==='error')throw new MkuuApiError({code:'GEMINI_UNAVAILABLE',status:payload.status||503,userMessage:`GEMINI ERROR ${payload.status||503}: ${payload.message||'Streaming error'}`,technicalDetails:String(payload.message||'Streaming error'),targetUrl:url});",
   ],
+  [
+    "const directApiKey=getStoredGeminiApiKey();if(directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative())return callNativeServerChat(params);",
+    "if(isCapacitorNative())return callNativeServerChat(params);",
+  ],
+  [
+    "if(needsArtifactRoute(params)){const serverRes=await apiFetch<any>('/api/agent',",
+    "if(needsArtifactRoute(params)){const serverRes=await apiFetch<any>('/api/agent',",
+  ],
 ], 'aiEngine.ts');
+
+// Ensure web/native chat can never bypass the MKUU backend with a stale local Gemini key.
+// This is important because the old direct path used Gemini 3.7 + Google Search + legacy
+// generation parameters, bypassing the Exa-only backend architecture.
+if (fs.existsSync(aiPath)) {
+  let text = fs.readFileSync(aiPath, 'utf8');
+  const directBranch = /const directApiKey=getStoredGeminiApiKey\(\);if\(directApiKey&&directApiKey\.trim\(\)\.length>10\)return callDirectGemini\(directApiKey\.trim\(\),params\);/;
+  if (directBranch.test(text)) {
+    text = text.replace(directBranch, '');
+    fs.writeFileSync(aiPath, text, 'utf8');
+    console.log('[GEMINI-CLIENT] Removed direct Gemini browser path; MKUU backend is authoritative.');
+  }
+}
 
 safePatch(apiPath, [
   [
@@ -49,4 +70,4 @@ safePatch(apiPath, [
   ],
 ], 'apiConfig.ts');
 
-console.log('[GEMINI-CLIENT] error-reporting patch completed without blocking the build');
+console.log('[GEMINI-CLIENT] Backend-only chat routing and error-reporting patch completed.');
