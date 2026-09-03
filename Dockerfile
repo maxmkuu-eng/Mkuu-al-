@@ -7,11 +7,10 @@ RUN npm install
 
 COPY . .
 
-# Build the application, then enforce one Gemini Personal Chat model only.
-ARG MKUU_BUILD_MARKER=gemini-single-3.8-2026-09-03-01
+# Final Gemini/Exa runtime build. The source patch is validated before bundling.
+ARG MKUU_BUILD_MARKER=gemini-exa-rest-final-2026-09-03-03
 RUN echo "[MKUU-BUILD] MARKER=${MKUU_BUILD_MARKER}" \
   && node scripts/enable-puter-image-studio.cjs \
-  && sed -i "s/gemini-2\.5-flash/gemini-3.8-flash/g" server/geminiService.ts \
   && npm run build \
   && node scripts/fix-gemini-runtime-fallback.cjs \
   && npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs \
