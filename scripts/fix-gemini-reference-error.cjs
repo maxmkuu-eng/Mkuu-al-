@@ -11,7 +11,29 @@ if (source.includes(marker)) {
   process.exit(0);
 }
 
-const helper = `${marker}\nasync function directGeminiReferenceFallback(req:any): Promise<any> {\n  const key = process.env.GEMINI_API_KEY;\n  if (!key) throw new Error('GEMINI_API_KEY is not configured on MKUU Backend.');\n  const body = req.body || {};\n  const history = Array.isArray(body.conversationHistory) ? body.conversationHistory.slice(-12) : [];\n  const contents = history.filter((h:any) => h && h.content).map((h:any) => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: String(h.content) }] }));\n  contents.push({ role: 'user', parts: [{ text: String(body.message || '') }] });\n  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },\n    body: JSON.stringify({ contents, generationConfig: { maxOutputTokens: 2048 } }),\n  });\n  const raw = await r.text();\n  let data:any = {}; try { data = JSON.parse(raw); } catch {}\n  if (!r.ok) throw new Error('Gemini REST HTTP ' + r.status + ': ' + (data?.error?.message || raw || 'Unknown Gemini error'));\n  const text = Array.isArray(data?.candidates?.[0]?.content?.parts) ? data.candidates[0].content.parts.map((p:any) => p?.text || '').join('') : '';\n  if (!text.trim()) throw new Error('Gemini REST returned an empty response.');\n  return { reply: text, cleanSpeechText: text.replace(/[#*`_~[\\]()]/g, ' ').replace(/\\s+/g, ' ').trim(), memoriesExtracted: [], peopleRecognized: [], generatedFiles: [], aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', latencyMs: 0 };\n}\n`;
+const helper = [
+  marker,
+  'async function directGeminiReferenceFallback(req:any): Promise<any> {',
+  '  const key = process.env.GEMINI_API_KEY;',
+  "  if (!key) throw new Error('GEMINI_API_KEY is not configured on MKUU Backend.');",
+  '  const body = req.body || {};',
+  "  const history = Array.isArray(body.conversationHistory) ? body.conversationHistory.slice(-12) : [];",
+  "  const contents = history.filter((h:any) => h && h.content).map((h:any) => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: String(h.content) }] }));",
+  "  contents.push({ role: 'user', parts: [{ text: String(body.message || '') }] });",
+  "  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent', {",
+  "    method: 'POST',",
+  "    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },",
+  "    body: JSON.stringify({ contents, generationConfig: { maxOutputTokens: 2048 } }),",
+  '  });',
+  '  const raw = await r.text();',
+  '  let data:any = {}; try { data = JSON.parse(raw); } catch {}',
+  "  if (!r.ok) throw new Error('Gemini REST HTTP ' + r.status + ': ' + (data?.error?.message || raw || 'Unknown Gemini error'));",
+  "  const text = Array.isArray(data?.candidates?.[0]?.content?.parts) ? data.candidates[0].content.parts.map((p:any) => p?.text || '').join('') : '';",
+  "  if (!text.trim()) throw new Error('Gemini REST returned an empty response.');",
+  "  return { reply: text, cleanSpeechText: text.replace(/[#*_~[\\]()]/g, ' ').replace(/\\s+/g, ' ').trim(), memoriesExtracted: [], peopleRecognized: [], generatedFiles: [], aiProvider: 'Google Gemini', chatModel: 'gemini-3.7-flash', latencyMs: 0 };",
+  '}',
+  ''
+].join('\n');
 
 const anchor = '  const processChatRequest = async (req:any) => {';
 if (!source.includes(anchor)) throw new Error('[GEMINI-REF] processChatRequest anchor not found.');
