@@ -10,14 +10,14 @@ let s = fs.readFileSync(target, 'utf8');
 s = s.replace(/import\s*\{\s*GoogleGenAI\s*\}\s*from\s*['"]@google\/genai['"];?\s*/g, '');
 s = s.replace(/import\s*\{\s*searchWithTavily\s*\}\s*from\s*['"]\.\/tavilySearch\.js['"];?\s*/g, '');
 s = s.replace(/\s*private\s+aiClient\s*:\s*GoogleGenAI\s*\|\s*null\s*=\s*null;?\s*/g, '\n');
-s = s.replace(/\s*private\s+getClient\s*\(\s*\)\s*:\s*GoogleGenAI\s*\{[\s\S]*?\n\s*\}\s*(?=\s*public\s+(?:async\s+)?getHealthStatus\b)/m, '\n');
+// The legacy helper may be minified onto the same physical line as getHealthStatus.
+// Match the method structurally by its next public method instead of requiring a newline.
+s = s.replace(/\s*private\s+getClient\s*\(\s*\)\s*:\s*GoogleGenAI\s*\{[\s\S]*?\}\s*(?=public\s+(?:async\s+)?getHealthStatus\b)/m, '\n');
 
 s = s.replace(/export\s+const\s+PERSONAL_CHAT_MODEL\s*=\s*['"][^'"]+['"]\s*;?/, "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';");
 s = s.replace(/export\s+const\s+LIVE_SEARCH_MODEL\s*=\s*['"][^'"]+['"]\s*;?/, "export const LIVE_SEARCH_MODEL = 'EXA_DIRECT';");
 s = s.replace(/export\s+const\s+CHAT_MODEL_FALLBACKS\s*=\s*\[[\s\S]*?\]\s*;?/, "export const CHAT_MODEL_FALLBACKS = [PERSONAL_CHAT_MODEL];");
 
-// Generated TypeScript is assembled from ordinary strings so this build script
-// itself can never be broken by nested template literals.
 const healthMethod = [
   '  public async getHealthStatus(): Promise<{ aiProvider:string; chatModel:string; backend:string; status:\'connected\'|\'unavailable\'; latencyMs?:number; error?:string }> {',
   '    const started=Date.now(); const key=process.env.GEMINI_API_KEY;',
@@ -36,7 +36,6 @@ const healthMethod = [
 const processPos = s.search(/\n\s{2}public\s+async\s+processChat\b/);
 if (processPos < 0) throw new Error('[GEMINI-REST] processChat method not found; refusing unsafe build.');
 
-// Replace an existing health method by balanced-brace parsing; otherwise inject it.
 const healthStart = s.search(/\n\s{2}public\s+async\s+getHealthStatus\b/);
 if (healthStart >= 0 && healthStart < processPos) {
   const brace = s.indexOf('{', healthStart);
@@ -83,16 +82,12 @@ if (execRe.test(s)) {
   s = s.slice(0, buildPos) + '\n' + restMethod + s.slice(buildPos);
 }
 
-// Remove only legacy executable declarations/references. Do not reject harmless
-// comments or identifiers left by other idempotent build scripts.
 s = s.replace(/\bsearchWithTavily\s*\(/g, 'searchWithExa(');
 s = s.replace(/\b(?:client|this\.aiClient)\.models\.generateContent\s*\(/g, 'this.executeGeminiCallWithFallback({contents: params.contents, config: params.config, preferredModel: PERSONAL_CHAT_MODEL})');
 s = s.replace(/import\s*\{\s*\}\s*from\s*['"]@google\/genai['"]\s*;?\s*/g, '');
 
-// This final check is intentionally executable-path based. Compatibility names in
-// comments/types are not a reason to fail the production build.
 const forbidden = [
-  /import\s*\{[^}]*GoogleGenAI[^}]*\}\s*from\s*['"]@google\/genai['"]/,
+  /import\s*\{[^}]*GoogleGenAI[^}]*\}\s*from\s*['"]@google\/genai['"]/, 
   /from\s*['"]@google\/genai['"]/, 
   /\b(?:client|this\.aiClient)\.models\.generateContent\s*\(/,
   /\bsearchWithTavily\s*\(/,
