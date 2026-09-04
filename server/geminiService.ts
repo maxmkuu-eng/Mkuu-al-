@@ -146,46 +146,22 @@ export class GeminiService {
 
     let aiReplyText = '';
 
-    // IMPORTANT: Current-information questions must be grounded in fresh web data.
-    // Tavily is the primary live-search provider so a successful Gemini response
-    // cannot silently bypass the web search and answer from stale model memory.
     if (isSearchQuery) {
       try {
         console.log('[MKUU-BACKEND] [TAVILY_SEARCH_STARTED] Using Tavily for live web grounding.');
         const tavilyResults = await searchWithTavily(`${message}\nCurrent date/time in Tanzania: ${getCurrentTanzaniaTimeContext().formattedString}`);
         const groundedSystemPrompt = `${systemPrompt}\n\nLIVE WEB SEARCH RESULTS (Tavily):\n${tavilyResults}\n\nSTRICT LIVE-DATA RULES:\n- Answer using the supplied live search results as the primary evidence.\n- Do not use stale model memory to override the search results.\n- Prefer the newest credible source and pay attention to publication dates and event dates.\n- For sports, report the exact latest result from the search evidence; do not substitute an older match.\n- For current public officials, report the current office holder supported by the newest credible source.\n- If sources conflict, explain the conflict briefly and prefer the newest authoritative source.\n- Never invent a name, score, date, or event that is not supported by the supplied results.\n- You may include source names/URLs when useful.\n`;
-        const groundedContents = this.buildConversationHistory(
-          conversationHistory,
-          `${message}\n\n[MKUU LIVE SEARCH EVIDENCE - use this evidence to answer]\n${tavilyResults}`,
-          attachments,
-        );
-        aiReplyText = await this.executeGeminiCallWithFallback({
-          contents: groundedContents,
-          config: { systemInstruction: groundedSystemPrompt, temperature: 0.2 },
-          preferredModel: PERSONAL_CHAT_MODEL,
-        });
+        const groundedContents = this.buildConversationHistory(conversationHistory, `${message}\n\n[MKUU LIVE SEARCH EVIDENCE - use this evidence to answer]\n${tavilyResults}`, attachments);
+        aiReplyText = await this.executeGeminiCallWithFallback({ contents: groundedContents, config: { systemInstruction: groundedSystemPrompt, temperature: 0.2 }, preferredModel: PERSONAL_CHAT_MODEL });
         if (!aiReplyText?.trim()) throw new Error('Gemini returned an empty response after Tavily search.');
         console.log('[MKUU-BACKEND] [TAVILY_SEARCH_SUCCESS] Live search answer generated from fresh web evidence.');
       } catch (tavilyErr: any) {
         const tavilyMsg = String(tavilyErr?.message || tavilyErr);
         console.warn(`[MKUU-BACKEND] [TAVILY_SEARCH_FAILED] ${tavilyMsg}`);
-
-        // Current-government verification is fail-closed. If the official Ikulu
-        // snapshot failed, NEVER fall back to Gemini/Google Search, because an old
-        // article or model memory can reintroduce a former office holder.
-        if (/AUTHORITATIVE_GOVERNMENT_SOURCE_UNAVAILABLE/i.test(tavilyMsg)) {
-          throw new Error(tavilyMsg);
-        }
-
-        // Secondary fallback: Google Search grounding. This is only used for
-        // non-government searches when Tavily itself is unavailable.
+        if (/AUTHORITATIVE_GOVERNMENT_SOURCE_UNAVAILABLE/i.test(tavilyMsg)) throw new Error(tavilyMsg);
         try {
           console.warn('[MKUU-BACKEND] Falling back from Tavily to Google Search grounding.');
-          const searchReplyText = await this.executeGeminiCallWithFallback({
-            contents,
-            config: { ...generationConfig, tools: [{ googleSearch: {} }] },
-            preferredModel: usedModel,
-          });
+          const searchReplyText = await this.executeGeminiCallWithFallback({ contents, config: { ...generationConfig, tools: [{ googleSearch: {} }] }, preferredModel: usedModel });
           if (searchReplyText?.trim()) aiReplyText = searchReplyText;
           else throw new Error('Google Search grounding returned an empty response.');
         } catch (googleErr: any) {
@@ -194,20 +170,14 @@ export class GeminiService {
           throw new Error(`LIVE_SEARCH_UNAVAILABLE: Tavily and Google Search grounding both failed. ${tavilyMsg}`);
         }
       }
-
       console.log(`[MKUU-BACKEND] [LIVE_SEARCH_RESPONSE_RECEIVED] model="${PERSONAL_CHAT_MODEL}" latency=${Date.now() - startTime}ms status=200`);
     } else {
       try {
         aiReplyText = await this.executeGeminiCallWithFallback({ contents, config: generationConfig, preferredModel: PERSONAL_CHAT_MODEL });
-
         if (this.isInsufficientKnowledgeResponse(aiReplyText)) {
           console.log('[MKUU-BACKEND] Insufficient knowledge detected. Retrying with Google Search grounding...');
           try {
-            const searchReplyText = await this.executeGeminiCallWithFallback({
-              contents,
-              config: { ...generationConfig, tools: [{ googleSearch: {} }] },
-              preferredModel: LIVE_SEARCH_MODEL,
-            });
+            const searchReplyText = await this.executeGeminiCallWithFallback({ contents, config: { ...generationConfig, tools: [{ googleSearch: {} }] }, preferredModel: LIVE_SEARCH_MODEL });
             if (searchReplyText?.trim()) aiReplyText = searchReplyText;
           } catch (searchRetryErr) {
             console.warn('[MKUU-BACKEND] Google Search retry warning:', searchRetryErr);
@@ -310,125 +280,12 @@ MAADILI NA TABIA YA MKUU AI:
 
 ---
 ORODHA YA KUMBUKUMBU ZA SASA ZA MAX (MAX MEMORY - SERVER PERSISTED):
-${memories.length > 0 ? memories.map((m, i) => `${i + 1}. [${m.category}] ${m.content} (Ilihifadhiwa: ${m.createdAt})`).join('\n') : 'Hakuna kumbukumbu za ziada zilizohifadhiwa kwa sasa.'}
+${memories.length > 0 ? memories.map((memory, index) => `${index + 1}. [${memory.category}] ${memory.content} (Ilihifadhiwa: ${memory.createdAt})`).join('\n') : 'Hakuna kumbukumbu za ziada zilizohifadhiwa kwa sasa.'}
 
 ---
 ORODHA YA WATU WANGU WA KARIBU (MAX IDENTIFY / CLOSE PEOPLE):
-${people.length > 0 ? people.map((p, i) => `${i + 1}. Jina: ${p.name} | Uhusiano: ${p.relationship}${p.nickname ? ` | Jina la utani: ${p.nickname}` : ''}${p.phone ? ` | Simu: ${p.phone}` : ''}${p.email ? ` | Email: ${p.email}` : ''}${p.notes ? ` | Maelezo: ${p.notes}` : ''}`).join('\n') : 'Hakuna watu wa karibu waliohifadhiwa kwa sasa.'}
+${people.length > 0 ? people.map((person, index) => `${index + 1}. Jina: ${person.name} | Uhusiano: ${person.relationship}${person.nickname ? ` | Jina la utani: ${person.nickname}` : ''}${person.phone ? ` | Simu: ${person.phone}` : ''}${person.email ? ` | Email: ${person.email}` : ''}${person.notes ? ` | Maelezo: ${person.notes}` : ''}`).join('\n') : 'Hakuna watu wa karibu waliohifadhiwa kwa sasa.'}
 
 ${newlySavedMemory ? `TAARIFA YA SASA: Max ametoka kutoa amri ya kukumbuka: "${newlySavedMemory.content}". Hii imehifadhiwa kwa ufanisi kwenye database ya kudumu (Max Memory). Mthibitishie kuwa umehifadhi.` : ''}
 `;
   }
-
-  private buildConversationHistory(history: ChatMessage[], currentMessage: string, attachments: any[]): Array<{ role: 'user' | 'model'; parts: any[] }> {
-    const contents: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
-    const rawHistory = Array.isArray(history) ? [...history] : [];
-    if (rawHistory.length > 0) {
-      const last = rawHistory[rawHistory.length - 1];
-      if (last.role === 'user' && (last.content === currentMessage || (!last.content && !currentMessage))) rawHistory.pop();
-    }
-    const recentHistory = rawHistory.slice(-20);
-    for (const h of recentHistory) {
-      const text = (h.content || '').trim();
-      if (!text && (!h.attachments || h.attachments.length === 0)) continue;
-      const role: 'user' | 'model' = h.role === 'user' ? 'user' : 'model';
-      const parts: any[] = [];
-      if (text) parts.push({ text });
-      if (h.attachments && Array.isArray(h.attachments)) {
-        for (const att of h.attachments) {
-          if (att.previewUrl?.startsWith('data:image/') || att.base64Data) {
-            const b64 = (att.previewUrl || att.base64Data || '').replace(/^data:image\/\w+;base64,/, '');
-            if (b64) parts.push({ inlineData: { data: b64, mimeType: att.mimeType || 'image/jpeg' } });
-          }
-        }
-      }
-      if (parts.length === 0) continue;
-      const lastTurn = contents[contents.length - 1];
-      if (lastTurn && lastTurn.role === role) lastTurn.parts.push(...parts); else contents.push({ role, parts });
-    }
-    if (contents.length > 0 && contents[0].role === 'model') contents.unshift({ role: 'user', parts: [{ text: 'Habari MKUU AI, mimi ni Max mmiliki wako.' }] });
-    const currentUserParts: any[] = [];
-    if (currentMessage) currentUserParts.push({ text: currentMessage });
-    if (attachments && attachments.length > 0) {
-      for (const att of attachments) {
-        if (att.base64Data) {
-          const rawBase64 = att.base64Data.includes(',') ? att.base64Data.split(',')[1] : att.base64Data;
-          if (att.mimeType?.startsWith('image/')) currentUserParts.push({ inlineData: { data: rawBase64, mimeType: att.mimeType } });
-          else if (att.mimeType === 'application/pdf') currentUserParts.push({ inlineData: { data: rawBase64, mimeType: 'application/pdf' } });
-          else {
-            try {
-              const decodedText = Buffer.from(rawBase64, 'base64').toString('utf-8');
-              currentUserParts.push({ text: `\n\n[Faili: ${att.filename}]:\n${decodedText.slice(0, 8000)}\n---` });
-            } catch {
-              currentUserParts.push({ text: `\n\n[Faili lililoambatanishwa: ${att.filename}]` });
-            }
-          }
-        }
-      }
-    }
-    if (currentUserParts.length === 0) currentUserParts.push({ text: currentMessage || 'Tafadhali endelea na mazungumzo.' });
-    const lastTurn = contents[contents.length - 1];
-    if (lastTurn && lastTurn.role === 'user') lastTurn.parts.push(...currentUserParts); else contents.push({ role: 'user', parts: currentUserParts });
-    return contents;
-  }
-
-  private detectAndSaveMemory(userId: string, message: string): Memory | null {
-    if (!message) return null;
-    const lower = message.toLowerCase().trim();
-    const isRememberCommand = lower.startsWith('kumbuka kwamba') || lower.startsWith('kumbuka kuwa') || lower.startsWith('kumbuka:') || lower.startsWith('kumbuka ') || lower.startsWith('hifadhi hii:') || lower.startsWith('hifadhi kwamba') || lower.includes('usiache kukumbuka') || lower.includes('iweke kwenye kumbukumbu') || lower.includes('remember that');
-    if (!isRememberCommand) return null;
-    const contentToSave = message.replace(/^(kumbuka kwamba|kumbuka kuwa|kumbuka:|kumbuka|hifadhi hii:|hifadhi kwamba|remember that)\s*/i, '').trim();
-    if (contentToSave.length < 3) return null;
-    let category: 'General' | 'Preferences' | 'Work' | 'Family' | 'Health' | 'Finance' | 'Rules' = 'General';
-    const cl = contentToSave.toLowerCase();
-    if (cl.includes('mke') || cl.includes('mtoto') || cl.includes('mama') || cl.includes('baba') || cl.includes('familia')) category = 'Family';
-    else if (cl.includes('pesa') || cl.includes('biashara') || cl.includes('mteja') || cl.includes('mkataba') || cl.includes('kampuni')) category = 'Finance';
-    else if (cl.includes('password') || cl.includes('nenosiri') || cl.includes('pin') || cl.includes('akaunti') || cl.includes('namba ya')) category = 'Rules';
-    else if (cl.includes('kazi') || cl.includes('ofisi') || cl.includes('mradi') || cl.includes('boss')) category = 'Work';
-    else if (cl.includes('afya') || cl.includes('dawa') || cl.includes('hospitali') || cl.includes('chakula')) category = 'Health';
-    else if (cl.includes('napenda') || cl.includes('mimi ni') || cl.includes('tabia')) category = 'Preferences';
-    return db.addMemory({ userId, category, content: contentToSave, importance: 'high', tags: [category.toLowerCase()], source: 'explicit_command' });
-  }
-
-  private detectAndSavePerson(userId: string, message: string): Person | null {
-    if (!message) return null;
-    const lower = message.toLowerCase().trim();
-    if (lower.startsWith('huyu ni') || lower.startsWith('msajili') || lower.includes('ni mke wangu') || lower.includes('ni rafiki yangu')) {
-      const match = message.match(/(?:huyu ni|msajili)\s+([A-Za-z\s]+?)\s+(?:kama|ambaye ni|ni)\s+([A-Za-z\s]+)/i);
-      if (match && match[1] && match[2]) return db.addPerson({ userId, name: match[1].trim(), relationship: match[2].trim() });
-    }
-    return null;
-  }
-
-  private detectSearchIntent(message: string): boolean {
-    if (!message) return false;
-    const lower = message.toLowerCase().trim();
-    const searchKeywords = ['habari za leo','habari za sasa','habari za hivi punde','habari mpya','nini kimetokea','nani kashinda','nani ameshinda','matokeo ya','hali ya hewa','bei ya','thamani ya','dola ya marekani','hisa za','leo hii','tafuta mtandaoni','tafuta google','search google','search online','google search','nani ni rais wa','kiongozi wa sasa','waziri mkuu wa','tuzo za','mwaka 2025','mwaka 2026','current news','latest news','who won','weather today','stock price','exchange rate','yanga','yangu','young africans','simba','simba sc','azam fc','singida','mashujaa','geita gold','jkt tanzania','namungo','coastal union','dodoma jiji','kagera sugar','tabora united','mechi','mchezo','ratiba','matokeo','msimamo','kikosi','magoli','tff','nbc premier league','ligi kuu','caf champions league','caf confederation','shirikisho','ngao ya jamii','kombe la mapinduzi','crdb federation cup','kuna mechi','nani anacheza','arsenal','manchester','man utd','man city','chelsea','liverpool','real madrid','barcelona','bayern','psg','epl','uefa','champions league','la liga','serie a'];
-    if (searchKeywords.some((kw) => lower.includes(kw))) return true;
-    return lower.startsWith('tafuta ') || lower.startsWith('search ') || lower.includes('google ');
-  }
-
-  private isInsufficientKnowledgeResponse(reply: string): boolean {
-    if (!reply) return false;
-    const lower = reply.toLowerCase();
-    const insufficientIndicators = ['sina taarifa','sina uwezo wa kufikia mtandao','sina uwezo wa kuperuzi','sina access ya mtandao','sina uwezo wa kuona matukio ya sasa','kama modeli ya lugha','kama mfumo wa ai','kama akili bandia','siwezi kujua matukio ya hivi karibuni','siwezi kufikia taarifa za moja kwa moja','maarifa yangu yaliishia','knowledge cutoff','muda wa mafunzo yangu','i do not have access to real-time','i don\'t have access to real-time','i cannot browse the live web','as an ai language model','my knowledge cutoff','sina taarifa za hivi punde','sina taarifa za hivi karibuni','siwezi kutoa taarifa za sasa hivi','sina uwezo wa kupata taarifa za sasa','hakuna taarifa za kuaminika','sijui'];
-    return insufficientIndicators.some((indicator) => lower.includes(indicator));
-  }
-
-  private detectFileGenerationIntent(message: string): { filename: string; fileType: 'pdf' | 'docx' | 'xlsx' | 'csv'; title: string; description: string } | null {
-    const lower = (message || '').toLowerCase();
-    const dateSuffix = new Date().toISOString().slice(0, 10);
-    if (lower.includes('tengeneza pdf') || lower.includes('andaa pdf') || lower.includes('nipe pdf') || lower.includes('ripoti ya pdf')) return { filename: `Ripoti_ya_Max_${dateSuffix}.pdf`, fileType: 'pdf', title: 'Ripoti Rasmi ya PDF', description: 'Waraka rasmi wa PDF ulioandaliwa na MKUU AI' };
-    if (lower.includes('excel') || lower.includes('spreadsheet') || lower.includes('lahajedwali') || lower.includes('hesabu za excel')) return { filename: `Jedwali_la_Max_${dateSuffix}.xlsx`, fileType: 'xlsx', title: 'Jedwali la Excel (XLSX)', description: 'Jedwali la hesabu na takwimu lililoandaliwa na MKUU AI' };
-    if (lower.includes('word') || lower.includes('doc') || lower.includes('barua') || lower.includes('mkataba')) return { filename: `Waraka_wa_Max_${dateSuffix}.docx`, fileType: 'docx', title: 'Waraka wa Microsoft Word', description: 'Waraka rasmi wa maandishi ulioandaliwa na MKUU AI' };
-    if (lower.includes('csv') || lower.includes('faili la csv')) return { filename: `Takwimu_za_Max_${dateSuffix}.csv`, fileType: 'csv', title: 'Faili la Takwimu za CSV', description: 'Faili la CSV la uchanganuzi wa data lililoandaliwa na MKUU AI' };
-    return null;
-  }
-
-  private cleanMarkdownForVoice(text: string): string {
-    if (!text) return '';
-    return text.replace(/[*_~`#>]/g, '').replace(/\[(.*?)\]\(.*?\)/g, '$1').replace(/!\[.*?\]\(.*?\)/g, '').replace(/```[\s\S]*?```/g, '').replace(/\n\s*-\s*/g, '. ').replace(/\n\s*\d+\.\s*/g, '. ').replace(/\n+/g, ' ').trim();
-  }
-}
-
-export const geminiService = GeminiService.getInstance();
