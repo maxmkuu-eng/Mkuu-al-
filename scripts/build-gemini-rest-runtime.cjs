@@ -5,33 +5,64 @@ const target = path.join(process.cwd(), 'server', 'geminiService.ts');
 if (!fs.existsSync(target)) throw new Error('[GEMINI-REST] server/geminiService.ts not found.');
 let s = fs.readFileSync(target, 'utf8');
 
-// Deterministic/idempotent normalization. Remove legacy members structurally so
-// one-line/minified TypeScript cannot leave stale SDK execution paths behind.
+// Deterministic/idempotent normalization. Remove legacy members structurally.
 s = s.replace(/import\s*\{\s*GoogleGenAI\s*\}\s*from\s*['"]@google\/genai['"];?\s*/g, '');
 s = s.replace(/import\s*\{\s*searchWithTavily\s*\}\s*from\s*['"]\.\/tavilySearch\.js['"];?\s*/g, '');
 s = s.replace(/\s*private\s+aiClient\s*:\s*GoogleGenAI\s*\|\s*null\s*=\s*null;?/g, '');
 
+// Remove a class method by balancing its parameter list, TypeScript generic
+// return type, and method body. This deliberately does NOT use "first {" because
+// Promise<{...}> contains a brace before the actual method body.
 function removeMethods(source, methodName) {
-  const re = new RegExp('\\n\\s*(?:public|private|protected)?\\s*(?:async\\s+)?' + methodName + '\\s*\\([^)]*\\)\\s*(?::[^\\{]+)?\\{', 'm');
+  const nameRe = new RegExp('(?:^|\\n)\\s*(?:public|private|protected)?\\s*(?:static\\s+)?(?:async\\s+)?' + methodName + '\\s*\\(', 'm');
   let out = source;
   while (true) {
-    const m = re.exec(out);
+    const m = nameRe.exec(out);
     if (!m) return out;
+
     const start = m.index;
-    const brace = out.indexOf('{', start);
-    let depth = 0, end = -1;
-    for (let i = brace; i < out.length; i++) {
-      if (out[i] === '{') depth++;
-      else if (out[i] === '}' && --depth === 0) { end = i + 1; break; }
+    let i = m.index + m[0].length;
+    let paren = 1;
+    for (; i < out.length && paren > 0; i++) {
+      if (out[i] === '(') paren++;
+      else if (out[i] === ')') paren--;
     }
-    if (end < 0) throw new Error('[GEMINI-REST] Could not find boundary for ' + methodName + '.');
-    out = out.slice(0, start) + '\n' + out.slice(end);
+    if (paren !== 0) throw new Error('[GEMINI-REST] Could not close parameters for ' + methodName + '.');
+
+    let angle = 0;
+    let bodyStart = -1;
+    for (; i < out.length; i++) {
+      const ch = out[i];
+      if (ch === '<') angle++;
+      else if (ch === '>' && angle > 0) angle--;
+      else if (ch === '{' && angle === 0) { bodyStart = i; break; }
+      else if (ch === ';' && angle === 0) return out.slice(0, start) + out.slice(i + 1);
+    }
+    if (bodyStart < 0) throw new Error('[GEMINI-REST] Could not find body for ' + methodName + '.');
+
+    let depth = 0;
+    let bodyEnd = -1;
+    let quote = null;
+    for (i = bodyStart; i < out.length; i++) {
+      const ch = out[i];
+      if (quote) {
+        if (ch === '\\') i++;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '`' || ch === '"' || ch === "'") { quote = ch; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}' && --depth === 0) { bodyEnd = i + 1; break; }
+    }
+    if (bodyEnd < 0) throw new Error('[GEMINI-REST] Could not close body for ' + methodName + '.');
+    out = out.slice(0, start) + '\n' + out.slice(bodyEnd);
   }
 }
 
-// Remove every previous generated health/client member before installing exactly one.
+// Remove every previous generated/legacy member before installing exactly one.
 s = removeMethods(s, 'getClient');
 s = removeMethods(s, 'getHealthStatus');
+s = removeMethods(s, 'executeGeminiCallWithFallback');
 
 s = s.replace(/export\s+const\s+PERSONAL_CHAT_MODEL\s*=\s*['"][^'"]+['"]\s*;?/,
   "export const PERSONAL_CHAT_MODEL = 'gemini-3.7-flash';");
@@ -41,7 +72,7 @@ s = s.replace(/export\s+const\s+CHAT_MODEL_FALLBACKS\s*=\s*\[[\s\S]*?\]\s*;?/,
   "export const CHAT_MODEL_FALLBACKS = [PERSONAL_CHAT_MODEL];");
 
 const healthMethod = [
-  '  public async getHealthStatus(): Promise<{ aiProvider:string; chatModel:string; backend:string; status:\'connected\'|\'unavailable\'; latencyMs?:number; error?:string }> {',
+  "  public async getHealthStatus(): Promise<{ aiProvider:string; chatModel:string; backend:string; status:'connected'|'unavailable'; latencyMs?:number; error?:string }> {",
   '    const started=Date.now(); const key=process.env.GEMINI_API_KEY;',
   "    if(!key)return {aiProvider:AI_PROVIDER,chatModel:PERSONAL_CHAT_MODEL,backend:BACKEND_IDENTIFIER,status:'unavailable',latencyMs:Date.now()-started,error:'GEMINI_API_KEY is not configured on MKUU Backend.'};",
   '    try{',
@@ -55,8 +86,7 @@ const healthMethod = [
   ''
 ].join('\n');
 
-const processRe = /\n\s{2}public\s+async\s+processChat\b/;
-const processPos = s.search(processRe);
+const processPos = s.search(/\n\s{2}public\s+async\s+processChat\b/);
 if (processPos < 0) throw new Error('[GEMINI-REST] processChat method not found; refusing unsafe build.');
 s = s.slice(0, processPos) + '\n' + healthMethod + s.slice(processPos);
 
@@ -80,13 +110,12 @@ const restMethod = [
   ''
 ].join('\n');
 
-s = removeMethods(s, 'executeGeminiCallWithFallback');
 const buildPos = s.search(/\n\s{2}private\s+buildSystemPrompt\b/);
 if (buildPos < 0) throw new Error('[GEMINI-REST] buildSystemPrompt boundary not found; refusing unsafe build.');
 s = s.slice(0, buildPos) + '\n' + restMethod + s.slice(buildPos);
 
-// The normal chat executor is now the only Gemini execution path. Do not leave
-// old SDK calls or Tavily calls in executable source.
+// Previous live-search scripts own the live branch. Only normalize stale names
+// if they are still present; never inject an undefined provider here.
 s = s.replace(/\bsearchWithTavily\s*\(/g, 'searchWithExa(');
 s = s.replace(/\b(?:client|this\.aiClient)\.models\.generateContent\s*\(/g, 'this.executeGeminiCallWithFallback({contents: params.contents, config: params.config, preferredModel: PERSONAL_CHAT_MODEL})');
 
