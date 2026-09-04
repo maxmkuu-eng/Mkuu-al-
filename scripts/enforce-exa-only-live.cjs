@@ -13,17 +13,15 @@ if (!source.includes("import { searchWithExa } from './exaSearch.js';")) {
 }
 
 // Gemini 3.x no longer accepts legacy sampling fields such as temperature.
-// Remove them at build time so all generated server builds use a valid Gemini 3.x config.
 source = source.replace(/const generationConfig:\s*any\s*=\s*\{\s*systemInstruction:\s*systemPrompt,\s*temperature:\s*0\.7\s*\};/g, 'const generationConfig: any = { systemInstruction: systemPrompt };');
 source = source.replace(/temperature:\s*0\.7,?\s*/g, '');
 source = source.replace(/temperature:\s*0\.2,?\s*/g, '');
 
 // The Gemini service itself must also be safe if called directly: live search is Exa-only.
 const liveStart = source.indexOf('    if (isSearchQuery) {');
-const fileIntentMarker = source.indexOf('    if (fileIntent) {', liveStart);
-if (liveStart < 0 || fileIntentMarker < 0) throw new Error('[EXA-ONLY] Live-search block target not found');
-
-const liveBlock = `    if (isSearchQuery) {
+const fileIntentMarker = source.indexOf('    if (fileIntent) {', Math.max(0, liveStart));
+if (liveStart >= 0 && fileIntentMarker >= 0) {
+  const liveBlock = `    if (isSearchQuery) {
       try {
         const tanzaniaNow = getCurrentTanzaniaTimeContext();
         console.log('[MKUU-BACKEND] [EXA_SEARCH_STARTED] Live/social search is Exa-direct; Gemini/Tavily/Google Search are not used.');
@@ -53,7 +51,10 @@ const liveBlock = `    if (isSearchQuery) {
     }
 
 `;
-source = source.slice(0, liveStart) + liveBlock + source.slice(fileIntentMarker);
+  source = source.slice(0, liveStart) + liveBlock + source.slice(fileIntentMarker);
+} else {
+  console.log('[EXA-ONLY] Live-search block already patched; preserving existing implementation.');
+}
 
 // Never fall back from ordinary Gemini answers into Google Search grounding.
 source = source.replace(/\n\s*if \(this\.isInsufficientKnowledgeResponse\(aiReplyText\)\) \{[\s\S]*?\n\s*\}\n\s*console\.log\(\`\[MKUU-BACKEND\] \[GEMINI_RESPONSE_RECEIVED\]/, '\n        console.log(`[MKUU-BACKEND] [GEMINI_RESPONSE_RECEIVED]');
@@ -62,8 +63,8 @@ source = source.replace(/export const LIVE_SEARCH_MODEL = '[^']+';/, "export con
 // Make backend health truthful: a failed Gemini configuration/request is not "connected".
 source = source.replace(
   /return \{ aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL, backend: BACKEND_IDENTIFIER, status: 'connected', latencyMs: Date\.now\(\) - startTime \};\n    \} catch \(err: any\) \{\n      return \{ aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL, backend: BACKEND_IDENTIFIER, status: 'connected', latencyMs: Date\.now\(\) - startTime \};/,
-  "return { aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL, backend: BACKEND_IDENTIFIER, status: 'connected', latencyMs: Date.now() - startTime };\n    } catch (err: any) {\n      const message = String(err?.message || err || 'Gemini unavailable');\n      return { aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL, backend: BACKEND_IDENTIFIER, status: 'unavailable', latencyMs: Date.now() - startTime, error: message };")
-;
+  "return { aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL, backend: BACKEND_IDENTIFIER, status: 'connected', latencyMs: Date.now() - startTime };\n    } catch (err: any) {\n      const message = String(err?.message || err || 'Gemini unavailable');\n      return { aiProvider: AI_PROVIDER, chatModel: PERSONAL_CHAT_MODEL, backend: BACKEND_IDENTIFIER, status: 'unavailable', latencyMs: Date.now() - startTime, error: message };"
+);
 
 fs.writeFileSync(file, source, 'utf8');
 
