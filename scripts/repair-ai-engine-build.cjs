@@ -6,9 +6,11 @@ const write=(p,s)=>fs.writeFileSync(path.join(root,p),s,'utf8');
 
 let engine=read('src/services/aiEngine.ts');
 engine=engine.replace(/export interface ChatEngineResult \{[^\n]*\}/,m=>m.includes('webSources?')?m:m.replace('generatedFiles?:GeneratedFileSummary[];','generatedFiles?:GeneratedFileSummary[]; webSources?:Array<{title:string;url:string}>;'));
+// MKUU chat is backend-authoritative. Never restore the obsolete browser Gemini path.
 const oldRouting='const directApiKey=getStoredGeminiApiKey();if(directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative())return callNativeServerChat(params);';
-const newRouting='const directApiKey=getStoredGeminiApiKey();if(!needsLiveSearch(params.message)&&directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative()||needsLiveSearch(params.message))return callNativeServerChat(params);';
-engine=engine.replace(oldRouting,newRouting);
+const legacyLiveRouting='const directApiKey=getStoredGeminiApiKey();if(!needsLiveSearch(params.message)&&directApiKey&&directApiKey.trim().length>10)return callDirectGemini(directApiKey.trim(),params);if(isCapacitorNative()||needsLiveSearch(params.message))return callNativeServerChat(params);';
+const newRouting='if(isCapacitorNative()||needsLiveSearch(params.message))return callNativeServerChat(params);';
+engine=engine.replace(oldRouting,newRouting).replace(legacyLiveRouting,newRouting);
 engine=engine.replace(/webSources:Array\.isArray\(serverRes\.webSources\)\?serverRes\.webSources:\[\],webSources:Array\.isArray\(serverRes\.webSources\)\?serverRes\.webSources:\[\],/g,'webSources:Array.isArray(serverRes.webSources)?serverRes.webSources:[],');
 write('src/services/aiEngine.ts',engine);
 
